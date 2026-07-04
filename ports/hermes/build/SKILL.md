@@ -28,8 +28,12 @@ Confirm Linear tools exist (see /spec skill's preflight). No tools → STOP and 
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
-   `Factory Queue`. Highest priority first, oldest on ties. Skip issues whose latest
-   comment starts `BLOCKED:` and issues with unresolved blocking relations.
+   `Factory Queue`. If invoked with an argument (e.g. "build agentic"), treat it as a
+   lane filter: only consider issues whose Linear project name or labels contain it
+   (case-insensitive). Highest priority first, oldest on ties. Skip issues whose latest
+   comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
+   SILENTLY, no comment or state change — issues whose spec **Repo:** path is
+   unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
 2. **Claim it.** State `In Progress`, assignee Jonathan. Read the FULL spec and ALL

@@ -43,6 +43,14 @@ Drift reconciliation: if the *deployed* copy is the improvement (e.g. Hermes `/l
 edited a skill in place), copy it back into the repo and commit; otherwise `-Deploy`
 overwrites the target with the repo version.
 
+Multi-environment queues: build/review sessions **silently skip** issues whose spec
+`Repo:` path they can't reach (a WSL repo from a Windows session, another machine's
+repo) — the right-homed session picks them up. Optional lane filter: `/build agentic`
+or `/review crm` works only issues whose Linear project or labels match. On machines
+with WSL, `-Deploy` also installs the canonical skills into the Linux home
+(`~/.claude/skills`) so WSL Claude Code sessions get `/spec` `/build` `/review` —
+restart any session that was open during a deploy to pick up skill changes.
+
 New machine setup: clone, run `-Deploy`, then do each platform's one-time step
 (Codex: Linear MCP OAuth on first use; Desktop: upload the zips from
 `Downloads\factory-skills`; Hermes: wire Linear MCP/Composio into `config.yaml`).

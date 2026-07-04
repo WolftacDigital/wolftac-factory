@@ -18,8 +18,11 @@ fact, until you reproduce it.
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `In Review`, label
-   `Factory Queue`, oldest first. Nothing → say "Factory queue: nothing awaiting
-   review" and stop cleanly.
+   `Factory Queue`, oldest first. If an argument was given (e.g. `/review crm`), treat
+   it as a lane filter: only consider issues whose Linear project name or labels
+   contain it (case-insensitive). Skip — SILENTLY, no comment or state change — issues
+   whose spec **Repo:** path is unreachable from this session's environment. Nothing →
+   say "Factory queue: nothing awaiting review" and stop cleanly.
 
 2. **Gather evidence.** Read the full spec (description), every comment (especially
    the latest BUILD REPORT), and the actual diff: check out the branch named in the

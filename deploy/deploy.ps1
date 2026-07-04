@@ -24,6 +24,20 @@ $Pairs = @(
     @{ Src = "ports\hermes\review\SKILL.md";    Dst = "$env:LOCALAPPDATA\hermes\skills\review\SKILL.md" }
 )
 
+# Claude Code inside WSL reads the LINUX home (~/.claude/skills), not the Windows one.
+# When WSL is present, add the canonical skills as targets there too (dynamic home
+# detection so this ports to other machines, e.g. jon-omen, unchanged).
+$wslHome = $null
+try { $wslHome = (& wsl.exe -d Ubuntu -- sh -c 'echo $HOME' 2>$null | Select-Object -First 1) } catch {}
+if ($wslHome) { $wslHome = ($wslHome -replace "`0", "").Trim() }
+if ($wslHome -and $wslHome.StartsWith("/")) {
+    $wslSkills = "\\wsl$\Ubuntu" + ($wslHome -replace "/", "\") + "\.claude\skills"
+    $Pairs += @{ Src = "canonical\spec\SKILL.md";         Dst = "$wslSkills\spec\SKILL.md" }
+    $Pairs += @{ Src = "canonical\spec\spec-template.md"; Dst = "$wslSkills\spec\spec-template.md" }
+    $Pairs += @{ Src = "canonical\build\SKILL.md";        Dst = "$wslSkills\build\SKILL.md" }
+    $Pairs += @{ Src = "canonical\review\SKILL.md";       Dst = "$wslSkills\review\SKILL.md" }
+}
+
 function Get-ContentHash($Path) {
     if (Test-Path $Path) { (Get-FileHash $Path -Algorithm SHA256).Hash } else { $null }
 }

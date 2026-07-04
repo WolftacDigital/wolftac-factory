@@ -27,8 +27,12 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 ## Procedure
 
 1. **Pick up work.** `list_issues`: team `Wolftac Digital`, state `Todo`, label
-   `Factory Queue`. Highest priority, oldest on ties. Skip issues whose latest comment
-   starts `BLOCKED:` and issues with unresolved blocking relations. Queue empty →
+   `Factory Queue`. If the user gave a lane filter (e.g. "build the crm lane"), only
+   consider issues whose Linear project name or labels contain it (case-insensitive).
+   Highest priority, oldest on ties. Skip issues whose latest comment starts
+   `BLOCKED:`, issues with unresolved blocking relations, and — SILENTLY, no comment
+   or state change — issues whose spec **Repo:** path this chat cannot reach
+   (`BLOCKED:` is reserved for genuine spec defects). Queue empty →
    "Factory queue: nothing buildable", stop cleanly.
 
 2. **Claim it.** `save_issue`: state `In Progress`, assignee `me`. Read the FULL spec
@@ -36,8 +40,10 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    order on top of the original spec.
 
 3. **Locate the repo.** The spec's **Repo:** header names the working directory.
-   Verify you can reach it (see reality check). Missing/unreachable/ambiguous →
-   comment `BLOCKED: <what's unclear>`, state back to `Todo`, stop.
+   Verify you can reach it (see reality check). Header missing/ambiguous (a spec
+   defect) → comment `BLOCKED: <what's unclear>`, state back to `Todo`, stop.
+   Merely unreachable from this chat → should have been skipped at step 1; un-claim
+   (state `Todo`, no comment) and stop.
 
 4. **Branch.** Use the issue's Linear-generated branch name; create from the default
    branch if needed. Never commit directly to main/master.

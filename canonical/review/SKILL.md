@@ -27,6 +27,11 @@ not a fact, until you reproduce it.
   `save_comment`, `list_comments`).
 - `list_issues`: team `Wolftac Digital`, state `In Review`, label `Factory Queue`,
   oldest updated first.
+- Lane filter: if this skill was invoked with an argument (e.g. `/review crm`), only
+  consider issues whose Linear project name or labels contain it (case-insensitive).
+- Skip (silently — no comment, no state change) issues whose spec **Repo:** path is
+  unreachable from THIS session's environment; a differently-homed review session
+  will take them.
 - **Nothing there → say "Factory queue: nothing awaiting review" and stop cleanly.**
 
 ### 2. Gather the evidence
