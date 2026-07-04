@@ -1,0 +1,7 @@
+# Desktop upload bundles are build artifacts — rebuilt by deploy.ps1 -Deploy
+*.zip
+
+# Never commit agent configs or secrets
+config.toml
+.env
+.env.*
