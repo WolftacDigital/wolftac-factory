@@ -9,7 +9,7 @@ What's broken or missing, for whom, and why it matters now. One tight paragraph.
 - Concrete outcomes that define success. Each one observable after shipping.
 
 ## Non-goals
-- Explicitly out of scope. This section protects /build from scope creep — be generous here.
+- Explicitly out of scope. This section protects /wolftac-build from scope creep — be generous here.
 
 ## User flow
 Step-by-step of what the user sees and does once this ships. Number the steps.
@@ -27,7 +27,7 @@ Step-by-step of what the user sees and does once this ships. Number the steps.
 - [ ] Include at least one failure/edge case criterion
 
 ## Test plan
-How /build proves it works and /review re-proves it independently: exact commands to run,
+How /wolftac-build proves it works and /wolftac-review re-proves it independently: exact commands to run,
 cases to cover (happy path, edge, failure), and any manual checks with expected results.
 
 ## Build notes

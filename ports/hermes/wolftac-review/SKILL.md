@@ -1,5 +1,5 @@
 ---
-name: review
+name: wolftac-review
 description: |
   Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac
   Digital, label Factory Queue) against its spec's acceptance criteria by actually
@@ -11,7 +11,7 @@ description: |
   Voice triggers (speech-to-text aliases): "review the queue", "QA the factory".
 ---
 
-# /review — Factory stage 3: quality assurance
+# /wolftac-review — Factory stage 3: quality assurance
 
 You are the only stage allowed to mark an issue Done. Default posture: skeptical.
 The build report is a claim, not a fact, until you reproduce it.
@@ -26,7 +26,7 @@ The build report is a claim, not a fact, until you reproduce it.
 - Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 
 ## Preflight
-Confirm Linear tools exist (see /spec skill's preflight). No tools → STOP and say so.
+Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
 ## Procedure
 
@@ -66,7 +66,7 @@ Confirm Linear tools exist (see /spec skill's preflight). No tools → STOP and 
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Defects:** <none, or numbered list>
-   - **Suggestions (out of scope):** <ideas for a future /spec>
+   - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
 5. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into

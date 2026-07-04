@@ -1,9 +1,9 @@
 ---
-name: build
+name: wolftac-build
 description: Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from Linear (team Wolftac Digital), implement it per its spec, verify, and move it to In Review with a build report. One issue per invocation. NOTE - from Claude Desktop this stage can only run if the chat has file/terminal access to the target repo (e.g. via an MCP server); otherwise it reports what's queued and defers to a coding agent.
 ---
 
-# /build — Factory stage 2: execution
+# /wolftac-build — Factory stage 2: execution
 
 Take ONE specced issue from the Linear queue, implement it exactly to spec, prove it
 works, hand it to review.
@@ -12,7 +12,7 @@ works, hand it to review.
 This stage needs to edit files, run git, and execute tests in the spec's **Repo**.
 From Claude Desktop that requires an MCP server with filesystem/terminal access to
 that repo (e.g. desktop-commander or a filesystem server). If this chat has no such
-access: list what's buildable in the queue, tell the user to run /build from Claude
+access: list what's buildable in the queue, tell the user to run /wolftac-build from Claude
 Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually build.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
@@ -50,7 +50,7 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 
 5. **Implement — guardrails.** Read the repo's CLAUDE.md first; match conventions.
    Build exactly to the spec's Technical approach and Acceptance criteria — NO scope
-   creep (tangents go in the report as "suggest /spec"). Secrets in .env, never
+   creep (tangents go in the report as "suggest /wolftac-spec"). Secrets in .env, never
    hardcoded. Blocking ambiguity → `BLOCKED: <questions>` comment, state `Todo`, stop.
 
 6. **Verify.** Execute the spec's Test plan literally. Every criterion needs evidence

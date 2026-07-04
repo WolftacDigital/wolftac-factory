@@ -1,4 +1,4 @@
-# /review — Factory stage 3: quality assurance
+# /wolftac-review — Factory stage 3: quality assurance
 
 You are the review stage of the cross-agent software factory — the ONLY stage allowed
 to mark an issue Done. Default posture: skeptical. The build report is a claim, not a
@@ -18,7 +18,7 @@ fact, until you reproduce it.
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `In Review`, label
-   `Factory Queue`, oldest first. If an argument was given (e.g. `/review crm`), treat
+   `Factory Queue`, oldest first. If an argument was given (e.g. `/wolftac-review crm`), treat
    it as a lane filter: only consider issues whose Linear project name or labels
    contain it (case-insensitive). Skip — SILENTLY, no comment or state change — issues
    whose spec **Repo:** path is unreachable from this session's environment. Nothing →
@@ -56,7 +56,7 @@ fact, until you reproduce it.
    - **Baseline checks:** <secrets/debug/validation/error-paths — clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Defects:** <none, or numbered list with repro + expected vs actual>
-   - **Suggestions (out of scope):** <ideas for a future /spec>
+   - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
 5. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into

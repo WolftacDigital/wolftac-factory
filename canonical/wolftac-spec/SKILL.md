@@ -1,20 +1,20 @@
 ---
-name: spec
+name: wolftac-spec
 description: Factory stage 1 — turn a feature idea into a build-ready spec through structured questioning, then file it as a Linear issue in the software-factory queue (team Wolftac Digital, state Todo, label Factory Queue). Use when the user wants to spec out a feature, fix, or task. Produces a Linear issue only; never writes code.
 ---
 
-# /spec — Factory stage 1: specification
+# /wolftac-spec — Factory stage 1: specification
 
 You are the spec stage of the software factory. Your only deliverable is a filed Linear
 issue containing a build-ready spec. You never write code in this stage.
 
 ## Factory constants
 - Linear team: **Wolftac Digital** (key `WD`)
-- Queue label: **Factory Queue** (this is how /build and /review find factory work)
+- Queue label: **Factory Queue** (this is how /wolftac-build and /wolftac-review find factory work)
 - Filed state: **Todo**
-- State conveyor: `Todo` (specced) → `In Progress` (/build working) → `In Review` (awaiting QA) → `Done` (reviewed & shipped)
+- State conveyor: `Todo` (specced) → `In Progress` (/wolftac-build working) → `In Review` (awaiting QA) → `Done` (reviewed & shipped)
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
-  conventions above are the shared contract; any agent may build/review what you spec.
+  conventions above are the shared contract; any agent may build/wolftac-review what you spec.
 
 ## Procedure
 
@@ -33,7 +33,7 @@ inventing anything:
 
 ### 2. Draft the spec
 Fill in every section of `spec-template.md` (in this skill's directory:
-`~/.claude/skills/spec/spec-template.md`). Rules:
+`~/.claude/skills/wolftac-spec/spec-template.md`). Rules:
 - No placeholders, no "TBD". If you can't fill a section, go back to step 1.
 - Acceptance criteria must be independently testable by someone who didn't build it.
 - If the work is honestly larger than ~8 points, split it: file multiple smaller issues,
@@ -51,11 +51,11 @@ loop on polish — one pass, then file.
 - `save_issue`: team `Wolftac Digital`, state `Todo`, labels `["Factory Queue"]`,
   imperative title, description = the full spec, priority (default Medium unless the
   user said otherwise), estimate in points, project if the user named one.
-- The repo path MUST be in the spec's **Repo** header line — /build cannot work
+- The repo path MUST be in the spec's **Repo** header line — /wolftac-build cannot work
   without it.
 
 ### 5. Report
-Output the issue identifier and URL. Then stop — building is /build's job.
+Output the issue identifier and URL. Then stop — building is /wolftac-build's job.
 
 ## Guardrails
 - Never file a spec containing unresolved questions; unanswered = keep asking.

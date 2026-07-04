@@ -1,0 +1,4 @@
+# Skill/prompt files are consumed by Unix agents (WSL Claude Code, Hermes).
+# Force LF everywhere: CRLF in YAML frontmatter silently breaks skill discovery
+# on Linux (the name parses as "build\r" and /build never matches).
+* text=auto eol=lf

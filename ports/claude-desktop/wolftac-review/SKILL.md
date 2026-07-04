@@ -1,9 +1,9 @@
 ---
-name: review
+name: wolftac-review
 description: Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac Digital, label Factory Queue) against its spec's acceptance criteria by actually running the code. The ONLY stage allowed to set Done. One issue per invocation. NOTE - from Claude Desktop this stage can only run if the chat has file/terminal access to the target repo; otherwise it summarizes what's awaiting review and defers to a coding agent.
 ---
 
-# /review — Factory stage 3: quality assurance
+# /wolftac-review — Factory stage 3: quality assurance
 
 You are the only stage allowed to mark an issue Done. Default posture: skeptical.
 The build report is a claim, not a fact, until you reproduce it.
@@ -11,7 +11,7 @@ The build report is a claim, not a fact, until you reproduce it.
 ## Desktop reality check (do this first)
 Reviewing requires running the code in the spec's **Repo** (git, tests). From Claude
 Desktop that requires an MCP server with filesystem/terminal access. Without it:
-summarize what's awaiting review, tell the user to run /review from Claude Code,
+summarize what's awaiting review, tell the user to run /wolftac-review from Claude Code,
 Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports alone.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
@@ -62,7 +62,7 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Defects:** <none, or numbered list>
-   - **Suggestions (out of scope):** <ideas for a future /spec>
+   - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
 5. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into

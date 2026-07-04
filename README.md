@@ -1,6 +1,6 @@
 # wolftac-factory
 
-Canonical source for the Wolftac software factory — the `/spec` → `/build` → `/review`
+Canonical source for the Wolftac software factory — the `/wolftac-spec` → `/wolftac-build` → `/wolftac-review`
 pipeline that runs across Claude Code, Claude Desktop, Codex, and Hermes.
 Born from VCA Bootcamp #21 (2026-07-03); built and packaged via WD-147/WD-159/WD-160.
 
@@ -15,11 +15,11 @@ Edit here, commit, then deploy.
 - States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Done`
   — `Done` is set **only** by the review stage; failed reviews go back to `Todo` with a
   numbered defect list that becomes the next build's work order
-- Specs follow `canonical/spec/spec-template.md`; the **Repo:** header line is mandatory
+- Specs follow `canonical/wolftac-spec/spec-template.md`; the **Repo:** header line is mandatory
 - BUILD/REVIEW REPORTs open with `**Agent:** <platform / model>`; reviewers prefer work
   built by a different agent than themselves
-- Model economics: spec on the strongest model (Fable), build/review looped on cheaper
-  executors (`/loop 5m /build`, `/loop 5m /review`)
+- Model economics: spec on the strongest model (Fable), build/wolftac-review looped on cheaper
+  executors (`/loop 5m /wolftac-build`, `/loop 5m /wolftac-review`)
 
 ## Layout
 
@@ -43,12 +43,12 @@ Drift reconciliation: if the *deployed* copy is the improvement (e.g. Hermes `/l
 edited a skill in place), copy it back into the repo and commit; otherwise `-Deploy`
 overwrites the target with the repo version.
 
-Multi-environment queues: build/review sessions **silently skip** issues whose spec
+Multi-environment queues: build/wolftac-review sessions **silently skip** issues whose spec
 `Repo:` path they can't reach (a WSL repo from a Windows session, another machine's
-repo) — the right-homed session picks them up. Optional lane filter: `/build agentic`
-or `/review crm` works only issues whose Linear project or labels match. On machines
+repo) — the right-homed session picks them up. Optional lane filter: `/wolftac-build agentic`
+or `/wolftac-review crm` works only issues whose Linear project or labels match. On machines
 with WSL, `-Deploy` also installs the canonical skills into the Linux home
-(`~/.claude/skills`) so WSL Claude Code sessions get `/spec` `/build` `/review` —
+(`~/.claude/skills`) so WSL Claude Code sessions get `/wolftac-spec` `/wolftac-build` `/wolftac-review` —
 restart any session that was open during a deploy to pick up skill changes.
 
 New machine setup: clone, run `-Deploy`, then do each platform's one-time step

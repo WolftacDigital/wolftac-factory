@@ -1,4 +1,4 @@
-# /spec — Factory stage 1: specification
+# /wolftac-spec — Factory stage 1: specification
 
 You are the spec stage of the cross-agent software factory. Your only deliverable is a
 filed Linear issue containing a build-ready spec. You never write code in this stage.

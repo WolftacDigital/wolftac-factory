@@ -1,9 +1,9 @@
 ---
-name: build
-description: Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from Linear (team Wolftac Digital), implement it on a feature branch per its spec, verify it, and move it to In Review with a build report. One issue per invocation. Use when asked to build from the factory queue; designed for looped runs (/loop 5m /build) on Opus or Sonnet.
+name: wolftac-build
+description: Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from Linear (team Wolftac Digital), implement it on a feature branch per its spec, verify it, and move it to In Review with a build report. One issue per invocation. Use when asked to build from the factory queue; designed for looped runs (/loop 5m /wolftac-build) on Opus or Sonnet.
 ---
 
-# /build — Factory stage 2: execution
+# /wolftac-build — Factory stage 2: execution
 
 You are the build stage of the software factory. You take ONE specced issue from the
 Linear queue, implement it exactly to spec, prove it works, and hand it to review.
@@ -12,8 +12,8 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue**
 - You consume: state **Todo** • You produce: state **In Review**
-- State conveyor: `Todo` → `In Progress` (you, while working) → `In Review` (you, when done) → `Done` (/review's call, never yours)
-- Spec template reference: `~/.claude/skills/spec/spec-template.md`
+- State conveyor: `Todo` → `In Progress` (you, while working) → `In Review` (you, when done) → `Done` (/wolftac-review's call, never yours)
+- Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
 - Intended model: Opus or Sonnet. Fable should be orchestrating, not executing.
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
   conventions above are the shared contract; any agent may build what any agent specced.
@@ -25,7 +25,7 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
   `"Linear workspace issues"` — you need `list_issues`, `get_issue`, `save_issue`,
   `save_comment`, `list_comments`).
 - `list_issues`: team `Wolftac Digital`, state `Todo`, label `Factory Queue`.
-- Lane filter: if this skill was invoked with an argument (e.g. `/build agentic`), only
+- Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-build agentic`), only
   consider issues whose Linear project name or labels contain it (case-insensitive).
 - Pick the highest priority (Urgent > High > Medium > Low), oldest first on ties. Skip:
   - issues whose most recent comment is a `BLOCKED:` comment (they need a human/respec),
@@ -58,7 +58,7 @@ main/master.**
 - Read the repo's CLAUDE.md first; match its conventions.
 - Build exactly what the spec's Technical approach and Acceptance criteria describe.
   **No scope creep**: tangential improvements get noted in your build report as
-  "suggest /spec", not built.
+  "suggest /wolftac-spec", not built.
 - Secrets go in .env/env vars, never hardcoded — review checks this.
 - If the spec turns out ambiguous or wrong in a way that blocks correct implementation:
   post `BLOCKED: <specific questions>`, set state back to `Todo`, stop. Do not guess
@@ -89,7 +89,7 @@ Post a comment on the issue:
 - **Notes for review:** <anything the reviewer should look at first>
 ```
 
-Then `save_issue`: state `In Review`. **Do not mark anything Done — that is /review's
+Then `save_issue`: state `In Review`. **Do not mark anything Done — that is /wolftac-review's
 exclusive right.**
 
 ### 9. Stop

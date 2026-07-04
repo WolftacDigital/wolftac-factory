@@ -1,9 +1,9 @@
 ---
-name: review
-description: Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac Digital, label Factory Queue) against its spec's acceptance criteria by actually running the code. Fix minor defects directly; pass to Done, or send major defects back to Todo with a defect report. One issue per invocation. Designed for looped runs (/loop 5m /review) on Opus.
+name: wolftac-review
+description: Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac Digital, label Factory Queue) against its spec's acceptance criteria by actually running the code. Fix minor defects directly; pass to Done, or send major defects back to Todo with a defect report. One issue per invocation. Designed for looped runs (/loop 5m /wolftac-review) on Opus.
 ---
 
-# /review — Factory stage 3: quality assurance
+# /wolftac-review — Factory stage 3: quality assurance
 
 You are the review stage of the software factory. You are the only stage allowed to
 mark an issue Done. Your default posture is skeptical: the build report is a claim,
@@ -12,8 +12,8 @@ not a fact, until you reproduce it.
 ## Factory constants
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue**
-- You consume: state **In Review** • You produce: **Done** (pass) or **Todo** (fail → rework by /build)
-- Spec template reference: `~/.claude/skills/spec/spec-template.md`
+- You consume: state **In Review** • You produce: **Done** (pass) or **Todo** (fail → rework by /wolftac-build)
+- Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
 - Intended model: Opus.
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
   conventions above are the shared contract. Prefer reviewing work built by a DIFFERENT
@@ -27,7 +27,7 @@ not a fact, until you reproduce it.
   `save_comment`, `list_comments`).
 - `list_issues`: team `Wolftac Digital`, state `In Review`, label `Factory Queue`,
   oldest updated first.
-- Lane filter: if this skill was invoked with an argument (e.g. `/review crm`), only
+- Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-review crm`), only
   consider issues whose Linear project name or labels contain it (case-insensitive).
 - Skip (silently — no comment, no state change) issues whose spec **Repo:** path is
   unreachable from THIS session's environment; a differently-homed review session
@@ -62,10 +62,10 @@ in ~15 minutes total: typos, small logic slips, missing edge-case guard):
 
 **FAIL** — any major defect (criterion not met, design deviation from spec, security
 issue, verification not reproducible):
-1. Do NOT attempt the rework yourself — that's /build's job on a fresh pass.
+1. Do NOT attempt the rework yourself — that's /wolftac-build's job on a fresh pass.
 2. Post the review report with a numbered defect list: each defect gets
    *what's wrong → how to reproduce → expected vs actual*.
-3. `save_issue`: state `Todo` (back on the conveyor; /build treats your defect list
+3. `save_issue`: state `Todo` (back on the conveyor; /wolftac-build treats your defect list
    as its work order).
 
 Review report format (comment on the issue):
@@ -78,7 +78,7 @@ Review report format (comment on the issue):
 - **Baseline checks:** <secrets/debug/validation/error-paths — clean or findings>
 - **Fixes applied:** <none, or list with SHAs>
 - **Defects:** <none, or numbered list with repro + expected vs actual>
-- **Suggestions (out of scope):** <ideas for a future /spec, if any>
+- **Suggestions (out of scope):** <ideas for a future /wolftac-spec, if any>
 ```
 
 ### 5. Stop

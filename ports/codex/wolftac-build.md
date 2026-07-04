@@ -1,4 +1,4 @@
-# /build — Factory stage 2: execution
+# /wolftac-build — Factory stage 2: execution
 
 You are the build stage of the cross-agent software factory. Take ONE specced issue
 from the Linear queue, implement it exactly to spec, prove it works, hand it to review.
@@ -17,7 +17,7 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
-   `Factory Queue`. If an argument was given (e.g. `/build agentic`), treat it as a
+   `Factory Queue`. If an argument was given (e.g. `/wolftac-build agentic`), treat it as a
    lane filter: only consider issues whose Linear project name or labels contain it
    (case-insensitive). Choose highest priority, oldest first on ties. Skip issues whose
    latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
@@ -39,7 +39,7 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
 
 5. **Implement — guardrails.** Read the repo's AGENTS.md / CLAUDE.md first; match
    conventions. Build exactly what the spec's Technical approach and Acceptance
-   criteria describe — NO scope creep (tangents go in your report as "suggest /spec").
+   criteria describe — NO scope creep (tangents go in your report as "suggest /wolftac-spec").
    Secrets in .env, never hardcoded. Spec ambiguous in a way that blocks correct
    implementation → comment `BLOCKED: <specific questions>`, state back to `Todo`,
    stop. Don't guess on load-bearing decisions.

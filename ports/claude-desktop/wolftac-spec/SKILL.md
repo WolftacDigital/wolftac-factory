@@ -1,9 +1,9 @@
 ---
-name: spec
+name: wolftac-spec
 description: Factory stage 1 — turn a feature idea into a build-ready spec through structured questioning, then file it as a Linear issue in the software-factory queue (team Wolftac Digital, state Todo, label Factory Queue). Use when the user wants to spec out a feature, fix, or task. Produces a Linear issue only; never writes code.
 ---
 
-# /spec — Factory stage 1: specification
+# /wolftac-spec — Factory stage 1: specification
 
 Your only deliverable is a filed Linear issue containing a build-ready spec. You never
 write code in this stage.

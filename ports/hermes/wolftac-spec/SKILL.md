@@ -1,5 +1,5 @@
 ---
-name: spec
+name: wolftac-spec
 description: |
   Factory stage 1 — turn a feature idea into a build-ready spec through structured
   questioning, then file it as a Linear issue in the software-factory queue
@@ -10,7 +10,7 @@ description: |
   Voice triggers (speech-to-text aliases): "spec it", "spec this out", "add to the factory".
 ---
 
-# /spec — Factory stage 1: specification
+# /wolftac-spec — Factory stage 1: specification
 
 Your only deliverable is a filed Linear issue containing a build-ready spec. You never
 write code in this stage.
@@ -68,7 +68,7 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    `Wolftac Digital`, state `Todo`, label `Factory Queue`, imperative title,
    description = the full spec, priority (default Medium), estimate in points.
 
-5. **Report the issue identifier + URL, then stop.** Building is /build's job.
+5. **Report the issue identifier + URL, then stop.** Building is /wolftac-build's job.
 
 ## Guardrails
 - One feature per issue; split >~8 points into linked issues.

@@ -1,5 +1,5 @@
 ---
-name: build
+name: wolftac-build
 description: |
   Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from
   Linear (team Wolftac Digital), implement it on a feature branch per its spec, verify
@@ -10,7 +10,7 @@ description: |
   Voice triggers (speech-to-text aliases): "build from the queue", "work the queue".
 ---
 
-# /build — Factory stage 2: execution
+# /wolftac-build — Factory stage 2: execution
 
 Take ONE specced issue from the Linear queue, implement it exactly to spec, prove it
 works, hand it to review.
@@ -23,7 +23,7 @@ works, hand it to review.
 - Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 
 ## Preflight
-Confirm Linear tools exist (see /spec skill's preflight). No tools → STOP and say so.
+Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
 ## Procedure
 
@@ -48,7 +48,7 @@ Confirm Linear tools exist (see /spec skill's preflight). No tools → STOP and 
 
 5. **Implement — guardrails.** Read the repo's CLAUDE.md/AGENTS.md first; match
    conventions. Build exactly to the spec's Technical approach and Acceptance criteria.
-   NO scope creep — tangents go in the report as "suggest /spec". Secrets in .env,
+   NO scope creep — tangents go in the report as "suggest /wolftac-spec". Secrets in .env,
    never hardcoded. Blocking ambiguity → `BLOCKED: <questions>` comment, state `Todo`,
    stop. Don't guess on load-bearing decisions.
 
