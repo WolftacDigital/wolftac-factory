@@ -1,8 +1,9 @@
 <#
-Wolftac Factory deploy/drift tool.
+Wolftac Factory deploy/drift/package tool.
 
   pwsh deploy\deploy.ps1 -Check    # diff repo vs deployed copies; exit 1 on drift
   pwsh deploy\deploy.ps1 -Deploy   # copy repo -> agent locations (LF-normalized), rebuild Desktop zips
+  pwsh deploy\deploy.ps1 -Package  # zip the whole repo (minus .git) for handoff as plain files
 
 The repo is the source of truth. Files are written with LF line endings — CRLF in a
 skill's YAML frontmatter silently breaks skill discovery on Linux (WSL / Hermes).
@@ -10,7 +11,7 @@ If -Check reports drift and the DEPLOYED copy is the improvement (e.g. Hermes /l
 edited a skill in place), copy it back into the repo and commit; otherwise -Deploy
 overwrites the target with the repo version.
 #>
-param([switch]$Check, [switch]$Deploy)
+param([switch]$Check, [switch]$Deploy, [switch]$Package)
 
 $Repo = Split-Path $PSScriptRoot -Parent
 $Pairs = @(
@@ -87,4 +88,15 @@ if ($Deploy) {
     exit 0
 }
 
-Write-Output "Usage: deploy.ps1 -Check | -Deploy"
+if ($Package) {
+    $out = "$env:USERPROFILE\Downloads\wolftac-factory-package.zip"
+    if (Test-Path $out) { Remove-Item -Force $out }
+    $items = Get-ChildItem $Repo -Force | Where-Object { $_.Name -ne ".git" }
+    Compress-Archive -Path $items.FullName -DestinationPath $out
+    Write-Output "packaged $out"
+    Write-Output "Hand this file to an agent (Hermes, Codex, or a fresh Claude session);"
+    Write-Output "have it unzip, read AGENTS.md, and follow the setup instructions there."
+    exit 0
+}
+
+Write-Output "Usage: deploy.ps1 -Check | -Deploy | -Package"
