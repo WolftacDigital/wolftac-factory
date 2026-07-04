@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Build Your Own AI Software Factory — Wolftac Digital</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500&family=JetBrains+Mono:wght@400;700&family=Rajdhani:wght@500;600;700&display=swap');
+
+:root{
+  --bg-0:#050706; --bg-1:#0A0D0B; --bg-2:#121815;
+  --txt-1:#E2E8F0; --txt-2:#94A3B8;
+  --amber:#FF5E00; --cyan:#00F0FF; --warn:#FF003C;
+  --border:#1A231E; --border-amber:rgba(255,94,0,.25); --border-cyan:rgba(0,240,255,.35);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg-0); color:var(--txt-2);
+  font-family:'Chakra Petch',system-ui,sans-serif; font-weight:400;
+  letter-spacing:.02em; line-height:1.65; font-size:16px;
+}
+/* global scanline */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:60;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.14),rgba(0,0,0,.14) 1px,transparent 1px,transparent 3px);}
+.wrap{max-width:960px;margin:0 auto;padding:0 24px}
+h1,h2,h3{font-family:'Rajdhani',sans-serif;text-transform:uppercase;color:var(--txt-1)}
+h1{font-weight:700;font-size:clamp(2rem,5.5vw,3.4rem);letter-spacing:.14em;line-height:1.15}
+h2{font-weight:700;font-size:1.5rem;letter-spacing:.18em;margin-bottom:4px}
+h3{font-weight:600;font-size:1.05rem;letter-spacing:.14em;color:var(--txt-1)}
+.mono,.chip,.copy-btn,.step-num,summary{font-family:'JetBrains Mono',monospace}
+.chip{display:inline-block;font-size:.68rem;letter-spacing:.22em;text-transform:uppercase;color:var(--amber);border:1px solid var(--border-amber);padding:4px 10px;margin-bottom:14px}
+.chip.cyan{color:var(--cyan);border-color:var(--border-cyan)}
+a{color:var(--cyan);text-decoration:none}
+a:hover{text-shadow:0 0 10px rgba(0,240,255,.5)}
+p{margin-bottom:14px}
+strong{color:var(--txt-1);font-weight:500}
+code{font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--cyan);background:rgba(0,240,255,.06);padding:1px 5px;border:1px solid rgba(0,240,255,.12)}
+
+/* hero */
+header{padding:88px 0 56px;position:relative;overflow:hidden;border-bottom:1px solid var(--border)}
+header::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 20%,rgba(255,94,0,.09) 0%,transparent 60%),radial-gradient(circle at 80% 80%,rgba(0,240,255,.05) 0%,transparent 55%)}
+header .wrap{position:relative}
+.hud-coord{position:absolute;top:20px;right:24px;font-family:'JetBrains Mono',monospace;font-size:.62rem;letter-spacing:.2em;color:rgba(255,94,0,.45);text-transform:uppercase;text-align:right}
+.sub{color:var(--txt-2);max-width:620px;margin-top:18px;font-size:1.02rem}
+.hero-flow{display:flex;gap:0;align-items:stretch;margin-top:40px;flex-wrap:wrap}
+.flow-box{flex:1;min-width:180px;background:var(--bg-1);border:1px solid var(--border);padding:18px 20px;position:relative}
+.flow-box+.flow-box{border-left:none}
+.flow-box .mono{font-size:.66rem;letter-spacing:.22em;text-transform:uppercase;color:var(--amber)}
+.flow-box h3{margin:6px 0 4px}
+.flow-box p{font-size:.85rem;margin:0}
+.flow-box::after{content:"▶";position:absolute;right:-9px;top:50%;transform:translateY(-50%);color:var(--amber);font-size:.7rem;z-index:2;text-shadow:0 0 8px rgba(255,94,0,.8)}
+.flow-box:last-child::after{content:""}
+
+/* corner-bracket card */
+.card{position:relative;background:var(--bg-1);border:1px solid var(--border);padding:26px 28px;margin:22px 0}
+.card:hover{border-color:rgba(255,94,0,.4)}
+.corners i{position:absolute;width:14px;height:14px;border-color:rgba(255,94,0,.55);border-style:solid;border-width:0}
+.corners i:nth-child(1){top:-1px;left:-1px;border-top-width:2px;border-left-width:2px}
+.corners i:nth-child(2){top:-1px;right:-1px;border-top-width:2px;border-right-width:2px}
+.corners i:nth-child(3){bottom:-1px;left:-1px;border-bottom-width:2px;border-left-width:2px}
+.corners i:nth-child(4){bottom:-1px;right:-1px;border-bottom-width:2px;border-right-width:2px}
+
+/* sections + steps */
+section{padding:52px 0;border-bottom:1px solid var(--border)}
+.step-head{display:flex;align-items:center;gap:16px;margin-bottom:14px}
+.step-num{flex:none;width:46px;height:46px;display:flex;align-items:center;justify-content:center;border:1px solid var(--amber);color:var(--amber);font-size:1.1rem;font-weight:700;box-shadow:0 0 14px rgba(255,94,0,.18) inset}
+ul,ol{margin:0 0 14px 22px}
+li{margin-bottom:8px}
+li::marker{color:var(--amber)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.88rem}
+th,td{border:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top}
+th{font-family:'Rajdhani',sans-serif;text-transform:uppercase;letter-spacing:.12em;color:var(--amber);background:var(--bg-2);font-weight:600}
+td code{white-space:nowrap}
+.note{border-left:2px solid var(--cyan);background:rgba(0,240,255,.04);padding:12px 16px;margin:16px 0;font-size:.9rem}
+.warnbox{border-left:2px solid var(--warn);background:rgba(255,0,60,.05);padding:12px 16px;margin:16px 0;font-size:.9rem}
+.warnbox .mono,.note .mono{font-size:.65rem;letter-spacing:.22em;text-transform:uppercase;display:block;margin-bottom:5px}
+.warnbox .mono{color:var(--warn)}.note .mono{color:var(--cyan)}
+
+/* copy blocks */
+.codeblock{position:relative;margin:16px 0;border:1px solid var(--border);background:var(--bg-2)}
+.codeblock .bar{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg-1)}
+.codeblock .bar span{font-family:'JetBrains Mono',monospace;font-size:.62rem;letter-spacing:.22em;text-transform:uppercase;color:var(--txt-2)}
+.copy-btn{cursor:pointer;background:transparent;border:1px solid var(--amber);color:var(--amber);font-size:.62rem;letter-spacing:.2em;text-transform:uppercase;padding:5px 14px;transition:all .2s;display:flex;align-items:center;gap:6px}
+.copy-btn:hover{background:rgba(255,94,0,.1);box-shadow:0 0 15px rgba(255,94,0,.4)}
+.copy-btn.done{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 15px rgba(0,240,255,.4)}
+pre{padding:16px;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.6;color:var(--txt-1);white-space:pre-wrap;word-break:break-word}
+details{border:1px solid var(--border);background:var(--bg-1);margin:14px 0}
+details[open]{border-color:var(--border-amber)}
+summary{cursor:pointer;padding:13px 16px;font-size:.72rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber);list-style:none;display:flex;align-items:center;gap:10px}
+summary::before{content:"[+]";color:var(--cyan)}
+details[open] summary::before{content:"[–]"}
+summary:hover{background:rgba(255,94,0,.05)}
+details .codeblock{margin:0;border:none;border-top:1px solid var(--border)}
+
+/* stage color accents */
+.stage-spec{color:var(--amber)} .stage-build{color:var(--cyan)} .stage-review{color:#7CFF9B}
+
+footer{padding:44px 0 60px;text-align:center;font-size:.78rem;color:var(--txt-2)}
+footer .mono{font-size:.62rem;letter-spacing:.24em;text-transform:uppercase;color:rgba(255,94,0,.55);display:block;margin-bottom:10px}
+@media(max-width:700px){
+  .hero-flow{flex-direction:column}
+  .flow-box+.flow-box{border-left:1px solid var(--border);border-top:none}
+  .flow-box::after{content:"▼";right:50%;top:auto;bottom:-9px;transform:translateX(50%)}
+  .flow-box:last-child::after{content:""}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hud-coord">SYS // FACTORY-OPS<br>DOC.V1 · FIELD MANUAL</div>
+  <div class="wrap">
+    <span class="chip">Wolftac Digital // Field Manual</span>
+    <h1>Build Your Own<br>AI Software Factory</h1>
+    <p class="sub">Stop prompting your AI agent to build things one chat at a time. Build the <strong>assembly line</strong> instead: three specialized stages, one shared queue, and agents that hand work to each other — with proof at every step. This guide takes you from zero to a running factory in about 30 minutes.</p>
+    <div class="hero-flow">
+      <div class="flow-box"><span class="mono">Stage 01</span><h3 class="stage-spec">Spec</h3><p>Your smartest model interrogates the idea and writes a build-ready plan.</p></div>
+      <div class="flow-box"><span class="mono">Stage 02</span><h3 class="stage-build">Build</h3><p>A cheaper model implements the plan and proves it works by running it.</p></div>
+      <div class="flow-box"><span class="mono">Stage 03</span><h3 class="stage-review">Review</h3><p>An independent agent re-verifies everything. Only review can mark work done.</p></div>
+    </div>
+  </div>
+</header>
+
+<section id="why">
+  <div class="wrap">
+    <span class="chip cyan">Briefing</span>
+    <h2>Why a factory beats a chat window</h2>
+    <p>When one AI session does everything — planning, coding, and judging its own work — quality drifts and expensive model time gets burned on grunt work. A factory separates the concerns:</p>
+    <ul>
+      <li><strong>Better output.</strong> The builder can't grade its own homework. An independent review stage that <em>re-runs the tests itself</em> catches what the builder missed. (On our factory's very first run, the review stage caught a real defect the build stage's own report had gotten wrong.)</li>
+      <li><strong>Lower cost.</strong> Deep thinking happens once, at the spec stage, on your best model. Execution — where most tokens go — runs on cheaper models that just follow the plan.</li>
+      <li><strong>True hand-offs.</strong> Because all state lives in a shared issue tracker (not in any one chat), <em>any</em> agent can pick up the next stage. Your planning session can close, and a build loop picks the work up an hour later — or a completely different agent does.</li>
+    </ul>
+    <div class="card"><div class="corners"><i></i><i></i><i></i><i></i></div>
+      <h3>The contract — the only thing every agent must agree on</h3>
+      <table>
+        <tr><th>Element</th><th>Convention</th></tr>
+        <tr><td>Queue</td><td>A <strong>Linear</strong> team (free tier is fine). Every factory work item is a Linear issue.</td></tr>
+        <tr><td>Label</td><td><code>Factory Queue</code> — agents only ever touch issues carrying this label.</td></tr>
+        <tr><td>States</td><td><code>Todo</code> (specced) → <code>In&nbsp;Progress</code> (building) → <code>In&nbsp;Review</code> (awaiting QA) → <code>Done</code></td></tr>
+        <tr><td>Golden rule</td><td><strong>Only the review stage sets Done.</strong> Failed reviews go back to <code>Todo</code> with a numbered defect list — which becomes the next build's work order.</td></tr>
+        <tr><td>Spec format</td><td>Every spec starts with a <code>Repo:</code> header naming the working directory, and ends with testable acceptance criteria.</td></tr>
+        <tr><td>Identity</td><td>Every build/review report opens with <code>Agent: &lt;platform / model&gt;</code> so you always know who did what.</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="prereq">
+  <div class="wrap">
+    <span class="chip">Loadout</span>
+    <h2>What you need</h2>
+    <ul>
+      <li><strong>An AI coding agent that supports custom skills or prompts</strong> — Claude Code (recommended), Codex CLI, or similar. This guide uses Claude Code paths; an adaptation note for other agents is at the end.</li>
+      <li><strong>A Linear account</strong> — free at <a href="https://linear.app">linear.app</a>. Create a workspace and note your team name.</li>
+      <li><strong>~30 minutes</strong> for setup, then one small feature to run through as your first test.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="step1">
+  <div class="wrap">
+    <div class="step-head"><div class="step-num">01</div><h2>Set up your Linear queue</h2></div>
+    <ol>
+      <li>In Linear, create (or pick) a team. <strong>Write down its exact name</strong> — you'll substitute it for <code>YOUR_TEAM_NAME</code> in everything below.</li>
+      <li>Create a label named <code>Factory Queue</code> (Settings → Labels). This is the conveyor belt — it's how factory work stays separate from everything else in your workspace.</li>
+      <li>Confirm your team's workflow has these four states (Linear's defaults include them): <code>Todo</code>, <code>In Progress</code>, <code>In Review</code>, <code>Done</code>. No custom states needed.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="step2">
+  <div class="wrap">
+    <div class="step-head"><div class="step-num">02</div><h2>Connect your agent to Linear</h2></div>
+    <p>Your agent needs to read and write Linear issues. In <strong>Claude Code</strong>, enable the Linear connector: run <code>/mcp</code> in a session (or add Linear in your claude.ai connector settings) and complete the OAuth login. In <strong>Codex CLI</strong>, add this to <code>~/.codex/config.toml</code> and log in on first use:</p>
+    <div class="codeblock">
+      <div class="bar"><span>codex // config.toml addition</span><button class="copy-btn" data-copy>Copy</button></div>
+      <pre>[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"</pre>
+    </div>
+    <p>Quick test before moving on: ask your agent <em>"list my Linear teams."</em> If it answers with your team name, you're wired.</p>
+  </div>
+</section>
+
+<section id="step3">
+  <div class="wrap">
+    <div class="step-head"><div class="step-num">03</div><h2>Install the three skills</h2></div>
+    <p>This is the heart of the factory. You have two paths — the fast path lets your agent build its own factory (it takes one paste); the manual path gives you our exact battle-tested skill files.</p>
+
+    <h3 style="margin-top:26px">Fast path — one prompt, your agent builds it</h3>
+    <p>Paste this into your <strong>strongest model</strong> (in Claude Code: your best available Claude model). It will create all three skills in your agent's native format, then tell you how to invoke them. Replace <code>YOUR_TEAM_NAME</code> first.</p>
+    <div class="codeblock">
+      <div class="bar"><span>prompt // factory installer</span><button class="copy-btn" data-copy>Copy prompt</button></div>
+      <pre>I want you to build me a three-stage "software factory" as three custom skills
+(or custom prompts, whichever this platform supports), named factory-spec,
+factory-build, and factory-review. They coordinate through my Linear workspace.
+
+THE SHARED CONTRACT (encode this in all three skills):
+- Linear team: YOUR_TEAM_NAME. Queue label: "Factory Queue" — only ever touch
+  issues carrying this label.
+- States: Todo (specced) -> In Progress (building) -> In Review (awaiting QA)
+  -> Done. Done may ONLY be set by the review stage. A failed review returns
+  the issue to Todo with a numbered defect list.
+- Every spec begins with a "Repo:" header line naming the absolute path of the
+  working repository. Build and review refuse to guess at it.
+- Every build/review report posted to the issue opens with
+  "Agent: &lt;platform / model&gt;".
+
+STAGE 1 — /factory-spec (runs on the strongest model):
+Interrogate me in batches of max 4 questions until you could fill every spec
+section without inventing anything. Then draft a spec with sections: Repo
+header (+ Priority + Estimate), Problem, Goals, Non-goals, User flow,
+Technical approach (real file paths, verified if the repo is readable),
+Acceptance criteria (each independently testable, include at least one
+failure case), Test plan (exact commands + expected results), Build notes.
+No placeholders or TBDs allowed. Show me the draft for one go/no-go, then
+file it as a Linear issue: team YOUR_TEAM_NAME, state Todo, label Factory
+Queue. Never write code in this stage. One feature per issue.
+
+STAGE 2 — /factory-build (safe to run looped on a cheaper model):
+Pick the highest-priority Todo issue labeled Factory Queue (skip issues whose
+latest comment starts "BLOCKED:", issues with unresolved blocking relations,
+and — silently, no comment or state change — issues whose Repo path is not
+reachable from this session). Claim it: state In Progress, assignee me. Read
+the FULL spec and ALL comments (a prior failed-review defect list is the
+primary work order). Work on a feature branch named after the Linear issue —
+never commit to main. Implement exactly what the spec says: no scope creep,
+secrets only in env vars, and if the spec is ambiguous on a load-bearing
+decision, post "BLOCKED: &lt;question&gt;" and return it to Todo instead of
+guessing. Verify by EXECUTING the spec's test plan — "the code looks right"
+is not verification. Check the staged file list before committing (no build
+artifacts). Post a BUILD REPORT comment (Agent line, what was implemented,
+exact commands run + results per acceptance criterion, branch + commit SHAs,
+deviations, notes for review), then set state In Review. One issue per
+invocation, then stop.
+
+STAGE 3 — /factory-review (the only stage allowed to set Done):
+Take the oldest In Review issue labeled Factory Queue. Read the spec, all
+comments, and the actual diff on the branch. Re-run the ENTIRE test plan
+from scratch — never trust the build report's claims. Walk every acceptance
+criterion pass/fail with observed evidence. Baseline checks regardless of
+spec: no hardcoded secrets, no debug leftovers, input validation on new
+endpoints, no unrelated files in the diff. Verdicts: PASS -> tick the
+spec's checkboxes, post a REVIEW REPORT, set Done. PASS WITH FIXES (only
+minor, low-risk defects totaling ~15 min) -> fix on the same branch, commit,
+re-verify, report, set Done. FAIL -> do NOT rework it yourself; post a
+numbered defect list (what's wrong / how to reproduce / expected vs actual)
+and set state Todo. One issue per invocation.
+
+After creating all three, tell me exactly where you put the files and how I
+invoke each stage on this platform.</pre>
+    </div>
+
+    <h3 style="margin-top:34px">Manual path — install the exact files</h3>
+    <p>For Claude Code: create one folder per skill under <code>~/.claude/skills/</code> and put the matching <code>SKILL.md</code> inside (plus the spec template in the factory-spec folder). Expand each block, copy, and save. <strong>Replace <code>YOUR_TEAM_NAME</code> in all files</strong>, then restart your session — skills load at startup.</p>
+
+    <details>
+      <summary>~/.claude/skills/factory-spec/SKILL.md</summary>
+      <div class="codeblock">
+        <div class="bar"><span>skill // stage 1: spec</span><button class="copy-btn" data-copy>Copy file</button></div>
+        <pre>---
+name: factory-spec
+description: Factory stage 1 — turn a feature idea into a build-ready spec through structured questioning, then file it as a Linear issue in the factory queue (team YOUR_TEAM_NAME, state Todo, label Factory Queue). Use when the user wants to spec out a feature, fix, or task. Produces a Linear issue only; never writes code.
+---
+
+# /factory-spec — Stage 1: specification
+
+Your only deliverable is a filed Linear issue containing a build-ready spec.
+You never write code in this stage.
+
+## Factory constants
+- Linear team: **YOUR_TEAM_NAME**
+- Queue label: **Factory Queue** (how /factory-build and /factory-review find work)
+- Filed state: **Todo**
+- Conveyor: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Done` (set ONLY by review)
+
+## Procedure
+
+### 1. Understand the ask
+The skill arguments are the raw feature idea. If empty, ask.
+Interrogate the user in batches of at most 4 focused questions until you could
+defend every section of the spec template without inventing anything: the
+problem and who has it, success criteria, scope boundaries, technical
+constraints, verification. If the working directory is the target repo, ground
+the Technical approach in real file paths — read the repo's docs and the files
+the feature touches. Stop asking when further answers wouldn't change the build.
+
+### 2. Draft the spec
+Fill in every section of `spec-template.md` (in this skill's folder). Rules:
+- No placeholders, no "TBD". Can't fill a section → back to step 1.
+- Acceptance criteria must be independently testable by someone who didn't build it.
+- Work honestly larger than ~8 points → split into multiple linked issues.
+
+### 3. One approval pass
+Show the user the draft, ask a single go/no-go, accept edits, then file.
+
+### 4. File to Linear
+- Duplicate-check first (search open issues by title keywords).
+- Create the issue: team YOUR_TEAM_NAME, state Todo, label ["Factory Queue"],
+  imperative title, description = the full spec, priority (default Medium),
+  estimate in points.
+- The repo path MUST be in the spec's **Repo:** header — /factory-build
+  cannot work without it.
+
+### 5. Report
+Output the issue identifier and URL, then stop. Building is /factory-build's job.
+
+## Guardrails
+- Never file a spec with unresolved questions.
+- One feature per issue.
+- This is the expensive-model stage — depth here pays for itself downstream.
+  A vague spec wastes three sessions instead of one.</pre>
+      </div>
+    </details>
+
+    <details>
+      <summary>~/.claude/skills/factory-spec/spec-template.md</summary>
+      <div class="codeblock">
+        <div class="bar"><span>template // spec format</span><button class="copy-btn" data-copy>Copy file</button></div>
+        <pre># &lt;Imperative feature title&gt;
+
+**Repo:** &lt;absolute path or git URL&gt; | **Priority:** &lt;Urgent/High/Medium/Low&gt; | **Estimate:** &lt;points&gt;
+
+## Problem
+What's broken or missing, for whom, and why it matters now. One tight paragraph.
+
+## Goals
+- Concrete outcomes that define success. Each one observable after shipping.
+
+## Non-goals
+- Explicitly out of scope. This section protects the build stage from scope
+  creep — be generous here.
+
+## User flow
+Step-by-step of what the user sees and does once this ships. Number the steps.
+
+## Technical approach
+- **Entry points / affected files:** real paths verified against the repo
+- **Data model:** tables/fields added or changed; migrations needed?
+- **APIs / interfaces:** endpoints, params, auth requirements
+- **Key decisions:** chosen approach and why; alternatives rejected
+- **Dependencies:** libraries, env vars, external services
+
+## Acceptance criteria
+- [ ] Each criterion independently testable by a reviewer who didn't build it
+- [ ] Prefer "user can X and sees Y" over "code does Z"
+- [ ] Include at least one failure/edge case criterion
+
+## Test plan
+Exact commands to run and expected results — how build proves it works and
+review re-proves it independently. Cover happy path, edge, and failure cases.
+
+## Build notes
+- Branch: use the Linear-generated branch name for this issue.
+- Secrets go in .env / env vars — never hardcoded (checked at review).
+- Match repo conventions: read the repo's own docs before writing code.
+- &lt;anything environment-specific: ports, services, test data&gt;</pre>
+      </div>
+    </details>
+
+    <details>
+      <summary>~/.claude/skills/factory-build/SKILL.md</summary>
+      <div class="codeblock">
+        <div class="bar"><span>skill // stage 2: build</span><button class="copy-btn" data-copy>Copy file</button></div>
+        <pre>---
+name: factory-build
+description: Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from Linear (team YOUR_TEAM_NAME), implement it on a feature branch per its spec, verify it, and move it to In Review with a build report. One issue per invocation. Designed for looped runs (/loop 5m /factory-build) on a cheaper model.
+---
+
+# /factory-build — Stage 2: execution
+
+Take ONE specced issue from the queue, implement it exactly to spec, prove it
+works, hand it to review.
+
+## Factory constants
+- Linear team: **YOUR_TEAM_NAME** • Queue label: **Factory Queue**
+- You consume state **Todo**; you produce **In Review**.
+- `Done` is set ONLY by /factory-review — never by you.
+- Reports open with `**Agent:** &lt;platform / model&gt;`.
+
+## Procedure
+
+### 1. Pick up work
+- List issues: team YOUR_TEAM_NAME, state Todo, label Factory Queue.
+- Lane filter: if invoked with an argument (e.g. `/factory-build webapp`), only
+  consider issues whose Linear project name or labels contain it.
+- Pick highest priority, oldest first on ties. Skip:
+  - issues whose most recent comment starts `BLOCKED:` (they need a human),
+  - issues with unresolved blocking relations,
+  - issues whose **Repo:** path is unreachable from THIS session's environment —
+    skip these SILENTLY (no comment, no state change); another session will
+    take them.
+- Queue empty → say "Factory queue: nothing buildable" and stop cleanly.
+
+### 2. Claim it
+Set state In Progress, assignee me. Read the FULL spec and ALL comments —
+a prior REVIEW REPORT (FAIL) defect list is your primary work order.
+
+### 3. Locate the repo
+The spec's **Repo:** header names the working directory. Verify it exists and
+is a git repo. Header missing/ambiguous (a spec defect) → comment
+`BLOCKED: &lt;what's unclear&gt;`, set state back to Todo, stop.
+
+### 4. Branch
+Work on the issue's Linear-generated branch name. Never commit to main/master.
+
+### 5. Implement — with guardrails
+- Read the repo's own agent docs (CLAUDE.md / AGENTS.md) first; match conventions.
+- Build exactly what the spec describes. NO scope creep — tangents go in your
+  report as "suggest /factory-spec", not built.
+- Secrets in env vars, never hardcoded — review checks this.
+- Spec ambiguous on a load-bearing decision → `BLOCKED: &lt;questions&gt;` comment,
+  state back to Todo, stop. Do not guess.
+
+### 6. Verify
+Execute the spec's Test plan literally. Every acceptance criterion needs
+evidence from RUNNING code — "the code looks right" is not verification.
+
+### 7. Commit
+Descriptive messages; record SHAs. Review the staged file list first: never
+commit build artifacts (__pycache__/, node_modules/, dist/, logs); add
+.gitignore entries as needed.
+
+### 8. Hand off
+Post a comment:
+
+**BUILD REPORT**
+- **Agent:** &lt;platform / model&gt;
+- **Implemented:** &lt;what was built, per spec section&gt;
+- **Verified:** &lt;exact commands run and results, per criterion&gt;
+- **Branch / commits:** &lt;branch&gt; @ &lt;SHAs&gt;
+- **Deviations from spec:** &lt;none, or what and why&gt;
+- **Notes for review:** &lt;what the reviewer should check first&gt;
+
+Then set state In Review.
+
+### 9. Stop
+One issue per invocation. The loop handles cadence.</pre>
+      </div>
+    </details>
+
+    <details>
+      <summary>~/.claude/skills/factory-review/SKILL.md</summary>
+      <div class="codeblock">
+        <div class="bar"><span>skill // stage 3: review</span><button class="copy-btn" data-copy>Copy file</button></div>
+        <pre>---
+name: factory-review
+description: Factory stage 3 — QA the oldest Linear factory issue in In Review (team YOUR_TEAM_NAME, label Factory Queue) against its spec's acceptance criteria by actually running the code. Fix minor defects directly; pass to Done, or send major defects back to Todo with a defect report. The ONLY stage allowed to set Done. One issue per invocation. Designed for looped runs (/loop 5m /factory-review).
+---
+
+# /factory-review — Stage 3: quality assurance
+
+You are the only stage allowed to mark an issue Done. Default posture:
+skeptical. The build report is a claim, not a fact, until you reproduce it.
+
+## Factory constants
+- Linear team: **YOUR_TEAM_NAME** • Queue label: **Factory Queue**
+- You consume **In Review**; you produce **Done** (pass) or **Todo** (fail → rework).
+- Reports open with `**Agent:** &lt;platform / model&gt;`. Prefer reviewing work
+  built by a DIFFERENT agent/model than yourself when possible.
+
+## Procedure
+
+### 1. Pick up work
+- List issues: team YOUR_TEAM_NAME, state In Review, label Factory Queue,
+  oldest first. Lane filter: same as build (argument matches project/labels).
+- Skip (silently) issues whose **Repo:** path is unreachable from this session.
+- Nothing there → "Factory queue: nothing awaiting review", stop cleanly.
+
+### 2. Gather the evidence
+Read the full spec, every comment (especially the latest BUILD REPORT), and
+the actual diff: check out the branch named in the build report and read
+git log / git diff against the default branch.
+
+### 3. Verify by execution, not inspection
+- Re-run the spec's Test plan yourself, FROM SCRATCH. Do not trust the build
+  report's claimed results — reproduce them.
+- Walk EVERY acceptance criterion: pass/fail with observed evidence.
+- Baseline checks regardless of spec: no hardcoded secrets or tokens, no debug
+  leftovers, input validation on new endpoints/forms, error paths don't crash,
+  no unrelated files in the diff.
+
+### 4. Verdict — three outcomes
+
+**PASS** — every criterion verified, baseline clean:
+tick the spec's acceptance checkboxes, post the report, set state Done.
+
+**PASS WITH FIXES** — only minor defects (low-risk, no design change, all
+fixable in ~15 minutes total): fix on the same branch, commit, re-verify,
+list fixes with SHAs in the report, tick checkboxes, set Done.
+
+**FAIL** — any major defect (criterion unmet, design deviation, security
+issue, unreproducible verification): do NOT rework it yourself. Post a
+numbered defect list (what's wrong → how to reproduce → expected vs actual),
+set state Todo — the build stage treats your list as its work order.
+
+Report format (comment on the issue):
+
+**REVIEW REPORT — &lt;PASS | PASS WITH FIXES | FAIL&gt;**
+- **Agent:** &lt;platform / model&gt;
+- **Criteria:** &lt;n&gt;/&lt;total&gt; verified — one line per criterion: pass/fail + evidence
+- **Test plan reproduced:** &lt;commands run, results&gt;
+- **Baseline checks:** &lt;clean or findings&gt;
+- **Fixes applied:** &lt;none, or list with SHAs&gt;
+- **Defects:** &lt;none, or numbered list&gt;
+- **Suggestions (out of scope):** &lt;ideas for a future /factory-spec&gt;
+
+### 5. Stop
+One issue per invocation. Improvement ideas go in Suggestions — never into
+the code during a PASS.</pre>
+      </div>
+    </details>
+
+    <div class="warnbox"><span class="mono">⚠ Three install gotchas that cost us real debugging time</span>
+      <ul style="margin-bottom:0">
+        <li><strong>Restart your session after installing.</strong> Skills are discovered at startup — an open session will not see new files.</li>
+        <li><strong>Line endings must be LF, not CRLF.</strong> On Linux/WSL, a Windows-style <code>\r</code> in the frontmatter makes the skill silently fail to register. If a skill won't appear, check this first.</li>
+        <li><strong>Prefix your skill names.</strong> We use a prefix (<code>factory-</code>) because a bare name like <code>review</code> can collide with your platform's built-in commands and get shadowed.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="step4">
+  <div class="wrap">
+    <div class="step-head"><div class="step-num">04</div><h2>Run one piece through by hand</h2></div>
+    <p>Before turning on any automation, walk one small, real feature through all three stages yourself so you see each hand-off. Pick something tiny — a utility script, a small endpoint, a fix.</p>
+    <ol>
+      <li><strong>Spec it</strong> — in a fresh session on your strongest model:</li>
+    </ol>
+    <div class="codeblock">
+      <div class="bar"><span>prompt // first spec</span><button class="copy-btn" data-copy>Copy prompt</button></div>
+      <pre>/factory-spec I want to add [describe one small feature] to the repo at
+[absolute path]. Ask me whatever you need, then file it to the queue.</pre>
+    </div>
+    <ol start="2">
+      <li><strong>Build it</strong> — open a session in (or with access to) that repo, on a cheaper model, and run <code>/factory-build</code>. Watch it claim the issue, branch, implement, run the tests, post its BUILD REPORT, and move the issue to In Review.</li>
+      <li><strong>Review it</strong> — run <code>/factory-review</code> (ideally a different model than the builder). Watch it re-run the test plan from scratch and either mark it Done or send it back with defects.</li>
+    </ol>
+    <p>Open the issue in Linear when it's over. That comment thread — spec, build report, review report, each signed by the agent that wrote it — is your factory's paper trail. Every piece of work you ever run will look like this.</p>
+  </div>
+</section>
+
+<section id="step5">
+  <div class="wrap">
+    <div class="step-head"><div class="step-num">05</div><h2>Turn on the loops</h2></div>
+    <p>The factory becomes an assembly line when build and review run on timers instead of by hand. In Claude Code, open two persistent sessions:</p>
+    <table>
+      <tr><th>Session</th><th>Where</th><th>Command</th><th>Model</th></tr>
+      <tr><td>Build line</td><td>In the target repo</td><td><code>/loop 5m /factory-build</code></td><td>Cheaper executor</td></tr>
+      <tr><td>Review line</td><td>Anywhere with repo access</td><td><code>/loop 5m /factory-review</code></td><td>Your solid mid-tier</td></tr>
+    </table>
+    <p>Every five minutes each line checks the queue, does at most one issue, and goes quiet if there's nothing to do. Your whole job collapses into the front of the line: have ideas, <code>/factory-spec</code> them, and watch finished work accumulate in Done.</p>
+    <div class="note"><span class="mono">◈ Model economics</span>
+      Spend your premium model where judgment lives — the spec stage — and let cheaper models execute a great plan. You don't need your most expensive model at every station of the factory; you need it at the drawing board. A deep spec makes cheap execution good.
+    </div>
+  </div>
+</section>
+
+<section id="step6">
+  <div class="wrap">
+    <div class="step-head"><div class="step-num">06</div><h2>Level up</h2></div>
+    <ul>
+      <li><strong>Lane filters.</strong> Multiple projects on one queue? <code>/loop 5m /factory-build webapp</code> makes a session work only issues whose Linear project or labels match "webapp". Run one lane per repo.</li>
+      <li><strong>Cross-agent crews.</strong> The contract lives in Linear, not in any one tool — so a Codex agent can build what Claude specced, and vice versa. Port the same three stage-definitions to each agent's prompt/skill format, and have reviewers prefer work built by a <em>different</em> agent: cross-agent review catches more.</li>
+      <li><strong>Version-control the factory itself.</strong> Put the skill files in a small private git repo with a deploy script that copies them to each agent's skill folder. The skills will evolve — our review stage's findings have amended our build skill more than once. That feedback loop is the real compounding asset.</li>
+      <li><strong>Failed reviews are fuel, not failures.</strong> A FAIL verdict with a sharp defect list turns directly into the next build pass. The conveyor self-heals — you only get pulled in when something is marked BLOCKED.</li>
+    </ul>
+    <div class="card"><div class="corners"><i></i><i></i><i></i><i></i></div>
+      <h3>Adapting to Codex, or any other agent</h3>
+      <p style="margin-bottom:6px">The stages are platform-independent. For <strong>Codex CLI</strong>: save each stage as a markdown file in <code>~/.codex/prompts/</code> (e.g. <code>factory-build.md</code>) — they become <code>/factory-build</code> etc. — and add the Linear MCP block from Step 02. For any other agent: paste the fast-path installer prompt from Step 03 and it will translate the factory into its own native format. The only non-negotiables are the contract: the label, the four states, the Repo header, execution-verified reports, and <em>only review sets Done</em>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="trouble">
+  <div class="wrap">
+    <span class="chip cyan">Diagnostics</span>
+    <h2>Troubleshooting</h2>
+    <table>
+      <tr><th>Symptom</th><th>Fix</th></tr>
+      <tr><td>Skill doesn't appear after install</td><td>Restart the session (skills load at startup). On Linux/WSL, verify LF line endings — <code>cat -A SKILL.md | head -3</code> must show <code>$</code>, never <code>^M$</code>.</td></tr>
+      <tr><td>Skill loads, Linear calls fail</td><td>The Linear connection isn't authorized yet — rerun the connector/OAuth step and ask the agent to list your teams.</td></tr>
+      <tr><td>Build grabs the wrong things</td><td>Check the <code>Factory Queue</code> label filter and your team name in the skill files. Unlabeled issues must be invisible to the factory.</td></tr>
+      <tr><td>An issue ping-pongs between agents</td><td>Someone used <code>BLOCKED:</code> for "not my environment." Unreachable-repo issues must be skipped <em>silently</em>; BLOCKED is only for genuine spec defects.</td></tr>
+      <tr><td>Work marked Done that isn't done</td><td>A build stage set Done directly. Re-read the golden rule into your build skill: build ends at In Review, always.</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="mono">// Wolftac Digital · Precision Systems for the AI Age //</span>
+    <p>This field manual documents the Wolftac Factory pattern — spec, build, review — as we run it in production across Claude Code, Codex, and our agent fleet.<br>Factory pattern inspired by the software-factory concept taught in Alex Finn's Vibe Coding Academy.</p>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll('[data-copy]').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    var pre = btn.closest('.codeblock').querySelector('pre');
+    var text = pre.textContent;
+    function done(){
+      var old = btn.textContent;
+      btn.textContent = 'Copied ✓';
+      btn.classList.add('done');
+      setTimeout(function(){ btn.textContent = old; btn.classList.remove('done'); }, 1800);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function(){ fallback(); });
+    } else { fallback(); }
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch(e) {}
+      document.body.removeChild(ta);
+    }
+  });
+});
+</script>
+</body>
+</html>
