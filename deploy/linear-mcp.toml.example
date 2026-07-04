@@ -1,0 +1,7 @@
+# Add this to ~/.codex/config.toml to give Codex access to the factory's Linear queue.
+# Remote MCP by URL — no npx, immune to the local TLS-MITM issue.
+# First use triggers OAuth (or run: codex mcp login linear).
+# Do NOT commit your actual config.toml to any repo — it contains other MCP entries.
+
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
