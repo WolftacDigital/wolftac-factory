@@ -26,8 +26,10 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
 ## Procedure
 
 1. **Pick up work.** `list_issues`: team `Wolftac Digital`, state `In Review`, label
-   `Factory Queue`, oldest first. Nothing → "Factory queue: nothing awaiting review",
-   stop cleanly.
+   `Factory Queue`, oldest first. If the user gave a lane filter, only consider issues
+   whose Linear project name or labels contain it (case-insensitive). Skip — SILENTLY,
+   no comment or state change — issues whose spec **Repo:** path this chat cannot
+   reach. Nothing → "Factory queue: nothing awaiting review", stop cleanly.
 
 2. **Gather evidence.** Read the full spec, every comment (especially the latest
    BUILD REPORT), and the actual diff: check out the branch named in the build report

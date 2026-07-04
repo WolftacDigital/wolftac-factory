@@ -17,8 +17,13 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
-   `Factory Queue`. Choose highest priority, oldest first on ties. Skip issues whose
-   latest comment starts `BLOCKED:` and issues with unresolved blocking relations.
+   `Factory Queue`. If an argument was given (e.g. `/build agentic`), treat it as a
+   lane filter: only consider issues whose Linear project name or labels contain it
+   (case-insensitive). Choose highest priority, oldest first on ties. Skip issues whose
+   latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
+   SILENTLY, no comment or state change — issues whose spec **Repo:** path is
+   unreachable from this session's environment (they belong to a differently-homed
+   session; `BLOCKED:` is reserved for genuine spec defects).
    Queue empty → say "Factory queue: nothing buildable" and stop cleanly.
 
 2. **Claim it.** Set state `In Progress`, assignee = me. Read the FULL description

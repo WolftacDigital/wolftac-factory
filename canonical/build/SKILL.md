@@ -25,9 +25,15 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
   `"Linear workspace issues"` — you need `list_issues`, `get_issue`, `save_issue`,
   `save_comment`, `list_comments`).
 - `list_issues`: team `Wolftac Digital`, state `Todo`, label `Factory Queue`.
+- Lane filter: if this skill was invoked with an argument (e.g. `/build agentic`), only
+  consider issues whose Linear project name or labels contain it (case-insensitive).
 - Pick the highest priority (Urgent > High > Medium > Low), oldest first on ties. Skip:
   - issues whose most recent comment is a `BLOCKED:` comment (they need a human/respec),
-  - issues with unresolved blocking relations (check with `get_issue`).
+  - issues with unresolved blocking relations (check with `get_issue`),
+  - issues whose spec **Repo:** path is unreachable from THIS session's environment
+    (test the path — e.g. a WSL path from a Windows session, or another machine's
+    repo). Skip these SILENTLY: no comment, no state change — they belong to a
+    differently-homed session.
 - **Queue empty or everything skipped → say "Factory queue: nothing buildable" and stop
   cleanly.** (A looped run will simply check again next cycle.)
 
@@ -38,8 +44,10 @@ pass and its defect list is your primary work order, on top of the original spec
 
 ### 3. Locate the repo
 The spec's **Repo** header line names the working directory. Verify it exists and is a
-git repo. If the repo is missing or ambiguous: post a comment
-`BLOCKED: <what's unclear>`, set state back to `Todo`, and stop.
+git repo. If the **Repo:** header is missing, ambiguous, or names a path that exists
+nowhere (a genuine spec defect): post a comment `BLOCKED: <what's unclear>`, set state
+back to `Todo`, and stop. Reserve `BLOCKED:` for spec defects only — a repo that is
+merely unreachable from this environment should have been silently skipped at step 1.
 
 ### 4. Branch
 Work on the issue's `gitBranchName` (Linear generates it; it's in the issue payload).
