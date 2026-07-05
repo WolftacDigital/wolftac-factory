@@ -561,6 +561,15 @@ the code during a PASS.</pre>
     <div class="note"><span class="mono">◈ Model economics</span>
       Spend your premium model where judgment lives — the spec stage — and let cheaper models execute a great plan. You don't need your most expensive model at every station of the factory; you need it at the drawing board. A deep spec makes cheap execution good.
     </div>
+    <h3 style="margin-top:26px">Running unattended — the safety rules</h3>
+    <p>A loop is an unattended worker. Before you leave one running:</p>
+    <ul>
+      <li><strong>Pre-approve, don't blanket-approve.</strong> An unattended session stalls at its first permission prompt — so allowlist the specific tools each stage needs <em>before</em> starting the loop. Never "fix" a stalling loop by approving everything: a destructive command outside the expected set should fail, not auto-run.</li>
+      <li><strong>One issue per tick, fail closed.</strong> Each cycle works at most one issue and goes quiet on an empty queue. If any precondition is missing — issue tracker unreachable, target repo absent — the worker logs why and exits <em>without claiming anything</em>.</li>
+      <li><strong>Claim, then re-check.</strong> Listing and claiming aren't atomic. After claiming an issue, re-read its state and assignee — if another worker got there first, back off silently. Simplest cure: one build worker per lane.</li>
+      <li><strong>Sweep stale claims.</strong> An issue stuck In&nbsp;Progress with no comment activity for a few hours is presumed orphaned — reset it to Todo and the line picks it up again on the next tick.</li>
+    </ul>
+    <p>Not on Claude Code? Any agent with a non-interactive mode can run a line: wrap its stage prompt in your scheduler of choice — an OS scheduled task, cron, or the agent's built-in scheduler — on a 5–30 minute cadence. The same four rules apply.</p>
   </div>
 </section>
 
