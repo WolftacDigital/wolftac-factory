@@ -76,18 +76,26 @@ if ($Check) {
 if ($Deploy) {
     $enc = New-Object System.Text.UTF8Encoding($false)
     $skipped = 0
+    $forced = 0
     foreach ($p in $Pairs) {
         $dstDir = Split-Path $p.Dst -Parent
         if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Force $dstDir | Out-Null }
         $srcHash = Get-LfHash (Join-Path $Repo $p.Src)
         $dstHash = Get-LfHash $p.Dst
-        if ($null -ne $dstHash -and $srcHash -ne $dstHash -and -not $Force) {
+        $isDrift = ($null -ne $dstHash -and $srcHash -ne $dstHash)
+        if ($isDrift -and -not $Force) {
             Write-Output "DRIFT-SKIPPED $($p.Dst) (use -Force, or reconcile the live edit into the repo)"
             $skipped++
             continue
         }
+        if ($isDrift) {
+            # -Force is clobbering a target that had diverged from the repo — make it audible.
+            Write-Output "FORCED-OVERWRITE $($p.Dst)"
+            $forced++
+        } else {
+            Write-Output "deployed $($p.Src)"
+        }
         [IO.File]::WriteAllText($p.Dst, (Get-LfText (Join-Path $Repo $p.Src)), $enc)
-        Write-Output "deployed $($p.Src)"
     }
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
@@ -98,6 +106,9 @@ if ($Deploy) {
     if ($skipped -gt 0) {
         Write-Output "Deploy finished with $skipped drift-skipped file(s). Reconcile the live edit(s) into the repo, or re-run with -Force to overwrite."
         exit 1
+    }
+    if ($forced -gt 0) {
+        Write-Output "$forced target(s) force-overwritten despite drift — verify no live edit was lost."
     }
     Write-Output "Deploy complete. Restart any open agent session to pick up skill changes; re-upload the Desktop zips in the Claude app."
     exit 0
