@@ -45,6 +45,10 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## Preflight
 Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
+## WSL-hosted repo review pattern
+
+When a spec's **Repo:** path is WSL-hosted (for example `/home/... (WSL Ubuntu)`) but the active Hermes host is Windows, do not skip the issue just because Git Bash cannot see `/home/...`. Probe it through `wsl.exe`, then review in a detached temporary worktree so the active branch and uncommitted local artifacts are not disturbed. See `references/wsl-linear-factory-review-proof.md` for the exact pattern, including clean worktree checkout, lockfile dependency install, diff-scoped secret/debug scans, and Linear comment/state verification.
+
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `In Review`, label

@@ -25,6 +25,7 @@ $Pairs = @(
     @{ Src = "ports\hermes\wolftac-spec\SKILL.md";      Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-spec\SKILL.md" }
     @{ Src = "ports\hermes\wolftac-build\SKILL.md";     Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-build\SKILL.md" }
     @{ Src = "ports\hermes\wolftac-review\SKILL.md";    Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review\SKILL.md" }
+    @{ Src = "ports\hermes\wolftac-review\references\wsl-linear-factory-review-proof.md"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review\references\wsl-linear-factory-review-proof.md" }
 )
 
 # Claude Code inside WSL reads the LINUX home (~/.claude/skills), not the Windows one.
