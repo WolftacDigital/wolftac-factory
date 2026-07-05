@@ -3,9 +3,11 @@
 This is your `/wolftac-spec` → `/wolftac-build` → `/wolftac-review` software factory:
 a repeatable pipeline where one agent turns an idea into a detailed spec, another
 builds it and proves it works, and a third independently re-verifies before anything
-is marked done. It runs identically across **Claude Code, Claude Desktop, Codex, and
-Hermes** — any agent on any of those platforms can spec, build, or review, because
+is marked done. It runs across **Claude Code, Claude Desktop, Codex, and Hermes** —
 the whole hand-off happens through one shared Linear queue, not through this repo.
+Claude Code, Codex, and Hermes can run every stage; Claude Desktop participates
+fully in spec, and in build/review only when the chat has filesystem + terminal
+MCP access to the target repo.
 
 **This repo is the source of truth for the skill files themselves.** The copies
 under `~/.claude/skills`, `~/.codex/prompts`, and `%LOCALAPPDATA%\hermes\skills` (on
@@ -23,11 +25,18 @@ canonical/              Claude Code skills (the reference implementation)
   wolftac-review/         review stage: independent re-verification, the only stage that marks Done
 ports/codex/            Codex custom prompts (same three stages, Codex's format)
 ports/hermes/           Hermes skills (same three stages, Hermes' format)
+  wolftac-review/references/   Proof patterns (e.g. reviewing WSL-hosted repos via a detached worktree)
 ports/claude-desktop/   Sources for Claude Desktop's uploadable skill bundles
 deploy/deploy.ps1       -Check (drift) / -Deploy (push to all local targets) / -Package (zip for handoff)
 deploy/hermes-moa-presets.yaml.example   Optional Hermes MoA presets for model-team routing
 deploy/linear-mcp.toml.example   Codex config.toml snippet for connecting Linear
+share/build-your-own-agent-factory.html   Public/client field manual (generic /factory-* names — see Naming)
 ```
+
+**Naming:** `/wolftac-*` commands are Wolftac's internal deployed skills — the ones
+this repo installs. The `/factory-*` names that appear in `share/` are sanitized,
+generic examples for public and client distribution: templates to copy, not skills
+installed here.
 
 ## Giving this factory to another agent
 
@@ -87,6 +96,11 @@ Codex needs a Linear OAuth login on first use (or `codex mcp login linear`), Her
 needs Linear MCP/OAuth wired in its profile and a fresh session/gateway reload, and
 Claude Desktop needs the `wolftac-*.zip` bundles uploaded as Skills in its settings.
 
+For scheduled/unattended lines — Claude Code loops, Hermes cron ticks, Codex
+`exec` wrappers — follow **"Running unattended" in `AGENTS.md`**: verified
+per-platform recipes plus the shared safety rules (one issue per tick, fail-closed
+preconditions, claim-race and stale-claim conventions).
+
 ## Hermes MoA model-team routing
 
 The Hermes port can optionally run each factory stage through a Mixture-of-Agents
@@ -132,8 +146,8 @@ from real repo commands, test output, diffs, and Linear state.
 - Every spec has a mandatory **`Repo:`** header naming where the work happens; every
   build/review report opens with **`Agent: <platform / model>`** so you can always
   tell who did what.
-- Model economics: spec on your strongest model or the `wolftac-factory-spec` MoA
-  preset, loop build/review on the stage presets or cheaper workers (`/loop 5m
+- Model economics: spec on your strongest model or (Hermes only) the
+  `wolftac-factory-spec` MoA preset, loop build/review on the stage presets or cheaper workers (`/loop 5m
   /wolftac-build`, `/loop 5m /wolftac-review`) — optionally scoped with a lane
   filter, e.g. `/loop 5m /wolftac-build agentic`.
 
