@@ -1,8 +1,10 @@
 <#
 Wolftac Factory deploy/drift/package tool.
 
-  pwsh deploy\deploy.ps1 -Check    # diff repo vs deployed copies; exit 1 on drift
-  pwsh deploy\deploy.ps1 -Deploy   # copy repo -> agent locations (LF-normalized), rebuild Desktop zips
+  pwsh deploy\deploy.ps1 -Check           # diff repo vs deployed copies; exit 1 on drift
+  pwsh deploy\deploy.ps1 -Deploy          # copy repo -> agent locations (LF-normalized), rebuild Desktop zips;
+                                          #   drifted (live-edited) targets are SKIPPED with a warning, exit 1
+  pwsh deploy\deploy.ps1 -Deploy -Force   # overwrite drifted targets too
   pwsh deploy\deploy.ps1 -Package  # zip the whole repo (minus .git) for handoff as plain files
 
 The repo is the source of truth. Files are written with LF line endings — CRLF in a
@@ -11,7 +13,7 @@ If -Check reports drift and the DEPLOYED copy is the improvement (e.g. Hermes /l
 edited a skill in place), copy it back into the repo and commit; otherwise -Deploy
 overwrites the target with the repo version.
 #>
-param([switch]$Check, [switch]$Deploy, [switch]$Package)
+param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force)
 
 $Repo = Split-Path $PSScriptRoot -Parent
 $Pairs = @(
@@ -73,9 +75,17 @@ if ($Check) {
 
 if ($Deploy) {
     $enc = New-Object System.Text.UTF8Encoding($false)
+    $skipped = 0
     foreach ($p in $Pairs) {
         $dstDir = Split-Path $p.Dst -Parent
         if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Force $dstDir | Out-Null }
+        $srcHash = Get-LfHash (Join-Path $Repo $p.Src)
+        $dstHash = Get-LfHash $p.Dst
+        if ($null -ne $dstHash -and $srcHash -ne $dstHash -and -not $Force) {
+            Write-Output "DRIFT-SKIPPED $($p.Dst) (use -Force, or reconcile the live edit into the repo)"
+            $skipped++
+            continue
+        }
         [IO.File]::WriteAllText($p.Dst, (Get-LfText (Join-Path $Repo $p.Src)), $enc)
         Write-Output "deployed $($p.Src)"
     }
@@ -84,6 +94,10 @@ if ($Deploy) {
     foreach ($s in @("wolftac-spec", "wolftac-build", "wolftac-review")) {
         Compress-Archive -Path (Join-Path $Repo "ports\claude-desktop\$s") -DestinationPath (Join-Path $zipOut "$s.zip") -Force
         Write-Output "zipped   $s.zip -> $zipOut"
+    }
+    if ($skipped -gt 0) {
+        Write-Output "Deploy finished with $skipped drift-skipped file(s). Reconcile the live edit(s) into the repo, or re-run with -Force to overwrite."
+        exit 1
     }
     Write-Output "Deploy complete. Restart any open agent session to pick up skill changes; re-upload the Desktop zips in the Claude app."
     exit 0
@@ -100,4 +114,4 @@ if ($Package) {
     exit 0
 }
 
-Write-Output "Usage: deploy.ps1 -Check | -Deploy | -Package"
+Write-Output "Usage: deploy.ps1 -Check | -Deploy [-Force] | -Package"
