@@ -31,7 +31,7 @@ Model roles inside the preset:
 - **Claude Sonnet 5** advises on implementation mechanics and likely code changes.
 - **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and defect spotting. Treat Gemma as advisory only; if the LM Studio reference fails or disagrees with cloud models, continue with cloud consensus and real execution proof.
 
-Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-build`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn.
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-build`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
@@ -54,12 +54,14 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
    unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
-2. **Claim it.** State `In Progress`, assignee Jonathan. Read the FULL spec and ALL
+2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Read the FULL spec and ALL
    comments — a prior `REVIEW REPORT — FAIL` defect list is your primary work order.
 
 3. **Locate the repo.** The spec's **Repo:** header names the working directory.
    Verify it exists and is a git repo. Missing/ambiguous → comment
-   `BLOCKED: <what's unclear>`, state back to `Todo`, stop.
+   `BLOCKED: <what's unclear>`, state back to `Todo`, stop. Reserve `BLOCKED:` for
+   spec defects only — a repo that is merely unreachable from this environment
+   should have been silently skipped at step 1.
 
 4. **Branch.** Use the issue's Linear-generated branch name; create from the default
    branch if needed. Never commit directly to main/master.

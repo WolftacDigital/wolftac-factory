@@ -54,6 +54,11 @@ installed and oriented; **`canonical/wolftac-{spec,build,review}/SKILL.md` is th
 actual spec you execute against.** Read the one(s) for the stage(s) you'll run before
 your first invocation.
 
+**Naming note:** the deployed commands in this repo are `/wolftac-*`. If you find
+`/factory-*` names in `share/build-your-own-agent-factory.html`, those are
+sanitized public examples for clients/community — templates, not installed skills.
+Do not mix the two.
+
 ## Which one are you? Install yourself.
 
 Pick your platform below. Every path ends the same way: the three skills present
@@ -154,6 +159,88 @@ than pretending the model team ran.
   something is finished, the correct end state is `In Review` — never `Done`.
 - **If a spec is genuinely wrong or ambiguous**, don't guess on load-bearing
   decisions — post `BLOCKED: <specific question>` and return the issue to `Todo`.
+
+## Running unattended
+
+Interactive use needs none of this. For scheduled/looped workers, use only the
+recipes below — **every command here was verified against the live CLI on
+2026-07-05.** If you need a flag not shown, verify it against `--help` yourself
+before relying on it; never schedule aspirational syntax.
+
+**Shared safeguards (all platforms):**
+- One issue per tick. Exit cleanly — and quietly — on an empty queue.
+- Fail closed: if any precondition is missing (Linear unreachable, repo absent,
+  a required model preset not active), log why and exit WITHOUT claiming an issue.
+- Claim-race rule: list→claim is not atomic. After claiming, re-read the issue's
+  state and assignee — if another session got there first, back off silently.
+  Prefer one build worker per lane.
+- Stale-claim recovery: an issue sitting `In Progress` with no comment activity
+  for more than ~4 hours is presumed orphaned — the operator (or a sweep job)
+  may reset it to `Todo`.
+- Never grant blanket auto-approval to an unattended worker. Scope permissions
+  to exactly what the stage needs; a destructive operation outside that scope
+  should fail, not auto-approve.
+
+### Claude Code
+
+```
+/loop 5m /wolftac-build [lane]     # build line, session in/reaching the target repo
+/loop 5m /wolftac-review           # review line
+```
+
+Permission precondition: an unattended loop stalls at the first tool call that
+needs approval. Pre-approve the specific tools the stage uses (project
+`.claude/settings.json` allowlist or a scoped permission profile) **before**
+starting the loop. Do not "fix" a stalling loop with a blanket bypass.
+
+### Hermes
+
+Hermes ships a scheduler (`hermes cron`). Verified recipe — a build tick every
+30 minutes with the skill attached and repo context injected:
+
+```
+hermes cron create --name wolftac-build-tick \
+  --skill wolftac-build \
+  --workdir <ABSOLUTE_PATH_TO_TARGET_REPO> \
+  "every 30m" \
+  "Run one wolftac-build tick: work at most one Factory Queue issue; if the queue is empty or any precondition fails, exit cleanly."
+```
+
+Manage with `hermes cron list | status | pause | resume | remove`. For non-TTY
+runs that would hit unseen shell hooks, the CLI offers `--accept-hooks` — enable
+it deliberately per job, not as a default.
+
+MoA note (routing + cost): cron ticks run under the profile's active/default
+model, and MoA presets fan out to **every** reference model on each user turn —
+an idle-queue tick on an MoA preset pays the full fan-out for nothing. Prefer
+single-model ticks for polling; reserve the stage MoA presets for interactive
+runs, or accept the cost knowingly.
+
+### Codex
+
+`codex exec` runs a prompt non-interactively (verified:
+`codex exec --skip-git-repo-check "<prompt>"` completes and prints the reply).
+Feed it the stage prompt file, pinned to the target repo:
+
+```powershell
+# Windows scheduled task (PowerShell)
+codex exec -C <ABSOLUTE_PATH_TO_TARGET_REPO> (Get-Content ~\.codex\prompts\wolftac-build.md -Raw)
+```
+```sh
+# cron (bash)
+codex exec -C <ABSOLUTE_PATH_TO_TARGET_REPO> "$(cat ~/.codex/prompts/wolftac-build.md)"
+```
+
+Sandbox/approvals: choose an explicit `--sandbox <mode>` appropriate to the repo.
+Codex's own help marks `--dangerously-bypass-approvals-and-sandbox` as
+"EXTREMELY DANGEROUS … intended solely for running in environments that are
+externally sandboxed" — treat that as the rule for any unattended worker, not
+a suggestion.
+
+### Claude Desktop
+
+No unattended mode. Desktop is an interactive surface; its build/review skills
+already refuse work they can't execute (see the reality check above).
 
 ## Troubleshooting
 
