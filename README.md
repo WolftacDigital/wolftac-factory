@@ -25,6 +25,7 @@ ports/codex/            Codex custom prompts (same three stages, Codex's format)
 ports/hermes/           Hermes skills (same three stages, Hermes' format)
 ports/claude-desktop/   Sources for Claude Desktop's uploadable skill bundles
 deploy/deploy.ps1       -Check (drift) / -Deploy (push to all local targets) / -Package (zip for handoff)
+deploy/hermes-moa-presets.yaml.example   Optional Hermes MoA presets for model-team routing
 deploy/linear-mcp.toml.example   Codex config.toml snippet for connecting Linear
 ```
 
@@ -83,8 +84,44 @@ after deploying** — skills are loaded at startup, not picked up live.
 
 One-time setup per platform still applies even after `-Deploy` copies the files:
 Codex needs a Linear OAuth login on first use (or `codex mcp login linear`), Hermes
-needs its own Linear OAuth after a `hermes gateway restart`, and Claude Desktop needs
-the `wolftac-*.zip` bundles uploaded as Skills in its settings.
+needs Linear MCP/OAuth wired in its profile and a fresh session/gateway reload, and
+Claude Desktop needs the `wolftac-*.zip` bundles uploaded as Skills in its settings.
+
+## Hermes MoA model-team routing
+
+The Hermes port can optionally run each factory stage through a Mixture-of-Agents
+model preset instead of a single active model. The source skills under `ports/hermes/`
+now document the preferred stage presets:
+
+| Stage | Preferred Hermes preset | Acting / aggregator model | Reference advisors |
+|---|---|---|---|
+| `/wolftac-spec` | `wolftac-factory-spec` | Claude Fable 5 | GPT 5.5, Claude Opus 4.8 |
+| `/wolftac-build` | `wolftac-factory-build` | GPT 5.5 | Claude Opus 4.8, Claude Sonnet 5, Gemma 4 31B QAT via LM Studio |
+| `/wolftac-review` | `wolftac-factory-review` | GPT 5.5 | Claude Fable 5, Gemma 4 31B QAT via LM Studio |
+
+Use `deploy/hermes-moa-presets.yaml.example` as the non-secret config template. Merge
+it into the target Hermes profile's `config.yaml` under `moa.presets` after backing up
+the live config. It intentionally contains no API keys or OAuth tokens.
+
+Important: a Hermes skill is an instruction package, not a model switch. The model or
+MoA preset is selected before the skill's `SKILL.md` is loaded into the turn. Launch
+or switch Hermes to the right preset first, then invoke the matching skill:
+
+```text
+/model wolftac-factory-spec --provider moa
+/skill wolftac-spec
+
+/model wolftac-factory-build --provider moa
+/skill wolftac-build
+
+/model wolftac-factory-review --provider moa
+/skill wolftac-review
+```
+
+If a skill is invoked under the wrong active model, the skill can warn and tell the
+operator which preset to use, but it cannot retroactively rerun the already-started
+turn under a different model. Gemma is advisory only; build/review proof still comes
+from real repo commands, test output, diffs, and Linear state.
 
 ## The contract, in brief
 
@@ -95,9 +132,10 @@ the `wolftac-*.zip` bundles uploaded as Skills in its settings.
 - Every spec has a mandatory **`Repo:`** header naming where the work happens; every
   build/review report opens with **`Agent: <platform / model>`** so you can always
   tell who did what.
-- Model economics: spec on your strongest/most expensive model, loop build and
-  review on cheaper ones (`/loop 5m /wolftac-build`, `/loop 5m /wolftac-review`) —
-  optionally scoped with a lane filter, e.g. `/loop 5m /wolftac-build agentic`.
+- Model economics: spec on your strongest model or the `wolftac-factory-spec` MoA
+  preset, loop build/review on the stage presets or cheaper workers (`/loop 5m
+  /wolftac-build`, `/loop 5m /wolftac-review`) — optionally scoped with a lane
+  filter, e.g. `/loop 5m /wolftac-build agentic`.
 
 Full detail — the exact procedure each stage follows — lives in
 `canonical/wolftac-{spec,build,review}/SKILL.md`. `AGENTS.md` is the shorter version
@@ -113,3 +151,5 @@ written for an agent seeing this for the first time.
 - WD-167 — renamed skills to the `wolftac-` prefix, enforced LF line endings
 - This handoff packaging (`AGENTS.md`, `-Package`) — so the factory can travel to
   any Hermes or Codex agent, not just the ones already deployed on this machine
+- Hermes MoA routing — stage-specific factory presets documented for spec/build/review
+  model teams, with Gemma 4 31B QAT as an optional local advisor

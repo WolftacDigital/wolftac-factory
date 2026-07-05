@@ -15,6 +15,23 @@ description: |
 Your only deliverable is a filed Linear issue containing a build-ready spec. You never
 write code in this stage.
 
+## Hermes MoA routing
+
+Preferred Hermes execution preset: `wolftac-factory-spec`.
+
+When launching this stage from Hermes, run it under:
+
+```text
+/model wolftac-factory-spec --provider moa
+```
+
+Model roles inside the preset:
+- **Claude Fable 5** is the aggregator / acting spec writer and owns the final Linear spec voice.
+- **GPT 5.5** critiques execution clarity, acceptance criteria, and proof gates.
+- **Claude Opus 4.8** critiques architecture, repo-fit, and implementation risk.
+
+If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-spec`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn.
+
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — stages ONLY touch issues carrying this label

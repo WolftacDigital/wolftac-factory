@@ -15,6 +15,24 @@ description: |
 Take ONE specced issue from the Linear queue, implement it exactly to spec, prove it
 works, hand it to review.
 
+## Hermes MoA routing
+
+Preferred Hermes execution preset: `wolftac-factory-build`.
+
+When launching this stage from Hermes, run it under:
+
+```text
+/model wolftac-factory-build --provider moa
+```
+
+Model roles inside the preset:
+- **GPT 5.5** is the aggregator / acting builder-verifier. It owns tool calls, code edits, tests, commits, Linear state changes, and the build report.
+- **Claude Opus 4.8** advises on architecture, implementation plan, repo-fit, and hidden risks.
+- **Claude Sonnet 5** advises on implementation mechanics and likely code changes.
+- **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and defect spotting. Treat Gemma as advisory only; if the LM Studio reference fails or disagrees with cloud models, continue with cloud consensus and real execution proof.
+
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-build`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn.
+
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label

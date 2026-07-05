@@ -16,6 +16,23 @@ description: |
 You are the only stage allowed to mark an issue Done. Default posture: skeptical.
 The build report is a claim, not a fact, until you reproduce it.
 
+## Hermes MoA routing
+
+Preferred Hermes execution preset: `wolftac-factory-review`.
+
+When launching this stage from Hermes, run it under:
+
+```text
+/model wolftac-factory-review --provider moa
+```
+
+Model roles inside the preset:
+- **GPT 5.5** is the aggregator / acting reviewer. It owns tool calls, test execution, diff inspection, Linear state changes, and the final verdict.
+- **Claude Fable 5** advises on product/spec fidelity, acceptance criteria, scope control, and reviewer judgment.
+- **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and possible defects. Treat Gemma as advisory only; never let a local-model opinion override reproduced test/build evidence.
+
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-review`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn.
+
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label

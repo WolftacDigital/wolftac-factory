@@ -106,10 +106,25 @@ long-running session.
        auth: oauth
        enabled: true
    ```
-3. `hermes gateway restart` to reload config and skills.
-4. Complete the Linear OAuth flow (Hermes will surface an auth link on next use).
-5. Verify: `hermes tools list | grep -i linear` should list Linear tools — this is
+3. Optional but recommended for Wolftac's Hermes profile: merge
+   `deploy/hermes-moa-presets.yaml.example` into that profile's `config.yaml` under
+   `moa.presets`. Back up the live config first; the example contains model names only,
+   never secrets. The intended stage routing is:
+   - `/wolftac-spec` → `/model wolftac-factory-spec --provider moa`
+   - `/wolftac-build` → `/model wolftac-factory-build --provider moa`
+   - `/wolftac-review` → `/model wolftac-factory-review --provider moa`
+4. Start a fresh Hermes session or have the operator reload the gateway/service so
+   config and skills are re-read. If you are currently running inside that Hermes
+   gateway, do not restart it yourself unless the human/operator explicitly told you
+   to manage the service lifecycle.
+5. Complete the Linear OAuth flow (Hermes will surface an auth link on next use).
+6. Verify: `hermes tools list | grep -i linear` should list Linear tools — this is
    also what each skill's own preflight checks before doing anything.
+
+Hermes MoA note: the skill cannot switch models after the turn already started. Select
+the MoA preset first, then invoke the matching skill. If invoked under the wrong active
+model, the Hermes skill should warn and tell the operator which preset to use rather
+than pretending the model team ran.
 
 ### Claude Desktop
 
@@ -146,6 +161,7 @@ long-running session.
 |---|---|
 | `/wolftac-build` (etc.) doesn't appear after install | Session wasn't restarted (skills load at startup), or the skill files have CRLF line endings (Linux/WSL only) |
 | Skill loads but Linear calls fail | The platform's Linear MCP block isn't wired yet, or OAuth hasn't been completed — see the per-platform steps above |
+| Hermes skill loads but the expected model team did not run | The active model was not switched to the stage MoA preset before invocation; use `/model wolftac-factory-<stage> --provider moa`, then rerun the skill |
 | A build/review session grabs the wrong issue or nothing at all | Check the `Factory Queue` label and state filters; check whether the spec's `Repo:` path is reachable from where you're running |
 | An issue seems stuck bouncing between agents | Confirm nobody is using `BLOCKED:` for "this isn't my environment" — that must be a silent skip, not a comment (see Multi-environment safety above) |
 

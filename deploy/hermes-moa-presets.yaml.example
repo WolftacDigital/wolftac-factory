@@ -1,0 +1,93 @@
+# Optional Hermes MoA presets for Wolftac Factory.
+#
+# Merge this into the target Hermes profile's config.yaml after backing up the
+# live file. This template contains model/provider names only — no API keys,
+# OAuth tokens, Linear credentials, or LM Studio secrets.
+#
+# Usage pattern:
+#   /model wolftac-factory-spec --provider moa
+#   /skill wolftac-spec
+#
+#   /model wolftac-factory-build --provider moa
+#   /skill wolftac-build
+#
+#   /model wolftac-factory-review --provider moa
+#   /skill wolftac-review
+#
+# A skill is an instruction package; it cannot retroactively switch the active
+# model after a turn has already started. Select the preset first, then run the
+# matching stage skill.
+
+moa:
+  default_preset: wolftac-factory
+  save_traces: false
+  presets:
+    wolftac-factory:
+      enabled: true
+      reference_models:
+        - provider: anthropic
+          model: claude-fable-5
+        - provider: openrouter
+          model: anthropic/claude-opus-4.8
+        - provider: anthropic
+          model: claude-sonnet-5
+        - provider: lmstudio
+          model: google/gemma-4-31b-qat
+      aggregator:
+        provider: openai-codex
+        model: gpt-5.5
+      reference_temperature: 0.25
+      aggregator_temperature: 0.15
+      reference_max_tokens: 800
+      max_tokens: 8192
+      fanout: user_turn
+
+    wolftac-factory-spec:
+      enabled: true
+      reference_models:
+        - provider: openai-codex
+          model: gpt-5.5
+        - provider: openrouter
+          model: anthropic/claude-opus-4.8
+      aggregator:
+        provider: anthropic
+        model: claude-fable-5
+      reference_temperature: 0.35
+      aggregator_temperature: 0.25
+      reference_max_tokens: 700
+      max_tokens: 8192
+      fanout: user_turn
+
+    wolftac-factory-build:
+      enabled: true
+      reference_models:
+        - provider: openrouter
+          model: anthropic/claude-opus-4.8
+        - provider: anthropic
+          model: claude-sonnet-5
+        - provider: lmstudio
+          model: google/gemma-4-31b-qat
+      aggregator:
+        provider: openai-codex
+        model: gpt-5.5
+      reference_temperature: 0.2
+      aggregator_temperature: 0.1
+      reference_max_tokens: 900
+      max_tokens: 8192
+      fanout: user_turn
+
+    wolftac-factory-review:
+      enabled: true
+      reference_models:
+        - provider: anthropic
+          model: claude-fable-5
+        - provider: lmstudio
+          model: google/gemma-4-31b-qat
+      aggregator:
+        provider: openai-codex
+        model: gpt-5.5
+      reference_temperature: 0.2
+      aggregator_temperature: 0.1
+      reference_max_tokens: 800
+      max_tokens: 8192
+      fanout: user_turn
