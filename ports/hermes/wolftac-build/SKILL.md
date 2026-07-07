@@ -52,10 +52,22 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
    comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
    SILENTLY, no comment or state change — issues whose spec **Repo:** path is
    unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
+   Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
+   `In Progress` issues with label `Factory Queue` (and the lane filter, if any).
+   If the most recent comment, or `startedAt`/claim time when there are no comments,
+   is OLDER than 4 hours, you may post exactly
+   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
+   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   sweep it. This sweep is the ONLY time build posts a comment during pickup; during
+   a claim-race back off you post NOTHING.
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
-2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Read the FULL spec and ALL
-   comments — a prior `REVIEW REPORT — FAIL` defect list is your primary work order.
+2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Immediately
+   re-fetch with `get_issue` and verify state is still `In Progress` AND
+   assignee is still you. If another session won the race (assignee is someone else,
+   or state is no longer `In Progress`), back off silently: no comment, no state
+   change, stop this tick. Then read the FULL spec and ALL comments — a prior
+   `REVIEW REPORT — FAIL` defect list is your primary work order.
 
 3. **Locate the repo.** The spec's **Repo:** header names the working directory.
    Verify it exists and is a git repo. Missing/ambiguous → comment

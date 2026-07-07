@@ -29,19 +29,34 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
    `Factory Queue`, oldest first. If the user gave a lane filter, only consider issues
    whose Linear project name or labels contain it (case-insensitive). Skip — SILENTLY,
    no comment or state change — issues whose spec **Repo:** path this chat cannot
-   reach. Nothing → "Factory queue: nothing awaiting review", stop cleanly.
+   reach.
+   Before choosing an unclaimed review, perform a read-first stale-claim sweep:
+   inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
+   filter, if any). If the most recent comment, or `startedAt`/claim time when there
+   are no comments, is OLDER than 4 hours, you may post exactly
+   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
+   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   sweep it. This sweep is the ONLY time review posts a comment during pickup; during
+   a claim-race back off you post NOTHING.
+   Nothing → "Factory queue: nothing awaiting review", stop cleanly.
 
-2. **Gather evidence.** Read the full spec, every comment (especially the latest
+2. **Claim it.** `save_issue`: assignee `me` while keeping state `In Review`.
+   Immediately re-fetch with `get_issue` and verify assignee is still you. If another
+   reviewer already holds it (different assignee with activity in the last 4 hours),
+   or the latest comment is already a review report newer than the build report, back
+   off silently: no comment, no state change, stop this tick.
+
+3. **Gather evidence.** Read the full spec, every comment (especially the latest
    BUILD REPORT), and the actual diff: check out the branch named in the build report
    inside the spec's **Repo:**; read `git log` and `git diff <default>...HEAD`.
 
-3. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
+4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with
    observed evidence. Baseline checks regardless of spec: no hardcoded secrets/tokens,
    no debug leftovers, input validation on new endpoints/forms, error paths don't
    crash, no unrelated files in the diff.
 
-4. **Verdict — three outcomes.**
+5. **Verdict — three outcomes.**
    - **PASS** — tick the acceptance checkboxes in the description, post the report,
      `save_issue` state `Done`.
    - **PASS WITH FIXES** — only minor defects (low-risk, no design change, ~15 min
@@ -65,5 +80,5 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
-5. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
+6. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
    the code during a PASS.

@@ -24,11 +24,23 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
    SILENTLY, no comment or state change — issues whose spec **Repo:** path is
    unreachable from this session's environment (they belong to a differently-homed
    session; `BLOCKED:` is reserved for genuine spec defects).
+   Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
+   `In Progress` issues with label `Factory Queue` (and the lane filter, if any).
+   If the most recent comment, or `startedAt`/claim time when there are no comments,
+   is OLDER than 4 hours, you may post exactly
+   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
+   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   sweep it. This sweep is the ONLY time build posts a comment during pickup; during
+   a claim-race back off you post NOTHING.
    Queue empty → say "Factory queue: nothing buildable" and stop cleanly.
 
-2. **Claim it.** Set state `In Progress`, assignee = me. Read the FULL description
-   (the spec) and ALL comments — a prior `REVIEW REPORT — FAIL` defect list is your
-   primary work order on top of the original spec.
+2. **Claim it.** Set state `In Progress`, assignee = me. Immediately re-fetch with
+   `get_issue` and verify state is still `In Progress` AND
+   assignee is still you. If another session won the race (assignee is someone else,
+   or state is no longer `In Progress`), back off silently: no comment, no state
+   change, stop this tick. Then read the FULL description (the spec) and ALL comments
+   — a prior `REVIEW REPORT — FAIL` defect list is your primary work order on top of
+   the original spec.
 
 3. **Locate the repo.** The spec's **Repo:** header names the working directory.
    Verify it exists and is a git repo. Missing/ambiguous → comment

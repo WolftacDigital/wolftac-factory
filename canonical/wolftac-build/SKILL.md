@@ -25,6 +25,14 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
   `"Linear workspace issues"` — you need `list_issues`, `get_issue`, `save_issue`,
   `save_comment`, `list_comments`).
 - `list_issues`: team `Wolftac Digital`, state `Todo`, label `Factory Queue`.
+- Before choosing a Todo issue, perform a read-first stale-claim sweep: list issues
+  in state `In Progress` with label `Factory Queue` (and the lane filter, if any).
+  For each claimed issue, read comments and metadata. If the most recent comment, or
+  `startedAt`/claim time when there are no comments, is OLDER than 4 hours, you may
+  post exactly `SWEPT: stale claim, no activity since <timestamp>` and reset the
+  issue to `Todo`. If there is ANY comment younger than 4 hours, the issue is
+  UNTOUCHABLE — never sweep it. This sweep is the ONLY time build posts a comment
+  during pickup; during a claim-race back off you post NOTHING.
 - Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-build agentic`), only
   consider issues whose Linear project name or labels contain it (case-insensitive).
 - Pick the highest priority (Urgent > High > Medium > Low), oldest first on ties. Skip:
@@ -38,9 +46,13 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
   cleanly.** (A looped run will simply check again next cycle.)
 
 ### 2. Claim it
-`save_issue`: state `In Progress`, assignee `me`. Then read the FULL description (the
-spec) and ALL comments — a prior `REVIEW REPORT (FAIL)` comment means this is a rework
-pass and its defect list is your primary work order, on top of the original spec.
+`save_issue`: state `In Progress`, assignee `me`. Immediately `get_issue` again and
+verify state is still `In Progress` AND assignee is still you. If another session won
+the race (assignee is someone else, or state is no longer `In Progress`), back off
+silently: no comment, no state change, stop this tick. Then read the FULL description
+(the spec) and ALL comments — a prior `REVIEW REPORT (FAIL)` comment means this is a
+rework pass and its defect list is your primary work order, on top of the original
+spec.
 
 ### 3. Locate the repo
 The spec's **Repo** header line names the working directory. Verify it exists and is a

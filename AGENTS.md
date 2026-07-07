@@ -171,12 +171,14 @@ before relying on it; never schedule aspirational syntax.
 - One issue per tick. Exit cleanly — and quietly — on an empty queue.
 - Fail closed: if any precondition is missing (Linear unreachable, repo absent,
   a required model preset not active), log why and exit WITHOUT claiming an issue.
-- Claim-race rule: list→claim is not atomic. After claiming, re-read the issue's
-  state and assignee — if another session got there first, back off silently.
-  Prefer one build worker per lane.
-- Stale-claim recovery: an issue sitting `In Progress` with no comment activity
-  for more than ~4 hours is presumed orphaned — the operator (or a sweep job)
-  may reset it to `Todo`.
+- Claim-race rule: list→claim is not atomic. The claim-race recheck and review
+  claim convention are encoded in the build/review skills' pickup + claim steps:
+  after claiming, re-read the issue's state and assignee; if another session got
+  there first, back off silently. Prefer one build worker per lane.
+- Stale-claim recovery: the stale-claim sweep is encoded in the build/review
+  skills' pickup steps. A claimed issue with no comment activity for more than
+  4 hours may be returned to `Todo` with the `SWEPT` comment; any issue with
+  activity younger than 4 hours is untouchable.
 - Never grant blanket auto-approval to an unattended worker. Scope permissions
   to exactly what the stage needs; a destructive operation outside that scope
   should fail, not auto-approve.
