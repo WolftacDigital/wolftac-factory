@@ -147,9 +147,9 @@ from real repo commands, test output, diffs, and Linear state.
   build/review report opens with **`Agent: <platform / model>`** so you can always
   tell who did what.
 - Model economics: spec on your strongest model or (Hermes only) the
-  `wolftac-factory-spec` MoA preset, loop build/review on the stage presets or cheaper workers (`/loop 5m
-  /wolftac-build`, `/loop 5m /wolftac-review`) — optionally scoped with a lane
-  filter, e.g. `/loop 5m /wolftac-build agentic`.
+  `wolftac-factory-spec` MoA preset. Run build/review as Claude Code `/loop`
+  sessions, Hermes cron ticks, or Codex scheduled `exec` one-shots — optionally
+  scoped with a lane filter where the platform recipe supports it.
 
 Full detail — the exact procedure each stage follows — lives in
 `canonical/wolftac-{spec,build,review}/SKILL.md`. `AGENTS.md` is the shorter version

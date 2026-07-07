@@ -1,11 +1,11 @@
 <#
 Wolftac Factory deploy/drift/package tool.
 
-  pwsh deploy\deploy.ps1 -Check           # diff repo vs deployed copies; exit 1 on drift
+  pwsh deploy\deploy.ps1 -Check           # diff deployed copies and validate cross-port invariants
   pwsh deploy\deploy.ps1 -Deploy          # copy repo -> agent locations (LF-normalized), rebuild Desktop zips;
                                           #   drifted (live-edited) targets are SKIPPED with a warning, exit 1
   pwsh deploy\deploy.ps1 -Deploy -Force   # overwrite drifted targets too
-  pwsh deploy\deploy.ps1 -Package  # zip the whole repo (minus .git) for handoff as plain files
+  pwsh deploy\deploy.ps1 -Package  # zip the whole repo (minus git/temp/package artifacts) for handoff as plain files
 
 The repo is the source of truth. Files are written with LF line endings — CRLF in a
 skill's YAML frontmatter silently breaks skill discovery on Linux (WSL / Hermes).
@@ -67,10 +67,14 @@ if ($Check) {
     }
     if ($drift -eq 0) {
         Write-Output "CLEAN: all $($Pairs.Count) deployed files match the repo."
-        exit 0
+    } else {
+        Write-Output "$drift file(s) out of sync. If the deployed copy is the improvement, copy it into the repo and commit; otherwise run -Deploy."
     }
-    Write-Output "$drift file(s) out of sync. If the deployed copy is the improvement, copy it into the repo and commit; otherwise run -Deploy."
-    exit 1
+
+    & (Join-Path $PSScriptRoot "parity-check.ps1")
+    $parityExit = $LASTEXITCODE
+    if ($drift -ne 0 -or $parityExit -ne 0) { exit 1 }
+    exit 0
 }
 
 if ($Deploy) {
@@ -117,7 +121,13 @@ if ($Deploy) {
 if ($Package) {
     $out = "$env:USERPROFILE\Downloads\wolftac-factory-package.zip"
     if (Test-Path $out) { Remove-Item -Force $out }
-    $items = Get-ChildItem $Repo -Force | Where-Object { $_.Name -ne ".git" }
+    $excludedNames = @(".git", ".review-worktrees", "node_modules")
+    $items = Get-ChildItem $Repo -Force | Where-Object {
+        $name = $_.Name
+        ($excludedNames -notcontains $name) -and
+        ($name -notlike "*.zip") -and
+        ($name -notlike "*.log")
+    }
     Compress-Archive -Path $items.FullName -DestinationPath $out
     Write-Output "packaged $out"
     Write-Output "Hand this file to an agent (Hermes, Codex, or a fresh Claude session);"
