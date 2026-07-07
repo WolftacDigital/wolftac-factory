@@ -1,0 +1,106 @@
+[
+  {
+    "id": "one-issue-per-tick",
+    "description": "Stages process one issue or feature per invocation/tick.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "One issue per invocation" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "One issue per invocation" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "One issue[\\s\\S]{0,40}per invocation" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "One issue per invocation" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "One issue per invocation" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "One issue per invocation" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "One issue[\\s\\S]{0,40}per invocation" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "One issue per invocation" },
+      { "file": "canonical/wolftac-spec/SKILL.md", "pattern": "One feature per issue" },
+      { "file": "ports/codex/wolftac-spec.md", "pattern": "One feature per issue" },
+      { "file": "ports/hermes/wolftac-spec/SKILL.md", "pattern": "One feature per issue" },
+      { "file": "ports/claude-desktop/wolftac-spec/SKILL.md", "pattern": "One feature per issue" }
+    ]
+  },
+  {
+    "id": "fail-closed",
+    "description": "Build/review claim-race checks re-read and back off without side effects.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "back off" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "back off" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "back off" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "back off" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "back off" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "back off" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "back off" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "back off" }
+    ]
+  },
+  {
+    "id": "stale-sweep",
+    "description": "Build/review stale claim recovery uses the SWEPT marker.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "SWEPT" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "SWEPT" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "SWEPT" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "SWEPT" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "SWEPT" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "SWEPT" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "SWEPT" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "SWEPT" }
+    ]
+  },
+  {
+    "id": "no-done-from-build",
+    "description": "Build produces In Review and never marks work Done.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "In Review[\\s\\S]{0,180}Done[\\s\\S]{0,120}(never|ONLY)" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "In Review[\\s\\S]{0,180}Done[\\s\\S]{0,120}(never|ONLY)" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "In Review[\\s\\S]{0,180}Done[\\s\\S]{0,120}(never|ONLY)" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "In Review[\\s\\S]{0,180}Done[\\s\\S]{0,120}(never|ONLY)" }
+    ]
+  },
+  {
+    "id": "execution-verified",
+    "description": "Review independently verifies by execution and reproduction.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*Verify by execution)(?=[\\s\\S]*reproduc)" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*Verify by execution)(?=[\\s\\S]*reproduc)" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*Verify by execution)(?=[\\s\\S]*reproduc)" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*Verify by execution)(?=[\\s\\S]*reproduc)" }
+    ]
+  },
+  {
+    "id": "agent-identity",
+    "description": "Build/review report formats include an Agent identity line.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "\\*\\*Agent:\\*\\*" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "\\*\\*Agent:\\*\\*" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "\\*\\*Agent:\\*\\*" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "\\*\\*Agent:\\*\\*" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "\\*\\*Agent:\\*\\*" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "\\*\\*Agent:\\*\\*" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "\\*\\*Agent:\\*\\*" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "\\*\\*Agent:\\*\\*" }
+    ]
+  },
+  {
+    "id": "silent-skip-unreachable",
+    "description": "Build/review skip unreachable-repo issues silently.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" }
+    ]
+  },
+  {
+    "id": "blocked-spec-defects-only",
+    "description": "Build reserves BLOCKED comments for genuine spec defects.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" }
+    ]
+  }
+]

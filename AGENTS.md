@@ -95,8 +95,10 @@ long-running session.
    ```
 3. Start a new session (or restart). The first Linear-touching call will trigger an
    OAuth browser login — or run `codex mcp login linear` explicitly.
-4. Verify: `/wolftac-spec` should be offered as a custom prompt; a dry invocation
-   should reach Linear without error.
+4. Verify: `/wolftac-spec`, `/wolftac-build`, and `/wolftac-review` should all be
+   offered as custom prompts; then run one read-only Linear dry run (for example,
+   list your Linear teams or list Factory Queue issues) and confirm it reaches
+   Linear without error.
 
 ### Hermes
 
@@ -147,7 +149,7 @@ than pretending the model team ran.
 ## Operating rules (apply regardless of platform)
 
 - **One issue per invocation.** Don't chain multiple issues in a single build/review
-  call — a looped session (`/loop 5m /wolftac-build`) handles cadence.
+  call — the platform's scheduler or loop runner handles cadence.
 - **Verify by execution, always.** "The code looks right" is not verification. Build
   proves acceptance criteria by running the code; review reproduces that from
   scratch and does not trust the build report's claims.
@@ -162,7 +164,7 @@ than pretending the model team ran.
 
 ## Running unattended
 
-Interactive use needs none of this. For scheduled/looped workers, use only the
+Interactive use needs none of this. For scheduled workers and Claude Code loops, use only the
 recipes below — **every command here was verified against the live CLI on
 2026-07-05.** If you need a flag not shown, verify it against `--help` yourself
 before relying on it; never schedule aspirational syntax.
