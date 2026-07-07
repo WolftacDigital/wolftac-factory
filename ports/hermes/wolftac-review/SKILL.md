@@ -45,9 +45,25 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## Preflight
 Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
+If the primary Linear MCP transport is temporarily down but an authenticated Composio Linear toolset is available, continue through Composio rather than abandoning the review: use small GraphQL queries (`teams`, filtered `issues`, `issue`) to avoid complexity limits, `LINEAR_CREATE_LINEAR_COMMENT` for the report, `LINEAR_UPDATE_ISSUE` with resolved state IDs for Done/Todo and checkbox updates, then read the issue back to verify the report/state/checkboxes persisted. Treat the failed MCP call as transport state, not proof that Linear is unavailable. If a Composio Remote Workbench helper (`run_composio_tool` / `proxy_execute`) reports an expired/revoked project API key while direct `COMPOSIO_MULTI_EXECUTE_TOOL` calls in the same workflow still work, do not abandon the Linear side effects: perform the final comment/update/readback with direct multi-execute calls, keeping strict sequencing so the comment is created before the state/description update and verification readback is last.
+
 ## WSL-hosted repo review pattern
 
 When a spec's **Repo:** path is WSL-hosted (for example `/home/... (WSL Ubuntu)`) but the active Hermes host is Windows, do not skip the issue just because Git Bash cannot see `/home/...`. Probe it through `wsl.exe`, then review in a detached temporary worktree so the active branch and uncommitted local artifacts are not disturbed. See `references/wsl-linear-factory-review-proof.md` for the exact pattern, including clean worktree checkout, lockfile dependency install, diff-scoped secret/debug scans, and Linear comment/state verification.
+
+For WSL deploy/ops features whose criteria depend on live PM2/Tailscale behavior, use `references/wsl-live-maintenance-proxy-review.md`: do not repeat destructive live reload/stop actions from unattended cron, but do reproduce the mechanism with a scratch-port harness, verify read-only live posture, inspect the actual commit range if the branch is already merged to `origin/main`, and confirm PM2 ecosystem config filenames use a recognized `.config.cjs`/`ecosystem.config.cjs` suffix.
+
+For live browser/API checks against WSL Agentic OS branches, especially token-gated 401 CTA proof, use `references/wsl-token-gated-live-review.md`: run throwaway `next start` servers on scratch ports, use Windows `curl` for tokenless API status, use real browser clicks/snapshots for UI proof, then kill servers and remove the detached worktree before finalizing.
+
+For guarded router/provider status endpoints, use `references/wsl-router-status-health-review.md`: auth status codes are not enough. Inspect the authenticated JSON shape and fail any “per-provider health” criterion if the payload only lists static chain metadata without provider-level state/health/detail evidence.
+
+## Windows detached worktree review pattern
+
+When reviewing a Windows-hosted repo from Git Bash, create detached review worktrees with native `C:/...` paths in `git worktree add`, then access them through MSYS `/c/...` paths for shell commands. Avoid passing `/c/Users/...` to `git worktree add`; Git for Windows can interpret it as `C:/c/Users/...`, creating confusing ghost/stale worktree entries. See `references/windows-linear-factory-review-proof.md` for the pattern.
+
+If the detached worktree has no dependencies, prefer the repo lockfile install command. If the source repo already has a valid `node_modules` and the cron budget is tight, a temporary link/copy is acceptable only for verification, and the report should state what was done. Before removing a worktree after build/test runs, delete generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`) inside the worktree first; these can block `git worktree remove` on Windows.
+
+When the full test command fails due unrelated suite collection/tooling failures but the feature-targeted tests pass, do not automatically fail the issue. Reproduce the same full command on a clean `origin/main` detached worktree. If the identical failure exists on main and all changed-scope tests/build/lint/typecheck pass, record the baseline proof in the review report and treat it as non-blocking, with a Suggestions item for a separate issue.
 
 ## Procedure
 
@@ -82,6 +98,25 @@ When a spec's **Repo:** path is WSL-hosted (for example `/home/... (WSL Ubuntu)`
    no debug leftovers, input validation on new endpoints/forms, error paths don't
    crash, no unrelated files in the diff.
 
+   **Fail-open config check:** when an acceptance criterion says a safety/compliance artifact
+   must always be present (unsubscribe links, auth checks, audit writes, tenant scoping,
+   suppression gates), inspect the config-missing path as well as the happy path. Optional
+   env vars and fallback helpers can silently produce `undefined` and let the action continue;
+   that is a blocking review defect if the requirement is mandatory. Prefer evidence such as
+   `builder()` returns `undefined` → caller still sends/writes/approves → renderer omits the
+   artifact, then require the build to fail closed or block before the external action.
+
+   **Theme/brand acceptance checks:** when a spec requires zero legacy colors/classes,
+   token drift-locks, or usage-rule compliance, do not restrict proof to the directories
+   named in a builder's report. Search every source path that can produce rendered or
+   persisted UI values, including schemas, migrations, seed/mock data, import/export scripts,
+   and smoke scripts. If components render data fields such as `stage.color` directly, old
+   values in those producers are blocking even when `app/` and `components/` scan clean.
+   For drift-lock tests, run a negative mutation against the exact CSS variable or source
+   value the criterion names; fail the review if the test only checks that token values appear
+   somewhere in a file and still passes after the mapped value is changed. See
+   `references/theme-brand-review-proof.md`.
+
 5. **Verdict — three outcomes.**
    - **PASS** — tick the acceptance checkboxes in the description, post the report,
      state `Done`.
@@ -105,5 +140,17 @@ When a spec's **Repo:** path is WSL-hosted (for example `/home/... (WSL Ubuntu)`
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
-6. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
+6. **Verify Linear side effects.** After posting the review report and moving the issue,
+   read the issue back (and the latest comments when available) to confirm the report exists,
+   acceptance boxes were updated when applicable, and the final state is actually `Done` or
+   `Todo`. Do not claim completion from the write call alone.
+
+   **Concurrent-review race check:** after long installs/tests/builds or branch-fix pushes,
+   re-fetch the issue status and latest comments immediately before any Linear write. Linear
+   selection is not a lock; another reviewer may have posted a REVIEW REPORT or moved the issue
+   while you were executing proof. Follow `references/concurrent-linear-review-race.md`: normally
+   do not duplicate or overwrite a completed review; only add a clearly labeled follow-up report
+   if your worker materially changed the branch or produced new evidence the existing report lacks.
+
+7. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
    the code during a PASS.
