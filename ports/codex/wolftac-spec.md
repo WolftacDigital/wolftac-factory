@@ -40,6 +40,16 @@ Feature idea (raw, from the user): $ARGUMENTS
    - **Dependencies:**
    ## Acceptance criteria
    - [ ] (each independently testable by a reviewer who didn't build it; include ≥1 failure/edge case)
+   ## Quality gates
+   - Accessibility:
+   - Security / privacy:
+   - Rollback / recoverability:
+   - Data / migration: N/A — no schema or persisted state touched; pure markdown edit.
+   - Empty / error states:
+   ## Evidence map
+   | Criterion | Test-plan step | Expected observable result |
+   |---|---|---|
+   | <one row per acceptance criterion> | <matching test-plan step> | <observable pass result> |
    ## Test plan
    (exact commands + expected results; how build proves it and review re-proves it)
    ## Build notes
@@ -47,6 +57,11 @@ Feature idea (raw, from the user): $ARGUMENTS
    ```
 
    The **Repo** header line is mandatory — the build stage refuses work without it.
+   Quality gates must be answered substantively or as `N/A — <reason>`; bare `N/A`
+   is invalid. The Evidence map must include one row per acceptance criterion; a
+   criterion with no row is a template violation. While filling it, check criteria for
+   mutual contradiction and resolve conflicts before filing (WD-211 AC3/AC4 is the
+   motivating example).
 
 3. **One approval pass.** Show the draft, ask a single go/no-go, accept edits, then file.
 

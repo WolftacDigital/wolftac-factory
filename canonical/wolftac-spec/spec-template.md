@@ -26,6 +26,21 @@ Step-by-step of what the user sees and does once this ships. Number the steps.
 - [ ] Prefer "user can X and sees Y" over "code does Z"
 - [ ] Include at least one failure/edge case criterion
 
+## Quality gates
+Answer each gate substantively or with `N/A — <reason>`; bare `N/A` is non-compliant.
+- Accessibility:
+- Security / privacy:
+- Rollback / recoverability:
+- Data / migration: N/A — no schema or persisted state touched; pure markdown edit.
+- Empty / error states:
+
+## Evidence map
+A criterion with no row is a template violation. Filling this table is where the author checks criteria for mutual contradiction. Note: the WD-211 AC3/AC4 conflict is the motivating example.
+
+| Criterion | Test-plan step | Expected observable result |
+|---|---|---|
+| <Acceptance criterion 1> | <Test-plan step proving it> | <Observable pass result> |
+
 ## Test plan
 How /wolftac-build proves it works and /wolftac-review re-proves it independently: exact commands to run,
 cases to cover (happy path, edge, failure), and any manual checks with expected results.
