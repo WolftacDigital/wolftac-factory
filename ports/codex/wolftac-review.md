@@ -21,21 +21,35 @@ fact, until you reproduce it.
    `Factory Queue`, oldest first. If an argument was given (e.g. `/wolftac-review crm`), treat
    it as a lane filter: only consider issues whose Linear project name or labels
    contain it (case-insensitive). Skip — SILENTLY, no comment or state change — issues
-   whose spec **Repo:** path is unreachable from this session's environment. Nothing →
-   say "Factory queue: nothing awaiting review" and stop cleanly.
+   whose spec **Repo:** path is unreachable from this session's environment.
+   Before choosing an unclaimed review, perform a read-first stale-claim sweep:
+   inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
+   filter, if any). If the most recent comment, or `startedAt`/claim time when there
+   are no comments, is OLDER than 4 hours, you may post exactly
+   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
+   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   sweep it. This sweep is the ONLY time review posts a comment during pickup; during
+   a claim-race back off you post NOTHING.
+   Nothing → say "Factory queue: nothing awaiting review" and stop cleanly.
 
-2. **Gather evidence.** Read the full spec (description), every comment (especially
+2. **Claim it.** Set assignee = me while keeping state `In Review`. Immediately
+   re-fetch with `get_issue` and verify assignee is still you. If another reviewer
+   already holds it (different assignee with activity in the last 4 hours), or the
+   latest comment is already a review report newer than the build report, back off
+   silently: no comment, no state change, stop this tick.
+
+3. **Gather evidence.** Read the full spec (description), every comment (especially
    the latest BUILD REPORT), and the actual diff: check out the branch named in the
    build report inside the spec's **Repo:**, read `git log` and
    `git diff <default-branch>...HEAD`.
 
-3. **Verify by execution, not inspection.** Re-run the spec's Test plan yourself from
+4. **Verify by execution, not inspection.** Re-run the spec's Test plan yourself from
    scratch — do not trust claimed results. Walk EVERY acceptance criterion: pass/fail
    with observed evidence. Baseline checks regardless of spec: no hardcoded secrets or
    tokens, no debug leftovers, input validation on new endpoints/forms, error paths
    don't crash, no unrelated files in the diff.
 
-4. **Verdict — three outcomes.**
+5. **Verdict — three outcomes.**
    - **PASS** — tick the acceptance-criteria checkboxes in the issue description, post
      the report, set state `Done`.
    - **PASS WITH FIXES** — only minor defects (each low-risk, no design change, all
@@ -59,5 +73,5 @@ fact, until you reproduce it.
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
-5. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
+6. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
    the code during a PASS.

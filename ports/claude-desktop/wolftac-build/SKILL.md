@@ -32,12 +32,24 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    Highest priority, oldest on ties. Skip issues whose latest comment starts
    `BLOCKED:`, issues with unresolved blocking relations, and — SILENTLY, no comment
    or state change — issues whose spec **Repo:** path this chat cannot reach
-   (`BLOCKED:` is reserved for genuine spec defects). Queue empty →
-   "Factory queue: nothing buildable", stop cleanly.
+   (`BLOCKED:` is reserved for genuine spec defects).
+   Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
+   `In Progress` issues with label `Factory Queue` (and the lane filter, if any).
+   If the most recent comment, or `startedAt`/claim time when there are no comments,
+   is OLDER than 4 hours, you may post exactly
+   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
+   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   sweep it. This sweep is the ONLY time build posts a comment during pickup; during
+   a claim-race back off you post NOTHING.
+   Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
-2. **Claim it.** `save_issue`: state `In Progress`, assignee `me`. Read the FULL spec
-   and ALL comments — a prior `REVIEW REPORT — FAIL` defect list is your primary work
-   order on top of the original spec.
+2. **Claim it.** `save_issue`: state `In Progress`, assignee `me`. Immediately
+   re-fetch with `get_issue` and verify state is still `In Progress` AND
+   assignee is still you. If another session won the race (assignee is someone else,
+   or state is no longer `In Progress`), back off silently: no comment, no state
+   change, stop this tick. Then read the FULL spec and ALL comments — a prior
+   `REVIEW REPORT — FAIL` defect list is your primary work order on top of the
+   original spec.
 
 3. **Locate the repo.** The spec's **Repo:** header names the working directory.
    Verify you can reach it (see reality check). Header missing/ambiguous (a spec

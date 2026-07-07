@@ -27,6 +27,14 @@ not a fact, until you reproduce it.
   `save_comment`, `list_comments`).
 - `list_issues`: team `Wolftac Digital`, state `In Review`, label `Factory Queue`,
   oldest updated first.
+- Before choosing an unclaimed review, perform a read-first stale-claim sweep: inspect
+  `In Review` issues with label `Factory Queue` (and the lane filter, if any) that
+  are held by an assignee. Read comments and metadata. If the most recent comment, or
+  `startedAt`/claim time when there are no comments, is OLDER than 4 hours, you may
+  post exactly `SWEPT: stale claim, no activity since <timestamp>` and reset the
+  issue to `Todo`. If there is ANY comment younger than 4 hours, the issue is
+  UNTOUCHABLE — never sweep it. This sweep is the ONLY time review posts a comment
+  during pickup; during a claim-race back off you post NOTHING.
 - Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-review crm`), only
   consider issues whose Linear project name or labels contain it (case-insensitive).
 - Skip (silently — no comment, no state change) issues whose spec **Repo:** path is
@@ -34,12 +42,19 @@ not a fact, until you reproduce it.
   will take them.
 - **Nothing there → say "Factory queue: nothing awaiting review" and stop cleanly.**
 
-### 2. Gather the evidence
+### 2. Claim it
+`save_issue`: assignee `me` while keeping state `In Review`. Immediately `get_issue`
+again and verify assignee is still you. If another reviewer already holds it
+(different assignee with activity in the last 4 hours), or the latest comment is
+already a review report newer than the build report, back off silently: no comment,
+no state change, stop this tick.
+
+### 3. Gather the evidence
 Read the full spec (description), every comment (especially the latest BUILD REPORT),
 and the actual diff: check out the branch named in the build report and read
 `git log` / `git diff <default-branch>...HEAD` in the spec's **Repo**.
 
-### 3. Verify by execution, not inspection
+### 4. Verify by execution, not inspection
 - Re-run the spec's **Test plan** yourself, from scratch. Do not trust the build
   report's claimed results — reproduce them.
 - Walk EVERY acceptance criterion: pass/fail with observed evidence.
@@ -47,7 +62,7 @@ and the actual diff: check out the branch named in the build report and read
   debug leftovers, input validation on any new endpoint/form, error paths don't crash,
   no unrelated files modified.
 
-### 4. Verdict — three outcomes
+### 5. Verdict — three outcomes
 
 **PASS** — every criterion verified, baseline clean:
 1. Update the issue description: tick the acceptance-criteria checkboxes.
@@ -81,6 +96,6 @@ Review report format (comment on the issue):
 - **Suggestions (out of scope):** <ideas for a future /wolftac-spec, if any>
 ```
 
-### 5. Stop
+### 6. Stop
 One issue per invocation. Scope discipline applies to you too: improvement ideas go in
 **Suggestions**, never into the code during a PASS.
