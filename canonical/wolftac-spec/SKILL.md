@@ -36,6 +36,11 @@ Fill in every section of `spec-template.md` (in this skill's directory:
 `~/.claude/skills/wolftac-spec/spec-template.md`). Rules:
 - No placeholders, no "TBD". If you can't fill a section, go back to step 1.
 - Acceptance criteria must be independently testable by someone who didn't build it.
+- Quality gates must be answered substantively or as `N/A — <reason>`; bare `N/A`
+  is non-compliant.
+- While filling the Evidence map, check every acceptance criterion against the others
+  for mutual contradiction. Criteria that cannot hold simultaneously are spec defects
+  to resolve before filing.
 - If the work is honestly larger than ~8 points, split it: file multiple smaller issues,
   each independently buildable, linked with blocking relations.
 
