@@ -1,4 +1,13 @@
-# /wolftac-review — Factory stage 3: quality assurance
+---
+description: Deprecated compatibility prompt; use $wolftac-review to review one Factory build
+argument-hint: [LANE=<project-or-label>]
+---
+
+# /prompts:wolftac-review — deprecated compatibility prompt
+
+Prefer the native `$wolftac-review` skill when it is available.
+
+Lane argument: $ARGUMENTS
 
 You are the review stage of the cross-agent software factory — the ONLY stage allowed
 to mark an issue Done. Default posture: skeptical. The build report is a claim, not a
@@ -26,8 +35,10 @@ fact, until you reproduce it.
    inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
    filter, if any). If the most recent comment, or `startedAt`/claim time when there
    are no comments, is OLDER than 4 hours, you may post exactly
-   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
-   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   `SWEPT: stale review claim, no activity since <timestamp>`, clear or replace the
+   stale assignee, and keep the issue in `In Review`. Never return a built issue to
+   `Todo` without an actual FAIL verdict. If there is ANY comment younger than 4 hours,
+   the issue is UNTOUCHABLE — never
    sweep it. This sweep is the ONLY time review posts a comment during pickup; during
    a claim-race back off you post NOTHING.
    Nothing → say "Factory queue: nothing awaiting review" and stop cleanly.
@@ -38,10 +49,12 @@ fact, until you reproduce it.
    latest comment is already a review report newer than the build report, back off
    silently: no comment, no state change, stop this tick.
 
-3. **Gather evidence.** Read the full spec (description), every comment (especially
-   the latest BUILD REPORT), and the actual diff: check out the branch named in the
-   build report inside the spec's **Repo:**, read `git log` and
-   `git diff <default-branch>...HEAD`.
+3. **Gather evidence safely.** Read the full spec, every comment, and the latest BUILD
+   REPORT. Fetch the remote, verify its published branch resolves to the exact reported
+   SHA, then create a detached review worktree at that SHA. Never switch the active
+   user checkout. Read `git log` and
+   `git diff <remote-default-branch>...<reported-SHA>`. A missing remote branch or SHA
+   mismatch is a FAIL because the reviewed artifact is not immutable.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan yourself from
    scratch — do not trust claimed results. Walk EVERY acceptance criterion: pass/fail
@@ -53,8 +66,8 @@ fact, until you reproduce it.
    - **PASS** — tick the acceptance-criteria checkboxes in the issue description, post
      the report, set state `Done`.
    - **PASS WITH FIXES** — only minor defects (each low-risk, no design change, all
-     fixable in ~15 minutes total): fix on the same branch, commit, re-verify, list
-     fixes with SHAs in the report, tick checkboxes, set `Done`.
+     fixable in ~15 minutes total): fix in the isolated worktree, commit, push, verify
+     the remote head, re-verify, list fixes with SHAs, tick checkboxes, set `Done`.
    - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
      unreproducible verification): do NOT rework it yourself. Post the report with a
      numbered defect list (what's wrong → repro → expected vs actual), set state
@@ -69,6 +82,7 @@ fact, until you reproduce it.
    - **Test plan reproduced:** <commands run, results>
    - **Baseline checks:** <secrets/debug/validation/error-paths — clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
+   - **Reviewed head:** <remote branch> @ <exact verified SHA>
    - **Defects:** <none, or numbered list with repro + expected vs actual>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```

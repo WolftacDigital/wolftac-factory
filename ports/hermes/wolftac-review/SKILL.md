@@ -27,7 +27,7 @@ When launching this stage from Hermes, run it under:
 ```
 
 Model roles inside the preset:
-- **GPT 5.5** is the aggregator / acting reviewer. It owns tool calls, test execution, diff inspection, Linear state changes, and the final verdict.
+- **GPT-5.6 Sol** is the aggregator / acting reviewer. It owns tool calls, test execution, diff inspection, Linear state changes, and the final verdict.
 - **Claude Fable 5** advises on product/spec fidelity, acceptance criteria, scope control, and reviewer judgment.
 - **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and possible defects. Treat Gemma as advisory only; never let a local-model opinion override reproduced test/build evidence.
 
@@ -57,11 +57,23 @@ For live browser/API checks against WSL Agentic OS branches, especially token-ga
 
 For guarded router/provider status endpoints, use `references/wsl-router-status-health-review.md`: auth status codes are not enough. Inspect the authenticated JSON shape and fail any “per-provider health” criterion if the payload only lists static chain metadata without provider-level state/health/detail evidence.
 
+For production backfill/data-repair reviews, use `references/production-db-backfill-review.md`: verify live effects with read-only aggregate SQL, confirm fail-closed behavior when secrets are unavailable, check no fabricated foundation rows, verify consent/suppression invariants in both true and false/missing paths, and report only counts/IDs/statuses — never PII or secrets.
+
+For reviews whose acceptance criteria require proving a Supabase production schema/data migration already landed, prefer a bounded read-only aggregate query through the available authenticated Supabase toolchain rather than trusting the build report. If direct Supabase MCP is unavailable but Composio Supabase is active, use `COMPOSIO_SEARCH_TOOLS` for the Supabase read-only SQL tool, then run `SUPABASE_BETA_RUN_SQL_QUERY` with `read_only: true` (or the returned read-only query tool) against the exact project ref. Keep projections small: `information_schema.columns`, `count(*)`, `count(*) filter (...)`, and no PII. Record only schema shape, row counts, default/null summaries, and the project ref in the review report.
+
 ## Windows detached worktree review pattern
 
 When reviewing a Windows-hosted repo from Git Bash, create detached review worktrees with native `C:/...` paths in `git worktree add`, then access them through MSYS `/c/...` paths for shell commands. Avoid passing `/c/Users/...` to `git worktree add`; Git for Windows can interpret it as `C:/c/Users/...`, creating confusing ghost/stale worktree entries. See `references/windows-linear-factory-review-proof.md` for the pattern.
 
 If the detached worktree has no dependencies, prefer the repo lockfile install command. If the source repo already has a valid `node_modules` and the cron budget is tight, a temporary link/copy is acceptable only for verification, and the report should state what was done. Before removing a worktree after build/test runs, delete generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`) inside the worktree first; these can block `git worktree remove` on Windows.
+
+## Remote-ref maintenance review pattern
+
+Some factory issues intentionally have no feature branch or working-tree diff because the build performed remote repository maintenance (for example deleting merged branches after a staging gate). Do not rerun destructive actions such as `git push origin --delete`, deployment changes, or branch recreation during review. Reproduce the proof read-only: inspect the SHA record comment and its timestamp, read the build report, verify deployment/status evidence with `gh api` or the relevant deployment tool, probe the live URL if the spec requires it, and run `git ls-remote --heads origin` from a detached worktree to confirm the exact branch pattern is absent while `main` and unrelated heads remain. A rendered app auth/sign-in gate is valid live-probe evidence when the criterion is that the integrated app is serving and the gate is app-owned rather than provider SSO or an error page.
+
+When ticking acceptance checkboxes after a remote-ref maintenance PASS, preserve the current Linear description as much as the platform allows. Prefer minimal checkbox-state updates over hand-rewriting the whole description; if a full description update is unavoidable, keep issue-link text and all technical commands intact, then immediately read the issue back to confirm the checkboxes, final state, and review report persisted.
+
+If this profile's Linear MCP wrapper only supports full-description replacement and the shell has `LINEAR_API_KEY` available, use a small internal GraphQL helper instead of hand-rewriting from model context: query `issue(id:) { id description }`, replace only the intended `- [ ]` acceptance lines with `- [x]`, call `issueUpdate(id:, input:{description: ...})`, and read the issue back through MCP. Never print the API key; print only counts/status.
 
 When the full test command fails due unrelated suite collection/tooling failures but the feature-targeted tests pass, do not automatically fail the issue. Reproduce the same full command on a clean `origin/main` detached worktree. If the identical failure exists on main and all changed-scope tests/build/lint/typecheck pass, record the baseline proof in the review report and treat it as non-blocking, with a Suggestions item for a separate issue.
 
@@ -76,8 +88,10 @@ When the full test command fails due unrelated suite collection/tooling failures
    inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
    filter, if any). If the most recent comment, or `startedAt`/claim time when there
    are no comments, is OLDER than 4 hours, you may post exactly
-   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
-   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   `SWEPT: stale review claim, no activity since <timestamp>`, clear or replace the
+   stale assignee, and keep the issue in `In Review`. Never return a built issue to
+   `Todo` without an actual FAIL verdict. If there is ANY comment younger than 4 hours,
+   the issue is UNTOUCHABLE — never
    sweep it. This sweep is the ONLY time review posts a comment during pickup; during
    a claim-race back off you post NOTHING.
    Nothing → "Factory queue: nothing awaiting review", stop cleanly.
@@ -88,9 +102,11 @@ When the full test command fails due unrelated suite collection/tooling failures
    or the latest comment is already a review report newer than the build report, back
    off silently: no comment, no state change, stop this tick.
 
-3. **Gather evidence.** Read the full spec, every comment (especially the latest
-   BUILD REPORT), and the actual diff: check out the branch named in the build report
-   inside the spec's **Repo:**; read `git log` and `git diff <default>...HEAD`.
+3. **Gather evidence safely.** Read the full spec, every comment, and the latest BUILD
+   REPORT. Fetch the remote, verify its published branch resolves to the exact reported
+   SHA, then create a detached review worktree at that SHA. Never switch the active
+   user checkout. Read `git log` and `git diff <remote-default>...<reported-SHA>`.
+   A missing remote branch or SHA mismatch is a FAIL.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with
@@ -105,6 +121,13 @@ When the full test command fails due unrelated suite collection/tooling failures
    that is a blocking review defect if the requirement is mandatory. Prefer evidence such as
    `builder()` returns `undefined` → caller still sends/writes/approves → renderer omits the
    artifact, then require the build to fail closed or block before the external action.
+
+   **Automation bypass / URL secret masking checks:** when reviewing tooling that passes a
+   secret through query params (for example Vercel `x-vercel-protection-bypass`), do not
+   accept raw-string redaction alone. Force a regression that logs an error containing the
+   constructed URL and assert that raw, `encodeURIComponent`, and `URLSearchParams`-encoded
+   forms of a fake secret are all masked. See
+   `references/preview-bypass-secret-masking-review.md`.
 
    **Theme/brand acceptance checks:** when a spec requires zero legacy colors/classes,
    token drift-locks, or usage-rule compliance, do not restrict proof to the directories
@@ -121,8 +144,8 @@ When the full test command fails due unrelated suite collection/tooling failures
    - **PASS** — tick the acceptance checkboxes in the description, post the report,
      state `Done`.
    - **PASS WITH FIXES** — only minor defects (low-risk, no design change, ~15 min
-     total): fix on the same branch, commit, re-verify, list fixes with SHAs, tick
-     checkboxes, state `Done`.
+     total): fix in the isolated worktree, commit, push, verify the remote head,
+     re-verify, list fixes with SHAs, tick checkboxes, state `Done`.
    - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
      unreproducible verification): do NOT rework it yourself. Post a numbered defect
      list (what's wrong → repro → expected vs actual), state `Todo`.
@@ -136,6 +159,7 @@ When the full test command fails due unrelated suite collection/tooling failures
    - **Test plan reproduced:** <commands run, results>
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
+   - **Reviewed head:** <remote branch> @ <exact verified SHA>
    - **Defects:** <none, or numbered list>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
@@ -151,6 +175,10 @@ When the full test command fails due unrelated suite collection/tooling failures
    while you were executing proof. Follow `references/concurrent-linear-review-race.md`: normally
    do not duplicate or overwrite a completed review; only add a clearly labeled follow-up report
    if your worker materially changed the branch or produced new evidence the existing report lacks.
+   In scheduled/cron runs, if readback shows the issue is already Done/Todo with a newer REVIEW
+   REPORT, treat the tick as a clean concurrent-review backoff: cancel the local Linear write,
+   perform best-effort temp worktree cleanup, and final-report the backoff/verified state rather
+   than posting another Linear comment.
 
 7. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
    the code during a PASS.

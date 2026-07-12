@@ -39,8 +39,9 @@ Use this when `/wolftac-review` is running on Windows/Git Bash and the Linear sp
 
 4. Dependency handling:
    - Prefer the project's lockfile install command when a lockfile exists.
-   - If no lockfile is present and the source repo already has a known-good `node_modules`, a temporary verification-only link/copy is acceptable in a cron review. State this in the report.
-   - Do not turn dependency absence into a durable negative conclusion; it is setup state.
+   - If no lockfile is present and the source repo already has a known-good `node_modules`, a temporary verification-only reuse is acceptable in a cron review. State this in the report.
+   - For Next/Turbopack projects on Windows, **copy** `node_modules` into the detached worktree rather than using a junction/symlink to the source repo. Turbopack can reject a linked `node_modules` as outside the project filesystem root (`Symlink [project]/node_modules is invalid, it points out of the filesystem root`) even though lint/typecheck/tests may run. Remove any failed link before copying, then re-run build/test proof from the copied dependency tree.
+   - Do not turn dependency absence or npm cache/install setup failures into durable negative conclusions; they are setup state. Capture the workaround used and keep pursuing real proof.
 
 5. Re-run proof commands:
    - Full spec command, e.g. `npm run test:crm`.
@@ -63,6 +64,7 @@ Use this when `/wolftac-review` is running on Windows/Git Bash and the Linear sp
    - Use browser snapshots for nav/env proof when UI text matters; HTTP status alone proves routing but not sidebar pruning or badges.
    - For manual form acceptance criteria, do not stop at “form opens” or “Save clicked.” Verify the post-submit state: the expected detail route is not a not-found page, the created/edited record is visible after returning to the list, and no console/server error surfaced. This catches session-local/server-action mismatches where a form navigates to an ID that the current data source cannot read back.
    - If browser snapshot refs are confusing after scrolling or duplicate buttons, a trusted local app can be inspected/clicked with `browser_console(expression=...)` using DOM text selection (for example, find the `button` whose `textContent.trim()` is `New contact`). Use this to disambiguate, then return to snapshots/vision for user-visible proof.
+   - For form proof in locked-down browser-console sessions, avoid JS that extracts or sets input values: Hermes may block it as sensitive primitive use. Instead, use `browser_vision(annotate=true)` to map off-screen/low-visibility controls to refs, then drive the UI with `browser_type` and `browser_click`. Use `browser_console(expression=...)` only for safe readbacks such as `document.body.innerText` checks, alert text, stage/header lists, and the console-error buffer. This still yields real browser evidence without changing `browser.allow_unsafe_evaluate`.
    - Lighthouse/Chrome on Windows cron can exit nonzero during temp-profile cleanup (`EPERM ... AppData\\Local\\Temp\\lighthouse.*`) after the JSON report has already been written. If this happens, parse the intended `--output-path` JSON files directly and report both facts: the scores are valid only if the files exist and parse, while the cleanup EPERM is an environment artifact, not app proof.
    - After killing a background `npm run start`/`next start`, verify the port is closed before cleanup. On Windows, the tracked shell process can die while a child `next` process keeps the worktree busy; check the scratch port (`netstat -ano | grep ':<port>'`) and terminate only that specific PID with `taskkill.exe /PID <pid> /F` if needed. Do not kill broad `node`/`python`/Hermes processes.
 

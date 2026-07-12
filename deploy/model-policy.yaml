@@ -1,0 +1,51 @@
+version: 1
+reviewed_on: 2026-07-12
+policy:
+  selection_timing: before_skill_invocation
+  require_actual_model_in_reports: true
+  allow_skill_to_claim_model_switch: false
+  refresh_rule: verify provider documentation and local availability before changing IDs
+
+harnesses:
+  codex:
+    provider: openai
+    stages:
+      spec:
+        model: gpt-5.6-sol
+        reasoning_effort: max
+      build:
+        model: gpt-5.6-sol
+        reasoning_effort: high
+      review:
+        model: gpt-5.6-sol
+        reasoning_effort: max
+  claude-code:
+    provider: anthropic
+    stages:
+      spec:
+        model: claude-fable-5
+      build:
+        model: claude-opus-4-8
+      review:
+        model: claude-opus-4-8
+    value_lane:
+      model: claude-sonnet-5
+  hermes-moa:
+    stages:
+      spec:
+        acting_model: claude-fable-5
+        advisors: [gpt-5.6-sol, claude-opus-4-8]
+      build:
+        acting_model: gpt-5.6-sol
+        advisors: [claude-opus-4-8, claude-sonnet-5, google/gemma-4-31b-qat]
+      review:
+        acting_model: gpt-5.6-sol
+        advisors: [claude-fable-5, claude-opus-4-8, google/gemma-4-31b-qat]
+
+codex_exec_examples:
+  spec: >-
+    codex exec -m gpt-5.6-sol -c model_reasoning_effort="max"
+  build: >-
+    codex exec -m gpt-5.6-sol -c model_reasoning_effort="high"
+  review: >-
+    codex exec -m gpt-5.6-sol -c model_reasoning_effort="max"

@@ -26,7 +26,7 @@ When launching this stage from Hermes, run it under:
 ```
 
 Model roles inside the preset:
-- **GPT 5.5** is the aggregator / acting builder-verifier. It owns tool calls, code edits, tests, commits, Linear state changes, and the build report.
+- **GPT-5.6 Sol** is the aggregator / acting builder-verifier. It owns tool calls, code edits, tests, commits, Linear state changes, and the build report.
 - **Claude Opus 4.8** advises on architecture, implementation plan, repo-fit, and hidden risks.
 - **Claude Sonnet 5** advises on implementation mechanics and likely code changes.
 - **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and defect spotting. Treat Gemma as advisory only; if the LM Studio reference fails or disagrees with cloud models, continue with cloud consensus and real execution proof.
@@ -37,7 +37,7 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
 - You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the review stage — never by you.
-- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.5`).
+- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
 - Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 
 ## Preflight
@@ -67,7 +67,12 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
    assignee is still you. If another session won the race (assignee is someone else,
    or state is no longer `In Progress`), back off silently: no comment, no state
    change, stop this tick. Then read the FULL spec and ALL comments — a prior
-   `REVIEW REPORT — FAIL` defect list is your primary work order.
+   `REVIEW REPORT — FAIL` defect list is your primary work order. If comments show
+   the issue was previously built and later reset to `Todo`, verify the existing
+   branch/commits before coding. When the approved implementation is already present
+   and no FAIL report changed the work order, re-run the test plan, publish current
+   proof, and return it to `In Review` without manufacturing a no-op commit. See
+   `references/stale-reset-existing-branch-reverification.md`.
 
 3. **Locate the repo.** The spec's **Repo:** header names the working directory.
    Verify it exists and is a git repo. Missing/ambiguous → comment
@@ -75,8 +80,18 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
    spec defects only — a repo that is merely unreachable from this environment
    should have been silently skipped at step 1.
 
-4. **Branch.** Use the issue's Linear-generated branch name; create from the default
-   branch if needed. Never commit directly to main/master.
+   **WSL repo note:** from Windows/Git Bash, disable path conversion for Linux paths,
+   for example `MSYS2_ARG_CONV_EXCL='*' wsl --cd /home/... sh -lc '<cmd>'`.
+
+   Verify any prerequisite that the spec says must already be merged to `main` before
+   coding. Linear `Done` is not proof of git integration. If the prerequisite is absent
+   from the remote default branch, post a specific `BLOCKED:` comment, restore `Todo`,
+   and stop without merging dependency branches or expanding scope.
+
+4. **Branch safely.** Fetch the remote, then create a dedicated worktree for the
+   issue's Linear-generated branch from the current remote default branch. Never switch
+   branches in a checkout with user changes and never commit directly to main/master.
+   A dirty worktree owned by another process or human is a fail-closed condition.
 
 5. **Implement — guardrails.** Read the repo's CLAUDE.md/AGENTS.md first; match
    conventions. Build exactly to the spec's Technical approach and Acceptance criteria.
@@ -89,7 +104,9 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
 
 7. **Commit.** Descriptive messages; record SHAs. Review the staged file list before
    committing: never commit artifacts (`__pycache__/`, `*.pyc`, `node_modules/`,
-   `dist/`, logs); add .gitignore entries as needed.
+   `dist/`, logs); add .gitignore entries as needed. Push with
+   `git push -u origin <branch>` and verify the remote head equals local `HEAD`. If no
+   writable remote exists, do not advance the issue to `In Review`.
 
 8. **Hand off.** Comment:
 
@@ -99,6 +116,7 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
    - **Implemented:** <what was built, per spec section>
    - **Verified:** <exact commands run and results, per criterion>
    - **Branch / commits:** <branch> @ <SHAs>
+   - **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
    - **Deviations from spec:** <none, or what and why>
    - **Notes for review:** <what the reviewer should check first>
    ```

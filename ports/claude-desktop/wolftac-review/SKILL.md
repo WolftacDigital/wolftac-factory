@@ -34,8 +34,10 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
    inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
    filter, if any). If the most recent comment, or `startedAt`/claim time when there
    are no comments, is OLDER than 4 hours, you may post exactly
-   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
-   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   `SWEPT: stale review claim, no activity since <timestamp>`, clear or replace the
+   stale assignee, and keep the issue in `In Review`. Never return a built issue to
+   `Todo` without an actual FAIL verdict. If there is ANY comment younger than 4 hours,
+   the issue is UNTOUCHABLE — never
    sweep it. This sweep is the ONLY time review posts a comment during pickup; during
    a claim-race back off you post NOTHING.
    Nothing → "Factory queue: nothing awaiting review", stop cleanly.
@@ -46,9 +48,11 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
    or the latest comment is already a review report newer than the build report, back
    off silently: no comment, no state change, stop this tick.
 
-3. **Gather evidence.** Read the full spec, every comment (especially the latest
-   BUILD REPORT), and the actual diff: check out the branch named in the build report
-   inside the spec's **Repo:**; read `git log` and `git diff <default>...HEAD`.
+3. **Gather evidence safely.** Read the full spec, every comment, and the latest BUILD
+   REPORT. Fetch the remote, verify its published branch resolves to the exact reported
+   SHA, then create a detached review worktree at that SHA. Never switch the active
+   user checkout. Read `git log` and `git diff <remote-default>...<reported-SHA>`.
+   A missing remote branch or SHA mismatch is a FAIL.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with
@@ -60,8 +64,8 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
    - **PASS** — tick the acceptance checkboxes in the description, post the report,
      `save_issue` state `Done`.
    - **PASS WITH FIXES** — only minor defects (low-risk, no design change, ~15 min
-     total): fix on the same branch, commit, re-verify, list fixes with SHAs, tick
-     checkboxes, state `Done`.
+     total): fix in the isolated worktree, commit, push, verify the remote head,
+     re-verify, list fixes with SHAs, tick checkboxes, state `Done`.
    - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
      unreproducible verification): do NOT rework it yourself. Post a numbered defect
      list (what's wrong → repro → expected vs actual), state `Todo` — the build stage
@@ -76,6 +80,7 @@ Codex, or Hermes, and STOP. Never mark an issue Done based on reading reports al
    - **Test plan reproduced:** <commands run, results>
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
+   - **Reviewed head:** <remote branch> @ <exact verified SHA>
    - **Defects:** <none, or numbered list>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```

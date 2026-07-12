@@ -1,0 +1,12 @@
+interface:
+  display_name: "Wolftac Build"
+  short_description: "Build one queued Wolftac Factory issue"
+  default_prompt: "Use $wolftac-build to implement one build-ready Wolftac Factory issue."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "linear"
+      description: "Linear access to the Wolftac Digital Factory Queue"
+      transport: "streamable_http"
+      url: "https://mcp.linear.app/mcp"

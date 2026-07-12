@@ -35,7 +35,7 @@ review what Codex built.
   The **`Repo:`** header line at the top of every spec is mandatory — it's the
   working directory for that issue, and build/review refuse to guess at it.
 - **Every report opens with an identity line:** `**Agent:** <platform / model>`
-  (e.g. `Codex / gpt-5.5`, `Hermes / gpt-5.5`, `Claude Code / Opus 4.8`). This is how
+  (e.g. `Codex / gpt-5.6-sol`, `Hermes / gpt-5.6-sol`, `Claude Code / Opus 4.8`). This is how
   the human (and other agents) can tell who did what. Reviewers should prefer
   reviewing work built by a *different* agent than themselves when the queue allows
   it — cross-agent review catches more.
@@ -84,8 +84,10 @@ long-running session.
 
 ### Codex (CLI, Desktop, or IDE plugin)
 
-1. Copy `ports/codex/wolftac-spec.md`, `wolftac-build.md`, `wolftac-review.md` into
-   `~/.codex/prompts/`.
+1. Install the native skills from `plugins/wolftac-factory/skills/` into
+   `~/.agents/skills/` (or install the `plugins/wolftac-factory` plugin). The deploy
+   script does this locally. Files under `ports/codex/` are deprecated compatibility
+   prompts only; when retained, their CLI/IDE names are `/prompts:wolftac-*`.
 2. Add Linear as an MCP server. Open `~/.codex/config.toml` and add the block from
    `deploy/linear-mcp.toml.example` — **append it, don't overwrite the file**, since
    other MCP servers are likely already configured there:
@@ -95,8 +97,8 @@ long-running session.
    ```
 3. Start a new session (or restart). The first Linear-touching call will trigger an
    OAuth browser login — or run `codex mcp login linear` explicitly.
-4. Verify: `/wolftac-spec`, `/wolftac-build`, and `/wolftac-review` should all be
-   offered as custom prompts; then run one read-only Linear dry run (for example,
+4. Verify: `$wolftac-spec`, `$wolftac-build`, and `$wolftac-review` appear as skills
+   in CLI/IDE or the desktop Skills UI; then run one read-only Linear dry run (for example,
    list your Linear teams or list Factory Queue issues) and confirm it reaches
    Linear without error.
 
@@ -222,17 +224,18 @@ runs, or accept the cost knowingly.
 
 ### Codex
 
-`codex exec` runs a prompt non-interactively (verified:
-`codex exec --skip-git-repo-check "<prompt>"` completes and prints the reply).
-Feed it the stage prompt file, pinned to the target repo:
+`codex exec` runs a skill non-interactively. Select the model before the skill starts,
+pin the target repo, and use the policy in `deploy/model-policy.yaml`:
 
 ```powershell
 # Windows scheduled task (PowerShell)
-codex exec -C <ABSOLUTE_PATH_TO_TARGET_REPO> (Get-Content ~\.codex\prompts\wolftac-build.md -Raw)
+codex exec -C <ABSOLUTE_PATH_TO_TARGET_REPO> -m gpt-5.6-sol `
+  -c 'model_reasoning_effort="high"' 'Use $wolftac-build to run one Factory tick.'
 ```
 ```sh
 # cron (bash)
-codex exec -C <ABSOLUTE_PATH_TO_TARGET_REPO> "$(cat ~/.codex/prompts/wolftac-build.md)"
+codex exec -C <ABSOLUTE_PATH_TO_TARGET_REPO> -m gpt-5.6-sol \
+  -c 'model_reasoning_effort="high"' 'Use $wolftac-build to run one Factory tick.'
 ```
 
 Sandbox/approvals: choose an explicit `--sandbox <mode>` appropriate to the repo.
@@ -250,7 +253,8 @@ already refuse work they can't execute (see the reality check above).
 
 | Symptom | Likely cause |
 |---|---|
-| `/wolftac-build` (etc.) doesn't appear after install | Session wasn't restarted (skills load at startup), or the skill files have CRLF line endings (Linux/WSL only) |
+| Codex `$wolftac-build` doesn't appear after install | Native plugin/skills were not deployed, the session needs restart, or the user is looking for the deprecated direct slash name instead of the Skills UI/`$` mention |
+| Legacy Codex `/wolftac-build` doesn't appear | Custom prompts are deprecated and namespaced as `/prompts:wolftac-build` in CLI/IDE; use `$wolftac-build` instead |
 | Skill loads but Linear calls fail | The platform's Linear MCP block isn't wired yet, or OAuth hasn't been completed — see the per-platform steps above |
 | Hermes skill loads but the expected model team did not run | The active model was not switched to the stage MoA preset before invocation; use `/model wolftac-factory-<stage> --provider moa`, then rerun the skill |
 | A build/review session grabs the wrong issue or nothing at all | Check the `Factory Queue` label and state filters; check whether the spec's `Repo:` path is reachable from where you're running |

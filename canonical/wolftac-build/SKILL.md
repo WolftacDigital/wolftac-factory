@@ -63,8 +63,10 @@ merely unreachable from this environment should have been silently skipped at st
 
 ### 4. Branch
 Work on the issue's `gitBranchName` (Linear generates it; it's in the issue payload).
-Create it from the default branch if it doesn't exist. **Never commit directly to
-main/master.**
+Fetch the remote, then create a dedicated worktree for this issue from the current
+remote default branch. Never switch branches in a checkout that has user changes and
+never commit directly to main/master. If an existing worktree is dirty and clearly
+belongs to another process or human, fail closed without modifying it.
 
 ### 5. Implement — with guardrails
 - Read the repo's CLAUDE.md first; match its conventions.
@@ -88,6 +90,10 @@ artifacts (`__pycache__/`, `*.pyc`, `node_modules/`, `dist/`, logs); add .gitign
 entries as needed. (Guardrail added after the factory's first review pass caught
 committed bytecode — WD-158.)
 
+Publish the branch with `git push -u origin <branch>` and verify the remote head SHA
+equals the local head SHA. If the repository has no writable remote, do not move the
+issue to `In Review`; report the publication blocker without exposing credentials.
+
 ### 8. Hand off
 Post a comment on the issue:
 
@@ -97,6 +103,7 @@ Post a comment on the issue:
 - **Implemented:** <what was built, per spec section>
 - **Verified:** <exact commands run and their results, per acceptance criterion>
 - **Branch / commits:** <branch> @ <SHAs>
+- **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
 - **Deviations from spec:** <none, or what and why>
 - **Notes for review:** <anything the reviewer should look at first>
 ```

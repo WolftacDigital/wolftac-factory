@@ -35,7 +35,7 @@ moa:
           model: google/gemma-4-31b-qat
       aggregator:
         provider: openai-codex
-        model: gpt-5.5
+        model: gpt-5.6-sol
       reference_temperature: 0.25
       aggregator_temperature: 0.15
       reference_max_tokens: 800
@@ -46,7 +46,7 @@ moa:
       enabled: true
       reference_models:
         - provider: openai-codex
-          model: gpt-5.5
+          model: gpt-5.6-sol
         - provider: openrouter
           model: anthropic/claude-opus-4.8
       aggregator:
@@ -69,7 +69,7 @@ moa:
           model: google/gemma-4-31b-qat
       aggregator:
         provider: openai-codex
-        model: gpt-5.5
+        model: gpt-5.6-sol
       reference_temperature: 0.2
       aggregator_temperature: 0.1
       reference_max_tokens: 900
@@ -85,7 +85,7 @@ moa:
           model: google/gemma-4-31b-qat
       aggregator:
         provider: openai-codex
-        model: gpt-5.5
+        model: gpt-5.6-sol
       reference_temperature: 0.2
       aggregator_temperature: 0.1
       reference_max_tokens: 800

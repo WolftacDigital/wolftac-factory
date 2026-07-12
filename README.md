@@ -10,7 +10,8 @@ fully in spec, and in build/review only when the chat has filesystem + terminal
 MCP access to the target repo.
 
 **This repo is the source of truth for the skill files themselves.** The copies
-under `~/.claude/skills`, `~/.codex/prompts`, and `%LOCALAPPDATA%\hermes\skills` (on
+under `~/.claude/skills`, `~/.agents/skills`, legacy `~/.codex/prompts`, and
+`%LOCALAPPDATA%\hermes\skills` (on
 whichever machines run those agents) are deploy targets — edit here, then push the
 change out to wherever it needs to run.
 
@@ -23,12 +24,14 @@ canonical/              Claude Code skills (the reference implementation)
   wolftac-spec/          spec stage: idea -> Linear issue
   wolftac-build/          build stage: issue -> working, tested code
   wolftac-review/         review stage: independent re-verification, the only stage that marks Done
-ports/codex/            Codex custom prompts (same three stages, Codex's format)
+plugins/wolftac-factory/ Codex plugin with three native skills (authoritative Codex port)
+ports/codex/            Deprecated `/prompts:wolftac-*` compatibility prompts
 ports/hermes/           Hermes skills (same three stages, Hermes' format)
   wolftac-review/references/   Proof patterns (e.g. reviewing WSL-hosted repos via a detached worktree)
 ports/claude-desktop/   Sources for Claude Desktop's uploadable skill bundles
 deploy/deploy.ps1       -Check (drift) / -Deploy (push to all local targets) / -Package (zip for handoff)
 deploy/hermes-moa-presets.yaml.example   Optional Hermes MoA presets for model-team routing
+deploy/model-policy.yaml  Versioned per-harness model and reasoning policy
 deploy/linear-mcp.toml.example   Codex config.toml snippet for connecting Linear
 share/build-your-own-agent-factory.html   Public/client field manual (generic /factory-* names — see Naming)
 ```
@@ -91,6 +94,10 @@ pwsh deploy\deploy.ps1 -Check    # confirms every deployed copy still matches th
 WSL Claude Code sessions get the commands too. **Restart any open agent session
 after deploying** — skills are loaded at startup, not picked up live.
 
+In Codex, invoke the installed skills as `$wolftac-spec`, `$wolftac-build`, and
+`$wolftac-review` (or select them in the desktop Skills UI). The old custom-prompt
+compatibility path is namespaced as `/prompts:wolftac-*` in CLI/IDE and is deprecated.
+
 One-time setup per platform still applies even after `-Deploy` copies the files:
 Codex needs a Linear OAuth login on first use (or `codex mcp login linear`), Hermes
 needs Linear MCP/OAuth wired in its profile and a fresh session/gateway reload, and
@@ -109,9 +116,9 @@ now document the preferred stage presets:
 
 | Stage | Preferred Hermes preset | Acting / aggregator model | Reference advisors |
 |---|---|---|---|
-| `/wolftac-spec` | `wolftac-factory-spec` | Claude Fable 5 | GPT 5.5, Claude Opus 4.8 |
-| `/wolftac-build` | `wolftac-factory-build` | GPT 5.5 | Claude Opus 4.8, Claude Sonnet 5, Gemma 4 31B QAT via LM Studio |
-| `/wolftac-review` | `wolftac-factory-review` | GPT 5.5 | Claude Fable 5, Gemma 4 31B QAT via LM Studio |
+| `/wolftac-spec` | `wolftac-factory-spec` | Claude Fable 5 | GPT-5.6 Sol, Claude Opus 4.8 |
+| `/wolftac-build` | `wolftac-factory-build` | GPT-5.6 Sol | Claude Opus 4.8, Claude Sonnet 5, Gemma 4 31B QAT via LM Studio |
+| `/wolftac-review` | `wolftac-factory-review` | GPT-5.6 Sol | Claude Fable 5, Gemma 4 31B QAT via LM Studio |
 
 Use `deploy/hermes-moa-presets.yaml.example` as the non-secret config template. Merge
 it into the target Hermes profile's `config.yaml` under `moa.presets` after backing up
@@ -136,6 +143,10 @@ If a skill is invoked under the wrong active model, the skill can warn and tell 
 operator which preset to use, but it cannot retroactively rerun the already-started
 turn under a different model. Gemma is advisory only; build/review proof still comes
 from real repo commands, test output, diffs, and Linear state.
+
+`deploy/model-policy.yaml` is the single source of truth for current model IDs and
+reasoning levels. Verify provider documentation and local availability before updating
+that file; stage skills record the actual model but never pretend to switch it mid-turn.
 
 ## The contract, in brief
 

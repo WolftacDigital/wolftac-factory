@@ -27,7 +27,7 @@ When launching this stage from Hermes, run it under:
 
 Model roles inside the preset:
 - **Claude Fable 5** is the aggregator / acting spec writer and owns the final Linear spec voice.
-- **GPT 5.5** critiques execution clarity, acceptance criteria, and proof gates.
+- **GPT-5.6 Sol** critiques execution clarity, acceptance criteria, and proof gates.
 - **Claude Opus 4.8** critiques architecture, repo-fit, and implementation risk.
 
 If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-spec`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
@@ -36,7 +36,7 @@ If this skill is invoked while Hermes is not already on `provider=moa`, `model=w
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — stages ONLY touch issues carrying this label
 - States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Done` (set ONLY by the review stage). Failed reviews go back to `Todo` with a defect list.
-- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.5`).
+- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
 - Linear tool names vary by platform (`create_issue`/`update_issue` vs `save_issue`) — use whatever Linear toolset this Hermes profile has (Linear MCP or Composio Linear).
 
 ## Preflight
@@ -75,7 +75,8 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    - Accessibility:
    - Security / privacy:
    - Rollback / recoverability:
-   - Data / migration: N/A — no schema or persisted state touched; pure markdown edit.
+   - Data / migration: (schema/persisted-state changes and migration/rollback path,
+     or `N/A — <feature-specific reason>`)
    - Empty / error states:
    ## Evidence map
    | Criterion | Test-plan step | Expected observable result |

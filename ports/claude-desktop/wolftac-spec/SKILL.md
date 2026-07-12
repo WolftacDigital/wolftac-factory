@@ -49,7 +49,8 @@ write code in this stage.
    - Accessibility:
    - Security / privacy:
    - Rollback / recoverability:
-   - Data / migration: N/A — no schema or persisted state touched; pure markdown edit.
+   - Data / migration: (schema/persisted-state changes and migration/rollback path,
+     or `N/A — <feature-specific reason>`)
    - Empty / error states:
    ## Evidence map
    | Criterion | Test-plan step | Expected observable result |

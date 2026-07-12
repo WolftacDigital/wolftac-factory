@@ -31,8 +31,10 @@ not a fact, until you reproduce it.
   `In Review` issues with label `Factory Queue` (and the lane filter, if any) that
   are held by an assignee. Read comments and metadata. If the most recent comment, or
   `startedAt`/claim time when there are no comments, is OLDER than 4 hours, you may
-  post exactly `SWEPT: stale claim, no activity since <timestamp>` and reset the
-  issue to `Todo`. If there is ANY comment younger than 4 hours, the issue is
+  post exactly `SWEPT: stale review claim, no activity since <timestamp>`, clear or
+  replace the stale assignee, and keep the issue in `In Review`. Never return a built
+  issue to `Todo` without an actual FAIL verdict. If there is ANY comment younger than
+  4 hours, the issue is
   UNTOUCHABLE — never sweep it. This sweep is the ONLY time review posts a comment
   during pickup; during a claim-race back off you post NOTHING.
 - Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-review crm`), only
@@ -51,8 +53,11 @@ no state change, stop this tick.
 
 ### 3. Gather the evidence
 Read the full spec (description), every comment (especially the latest BUILD REPORT),
-and the actual diff: check out the branch named in the build report and read
-`git log` / `git diff <default-branch>...HEAD` in the spec's **Repo**.
+and the actual diff. Fetch the remote, verify the published remote branch resolves to
+the exact SHA in the build report, then create a detached review worktree at that SHA.
+Never switch the active user checkout. Read `git log` and
+`git diff <remote-default-branch>...<reported-SHA>` in the isolated worktree. A missing
+remote branch or SHA mismatch is a FAIL because the reviewed artifact is not immutable.
 
 ### 4. Verify by execution, not inspection
 - Re-run the spec's **Test plan** yourself, from scratch. Do not trust the build
@@ -71,7 +76,8 @@ and the actual diff: check out the branch named in the build report and read
 
 **PASS WITH FIXES** — only minor defects (each low-risk, no design change, all fixable
 in ~15 minutes total: typos, small logic slips, missing edge-case guard):
-1. Fix them yourself on the same branch, commit, re-run verification.
+1. Fix them yourself on the same branch in the isolated worktree, commit, push, verify
+   the remote head, and re-run verification.
 2. Post the review report listing your fixes with commit SHAs.
 3. Tick the checkboxes; `save_issue`: state `Done`.
 
@@ -92,6 +98,7 @@ Review report format (comment on the issue):
 - **Test plan reproduced:** <commands run, results>
 - **Baseline checks:** <secrets/debug/validation/error-paths — clean or findings>
 - **Fixes applied:** <none, or list with SHAs>
+- **Reviewed head:** <remote branch> @ <exact verified SHA>
 - **Defects:** <none, or numbered list with repro + expected vs actual>
 - **Suggestions (out of scope):** <ideas for a future /wolftac-spec, if any>
 ```

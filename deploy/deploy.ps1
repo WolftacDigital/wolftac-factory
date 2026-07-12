@@ -24,11 +24,26 @@ $Pairs = @(
     @{ Src = "ports\codex\wolftac-spec.md";             Dst = "$env:USERPROFILE\.codex\prompts\wolftac-spec.md" }
     @{ Src = "ports\codex\wolftac-build.md";            Dst = "$env:USERPROFILE\.codex\prompts\wolftac-build.md" }
     @{ Src = "ports\codex\wolftac-review.md";           Dst = "$env:USERPROFILE\.codex\prompts\wolftac-review.md" }
-    @{ Src = "ports\hermes\wolftac-spec\SKILL.md";      Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-spec\SKILL.md" }
-    @{ Src = "ports\hermes\wolftac-build\SKILL.md";     Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-build\SKILL.md" }
-    @{ Src = "ports\hermes\wolftac-review\SKILL.md";    Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review\SKILL.md" }
-    @{ Src = "ports\hermes\wolftac-review\references\wsl-linear-factory-review-proof.md"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review\references\wsl-linear-factory-review-proof.md" }
 )
+
+# Tree-backed ports must stay complete as their skills gain references and UI metadata.
+# Enumerating them removes the old failure mode where SKILL.md referenced files that
+# deploy/check never copied or validated.
+$trees = @(
+    @{ Src = "ports\hermes\wolftac-spec"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-spec" },
+    @{ Src = "ports\hermes\wolftac-build"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-build" },
+    @{ Src = "ports\hermes\wolftac-review"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review" },
+    @{ Src = "plugins\wolftac-factory\skills\wolftac-spec"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-spec" },
+    @{ Src = "plugins\wolftac-factory\skills\wolftac-build"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-build" },
+    @{ Src = "plugins\wolftac-factory\skills\wolftac-review"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-review" }
+)
+foreach ($tree in $trees) {
+    $srcRoot = Join-Path $Repo $tree.Src
+    foreach ($file in Get-ChildItem -LiteralPath $srcRoot -File -Recurse) {
+        $relative = [IO.Path]::GetRelativePath($srcRoot, $file.FullName)
+        $Pairs += @{ Src = (Join-Path $tree.Src $relative); Dst = (Join-Path $tree.Dst $relative) }
+    }
+}
 
 # Claude Code inside WSL reads the LINUX home (~/.claude/skills), not the Windows one.
 # When WSL is present, add the canonical skills as targets there too (dynamic home
@@ -73,7 +88,9 @@ if ($Check) {
 
     & (Join-Path $PSScriptRoot "parity-check.ps1")
     $parityExit = $LASTEXITCODE
-    if ($drift -ne 0 -or $parityExit -ne 0) { exit 1 }
+    & (Join-Path $PSScriptRoot "semantic-check.ps1")
+    $semanticExit = $LASTEXITCODE
+    if ($drift -ne 0 -or $parityExit -ne 0 -or $semanticExit -ne 0) { exit 1 }
     exit 0
 }
 
@@ -107,6 +124,10 @@ if ($Deploy) {
         Compress-Archive -Path (Join-Path $Repo "ports\claude-desktop\$s") -DestinationPath (Join-Path $zipOut "$s.zip") -Force
         Write-Output "zipped   $s.zip -> $zipOut"
     }
+    $codexPluginOut = Join-Path $zipOut "wolftac-factory-codex-plugin.zip"
+    $codexPluginItems = Get-ChildItem -LiteralPath (Join-Path $Repo "plugins\wolftac-factory") -Force
+    Compress-Archive -Path $codexPluginItems.FullName -DestinationPath $codexPluginOut -Force
+    Write-Output "zipped   wolftac-factory-codex-plugin.zip -> $zipOut"
     if ($skipped -gt 0) {
         Write-Output "Deploy finished with $skipped drift-skipped file(s). Reconcile the live edit(s) into the repo, or re-run with -Force to overwrite."
         exit 1

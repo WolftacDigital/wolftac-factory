@@ -31,7 +31,8 @@ Answer each gate substantively or with `N/A — <reason>`; bare `N/A` is non-com
 - Accessibility:
 - Security / privacy:
 - Rollback / recoverability:
-- Data / migration: N/A — no schema or persisted state touched; pure markdown edit.
+- Data / migration: describe schema or persisted-state changes and the migration/rollback
+  path, or use `N/A — <feature-specific reason>` when none are involved.
 - Empty / error states:
 
 ## Evidence map

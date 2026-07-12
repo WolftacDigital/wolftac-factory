@@ -1,0 +1,25 @@
+{
+  "name": "wolftac-factory",
+  "version": "1.0.0",
+  "description": "Spec, build, and independently review one issue at a time through the Wolftac software factory.",
+  "author": {
+    "name": "Wolftac Digital",
+    "url": "https://github.com/WolftacDigital"
+  },
+  "repository": "https://github.com/WolftacDigital/wolftac-factory",
+  "keywords": ["linear", "software-factory", "specification", "build", "review"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Wolftac Factory",
+    "shortDescription": "Run the Wolftac spec-build-review pipeline.",
+    "longDescription": "Creates build-ready Linear specifications, implements one queued issue in an isolated worktree, and independently reviews the published commit before completion.",
+    "developerName": "Wolftac Digital",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "Use $wolftac-spec to spec this feature.",
+      "Use $wolftac-build to build one queued issue.",
+      "Use $wolftac-review to review one built issue."
+    ]
+  }
+}

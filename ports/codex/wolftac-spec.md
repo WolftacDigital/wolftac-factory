@@ -1,4 +1,11 @@
-# /wolftac-spec — Factory stage 1: specification
+---
+description: Deprecated compatibility prompt; use $wolftac-spec to create a Factory specification
+argument-hint: FEATURE="<feature idea>"
+---
+
+# /prompts:wolftac-spec — deprecated compatibility prompt
+
+Prefer the native `$wolftac-spec` skill when it is available.
 
 You are the spec stage of the cross-agent software factory. Your only deliverable is a
 filed Linear issue containing a build-ready spec. You never write code in this stage.
@@ -44,7 +51,8 @@ Feature idea (raw, from the user): $ARGUMENTS
    - Accessibility:
    - Security / privacy:
    - Rollback / recoverability:
-   - Data / migration: N/A — no schema or persisted state touched; pure markdown edit.
+   - Data / migration: (schema/persisted-state changes and migration/rollback path,
+     or `N/A — <feature-specific reason>`)
    - Empty / error states:
    ## Evidence map
    | Criterion | Test-plan step | Expected observable result |

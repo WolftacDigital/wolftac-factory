@@ -57,8 +57,10 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    Merely unreachable from this chat → should have been skipped at step 1; un-claim
    (state `Todo`, no comment) and stop.
 
-4. **Branch.** Use the issue's Linear-generated branch name; create from the default
-   branch if needed. Never commit directly to main/master.
+4. **Branch safely.** Fetch the remote, then create a dedicated worktree for the
+   issue's Linear-generated branch from the current remote default branch. Never switch
+   branches in a checkout with user changes and never commit directly to main/master.
+   A dirty worktree owned by another process or human is a fail-closed condition.
 
 5. **Implement — guardrails.** Read the repo's CLAUDE.md first; match conventions.
    Build exactly to the spec's Technical approach and Acceptance criteria — NO scope
@@ -70,7 +72,9 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 
 7. **Commit.** Descriptive messages; record SHAs. Review the staged file list before
    committing: never commit artifacts (`__pycache__/`, `*.pyc`, `node_modules/`,
-   `dist/`, logs); add .gitignore entries as needed.
+   `dist/`, logs); add .gitignore entries as needed. Push with
+   `git push -u origin <branch>` and verify the remote head equals local `HEAD`. If no
+   writable remote exists, do not advance the issue to `In Review`.
 
 8. **Hand off.** Comment:
 
@@ -80,6 +84,7 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    - **Implemented:** <what was built, per spec section>
    - **Verified:** <exact commands run and results, per criterion>
    - **Branch / commits:** <branch> @ <SHAs>
+   - **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
    - **Deviations from spec:** <none, or what and why>
    - **Notes for review:** <what the reviewer should check first>
    ```
