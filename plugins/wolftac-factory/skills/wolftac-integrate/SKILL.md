@@ -33,9 +33,13 @@ default branch — nothing less.
 
 ## Procedure
 
-1. Confirm Linear tools. List oldest `Approved` + `Factory Queue`, apply any lane
-   filter, and silently skip unreachable `Repo:` paths. Inspect assignee-held claims
-   first: when latest activity is older than four hours, post
+1. Before queue access, require `LINEAR_FACTORY_BOT_TOKEN` and query `viewer` through
+   the Linear GraphQL API with that credential. Do not load or use the session's
+   default Linear MCP/toolset. Missing/invalid/expired token or unsuccessful viewer
+   query → fail closed: claim nothing, post nothing, stop. Through the bot-authenticated
+   connection, list oldest `Approved` + `Factory Queue`, apply any lane filter, and
+   silently skip unreachable `Repo:` paths. Inspect assignee-held claims first: when
+   latest activity is older than four hours, post
    `SWEPT: stale integrate claim, no activity since <timestamp>`, clear or replace
    the stale assignee, and keep `Approved`.
 2. Claim by assigning `me` while preserving `Approved`; immediately re-read and back

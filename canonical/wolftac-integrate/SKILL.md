@@ -42,11 +42,14 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 ## Procedure
 
 ### 1. Pick up work
-- If the Linear MCP tools aren't loaded, load them via ToolSearch (keyword query:
-  `"Linear workspace issues"` — you need `list_issues`, `get_issue`, `save_issue`,
-  `save_comment`, `list_comments`).
-- `list_issues`: team `Wolftac Digital`, state `Approved`, label `Factory Queue`,
-  oldest updated first.
+- Before reading the queue, require `LINEAR_FACTORY_BOT_TOKEN` and query `viewer`
+  through the Linear GraphQL API with that credential. Missing/invalid/expired token
+  or an unsuccessful viewer query → fail closed: claim nothing, post nothing, stop.
+- Do not load or use the session's default Linear MCP/toolset. Every queue read,
+  issue/comment read, claim, report, and state transition below is performed through
+  the bot-authenticated Linear GraphQL connection.
+- List issues: team `Wolftac Digital`, state `Approved`, label `Factory Queue`, oldest
+  updated first.
 - Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-integrate crm`),
   only consider issues whose Linear project name or labels contain it (case-insensitive).
 - Skip (silently — no comment, no state change) issues whose spec **Repo:** path is
@@ -61,8 +64,9 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 - **Nothing there → say "Factory queue: nothing awaiting integration" and stop cleanly.**
 
 ### 2. Claim it
-`save_issue`: assignee `me`, keeping state `Approved`. Immediately `get_issue` again
-and verify the assignee is still you. If another session won the race (different
+Through the bot-authenticated GraphQL connection, set assignee to the bot viewer while
+keeping state `Approved`. Immediately read the issue again through that connection and
+verify the assignee is still the bot viewer. If another session won the race (different
 assignee with activity in the last 4 hours), back off silently: no comment, no state
 change, stop this tick.
 
@@ -95,7 +99,8 @@ Exactly three positions are possible:
   appear in your output — report gate results, never raw env content.
 - **If the rebase conflicts or any gate fails:** do NOT attempt the rework yourself.
   Post a numbered defect report (what's wrong → how to reproduce → expected vs
-  actual), `save_issue`: state `Todo`, push NOTHING, clean up the worktree, stop.
+  actual), update the issue to state `Todo` through the bot-authenticated GraphQL
+  connection, push NOTHING, clean up the worktree, stop.
 
 ### 5. Post the MERGE PROOF PACK and notify
 Comment on the issue:
@@ -139,7 +144,8 @@ Linear. Keep state `Approved`. Stop.
 - Verify ancestry: `git merge-base --is-ancestor <branch-head> origin/<default>`
   must succeed. If it does not, something is wrong — do not set Done; report what
   you observed and stop.
-- Post the INTEGRATION REPORT, then `save_issue`: state `Done`. Read the issue back
+- Post the INTEGRATION REPORT, then update the issue to state `Done` through the
+  bot-authenticated GraphQL connection. Read the issue back through that connection
   and confirm the report exists and the state is actually Done.
 
 ```

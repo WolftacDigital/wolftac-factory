@@ -43,12 +43,14 @@ default branch.
   the approval is indistinguishable from automation: do NOT merge; report that the
   identity split is not yet in place and stop.
 - Reports open with `**Agent:** Hermes / <model>`.
-- Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 
 ## Preflight
-Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and
-say so. In unattended/scheduled runs, if any precondition is missing (Linear
-unreachable, repo absent), log why and exit cleanly WITHOUT claiming an issue.
+Require `LINEAR_FACTORY_BOT_TOKEN`, then query `viewer` through the Linear GraphQL API
+with that credential before any queue read. Do not load or use this profile's default
+Linear MCP/toolset. Every queue read, issue/comment read, claim, report, and state
+transition uses the bot-authenticated GraphQL connection. Missing/invalid/expired token,
+an unsuccessful viewer query, Linear unreachable, or repo absent → fail closed: log the
+precondition and exit cleanly WITHOUT claiming an issue.
 
 ## WSL-hosted repo pattern
 When a spec's **Repo:** path is WSL-hosted (for example `/home/... (WSL Ubuntu)`) but

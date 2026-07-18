@@ -80,6 +80,7 @@ $integrateFiles = @(
     "plugins\wolftac-factory\skills\wolftac-integrate\SKILL.md"
 )
 foreach ($file in $integrateFiles) {
+    $content = Read-RepoFile $file
     Require-Pattern $file "MERGE PROOF PACK" "missing the MERGE PROOF PACK contract"
     Require-Pattern $file "APPROVE MERGE" "missing the APPROVE MERGE human approval gate"
     Require-Pattern $file "merge-base --is-ancestor" "does not verify merge ancestry before Done"
@@ -93,6 +94,10 @@ foreach ($file in $integrateFiles) {
     Require-Pattern $file "LINEAR_FACTORY_BOT_TOKEN" "stage does not mandate bot-credentialed Linear I/O"
     Require-Pattern $file "fail\s+closed" "stage does not fail closed when bot credentials are missing"
     Require-Pattern $file "(notify-only|notification-only|notification lanes are notify)" "notification lanes are not restricted to notify-only"
+    Require-Pattern $file "[Dd]o not load or use.{0,100}default\s+Linear" "stage does not prohibit loading or using the default Linear transport"
+    if ([regex]::IsMatch($content, '(ToolSearch|`(?:list_issues|get_issue|save_issue|list_comments|save_comment)`|Confirm Linear tools|use this profile''s Linear toolset equivalents)', "IgnoreCase")) {
+        $errors.Add("$file - integrate procedure references the default/human Linear tool path instead of bot-authenticated GraphQL")
+    }
 }
 
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
