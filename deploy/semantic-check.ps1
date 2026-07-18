@@ -109,6 +109,9 @@ Require-Pattern "deploy\integrate-preflight.py" "EXPECTED_BOT_ID\s*=" "preflight
 Require-Pattern "deploy\integrate-preflight.py" "(?s)viewer\(fresh\).{0,700}persist_token" "re-mint must viewer-verify a fresh token BEFORE persisting it"
 Require-Pattern "deploy\bot-runtime.md" "cron create" "bot-runtime recipe lost the verified worker-creation command"
 Require-Pattern "deploy\bot-runtime.md" "factory-integrate" "bot-runtime recipe lost the isolated profile"
+Require-Pattern "deploy\bot-runtime.md" "pin-cron-model" "bot-runtime recipe lost the supported model-pin flow"
+Require-Pattern "deploy\integrate-preflight.py" "os\.replace" "token persistence lost its atomic write"
+Require-Pattern "deploy\pin-cron-model.py" "(?s)os\.replace.{0,600}readback" "pin tool lost atomic write or readback verification"
 
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
 try {

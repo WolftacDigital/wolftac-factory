@@ -98,7 +98,14 @@ def persist_token(env_path, env_txt, token):
                          "LINEAR_FACTORY_BOT_TOKEN=" + token, env_txt, flags=re.M)
     else:
         env_txt += "\nLINEAR_FACTORY_BOT_TOKEN=" + token + "\n"
-    open(env_path, "w", encoding="utf-8", newline="\n").write(env_txt)
+    # Atomic persist: write a sibling temp file, then os.replace — an interrupted
+    # write can never leave a truncated/corrupt .env behind.
+    tmp = env_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(env_txt)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, env_path)
 
 def main():
     ap = argparse.ArgumentParser()

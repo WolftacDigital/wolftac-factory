@@ -74,11 +74,16 @@ hermes -p factory-integrate cron create --name "Wolftac Factory Integrate Worker
 
    The preflight is invoked by ABSOLUTE path so the Mission Control workdir
    never matters.
-3. **Pin the job's provider/model immediately after creation** by editing
-   `%LOCALAPPDATA%\hermes\profiles\factory-integrate\cron\jobs.json` (back it up
-   first): set `provider`, `model`, and refresh the snapshots — `hermes cron
-   edit` has no model flags, and unpinned jobs skip every run after any global
-   model drift.
+3. **Pin the job's provider/model immediately after creation** with the
+   supported pin flow (backs up jobs.json, edits atomically, verifies by
+   readback — `hermes cron edit` has no model flags, and unpinned jobs skip
+   every run after any global model drift):
+
+```
+python D:\Wolftac\wolftac-factory\deploy\pin-cron-model.py \
+  --job-name "Wolftac Factory Integrate Worker" \
+  --provider openai-codex --model gpt-5.6-sol
+```
 4. The profile's scheduler/gateway must be running for cron ticks to fire —
    operator-managed, same as the existing factory workers.
 
