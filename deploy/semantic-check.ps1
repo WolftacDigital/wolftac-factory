@@ -105,6 +105,8 @@ foreach ($file in $integrateFiles) {
 Require-Pattern "deploy\integrate-preflight.py" "PREFLIGHT FAIL \(3\)" "preflight lost the dual-capable-runtime (human Linear path) violation check"
 Require-Pattern "deploy\integrate-preflight.py" "client_credentials" "preflight lost the token re-mint path"
 Require-Pattern "deploy\integrate-preflight.py" "composio" "preflight capability scan lost Composio-proxied transport detection"
+Require-Pattern "deploy\integrate-preflight.py" "executing process environment" "preflight lost the executing-runtime credential check"
+Require-Pattern "deploy\bot-runtime.md" "blank\s+overrides" "runtime recipe lost the inherited-credential blank-override step"
 Require-Pattern "deploy\integrate-preflight.py" "EXPECTED_BOT_ID\s*=" "preflight lost the pinned (non-overridable) bot id"
 Require-Pattern "deploy\integrate-preflight.py" "(?s)viewer\(fresh\).{0,700}persist_token" "re-mint must viewer-verify a fresh token BEFORE persisting it"
 Require-Pattern "deploy\bot-runtime.md" "cron create" "bot-runtime recipe lost the verified worker-creation command"

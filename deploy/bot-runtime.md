@@ -20,7 +20,12 @@ nothing inherited from the human operator's profile). Root:
    (fail-closed; Composio counts because it can proxy Linear tools). Keep those
    tokens out of this profile's yaml entirely, including comments.
 2. **`.env`** — the bot credentials only: `LINEAR_FACTORY_APP_ID`,
-   `LINEAR_FACTORY_APP_SECRET`, `LINEAR_FACTORY_BOT_TOKEN`. Values are never
+   `LINEAR_FACTORY_APP_SECRET`, `LINEAR_FACTORY_BOT_TOKEN` — PLUS blank
+   overrides that neutralize any human Linear-capable credentials inherited
+   from the root env or shell (`LINEAR_API_KEY=`, `COMPOSIO_API_KEY=`). The
+   preflight's executing-runtime check inspects the process environment it
+   inherits from the worker and exits 3 if any such credential is non-empty,
+   so a profile missing these overrides cannot start work. Values are never
    printed, logged, or committed.
 3. **`skills\wolftac-integrate\`** — the Hermes integrate skill (deployed by
    `deploy.ps1`, which targets this profile's skills directory).

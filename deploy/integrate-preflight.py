@@ -82,7 +82,7 @@ def viewer(token):
 def mint(app_id, secret):
     data = urllib.parse.urlencode({
         "grant_type": "client_credentials", "client_id": app_id,
-        "client_secret": secret, "scope": "read,write"}).encode()
+        "client_secret": secret, "scope": "read,write,app:assignable,app:mentionable"}).encode()
     req = urllib.request.Request(
         "https://api.linear.app/oauth/token", data=data,
         headers={"Content-Type": "application/x-www-form-urlencoded"})
@@ -130,6 +130,18 @@ def main():
         sys.exit(2)
 
     scan_profile_configs(root)
+
+    # Executing-runtime check: the preflight inherits the worker process's
+    # environment, so a non-empty human/default Linear-capable credential HERE
+    # means the runtime that launched us retains a human write path.
+    for var in ("LINEAR_API_KEY", "LINEAR_OAUTH_TOKEN", "COMPOSIO_API_KEY"):
+        if os.environ.get(var, "").strip():
+            print(f"PREFLIGHT FAIL (3): the executing process environment carries a non-empty {var} — "
+                  "the runtime that launched this preflight retains a human/default Linear-capable "
+                  "credential and is NOT capability-isolated; claim nothing. (The isolated profile's "
+                  ".env must blank-override inherited credentials; see deploy/bot-runtime.md.)")
+            sys.exit(3)
+    print("executing-runtime check: no human/default Linear-capable credentials in the process environment — OK")
 
     v = viewer(token) if token else None
     if v is None:
