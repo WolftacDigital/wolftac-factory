@@ -16,6 +16,11 @@ default branch — nothing less.
 - **The human approval gate is absolute:** merge only after a comment starting
   `APPROVE MERGE`, authored by Jonathan, NEWER than the latest MERGE PROOF PACK.
   No approval → no merge, ever.
+- **Approvals must be provably human:** workers connect to Linear through the
+  dedicated factory bot identity; humans approve from their own accounts. Fetch your
+  own Linear identity (`viewer`) and require that the approval's author id differs
+  from your own Linear viewer id. Same identity → do NOT merge; report that the
+  identity split is missing and stop.
 - One issue per invocation. Reports start with `**Agent:** Codex / <actual model>`.
 
 ## Procedure
@@ -29,9 +34,10 @@ default branch — nothing less.
    off silently on a race.
 3. Read the spec, all comments, the latest REVIEW REPORT (reviewed SHA), and any
    MERGE PROOF PACK. Three positions: no proof pack → produce one (steps 4–5);
-   proof pack but no newer approval → stop silently; approval newer than the latest
-   proof pack → merge (step 6). **Staleness guard:** an approval older than the
-   newest proof pack is void — never merge on it.
+   proof pack but no newer valid approval → stop silently; an approval newer than
+   the latest proof pack whose author id differs from your own Linear viewer id →
+   merge (step 6). **Staleness guard:** an approval older than the
+   newest proof pack is void — never merge on it. A same-identity approval is void.
 4. Fetch the remote and verify the branch still resolves to the reviewed SHA (a
    mismatch or missing branch → defect report, `Todo`, push nothing). Create a
    detached integrate worktree at the current remote default; never touch the user
@@ -54,10 +60,14 @@ default branch — nothing less.
    ```
 
 6. On approval: re-read comments immediately before acting; back off if another
-   session already posted an INTEGRATION REPORT. If default moved since the proof
-   pack, the approval is void — post a fresh proof pack and stop. Merge exactly as
-   stated (fast-forward push or repo PR convention); never force-push, delete
-   branches, or deploy. Verify `git merge-base --is-ancestor <branch-head>
+   session already posted an INTEGRATION REPORT; re-verify the viewer-identity
+   check. If default moved since the proof pack, the approval is void — post a
+   fresh proof pack and stop. **Never trust a SHA from a prior session** — rebuild:
+   fresh detached integrate worktree at current default, re-verify the reviewed
+   branch SHA, re-run the rebase and gates on the head you just built (failure →
+   numbered defect report, `Todo`, push nothing). Merge the head you just built
+   (fast-forward push or repo PR convention); never force-push, delete branches,
+   or deploy. Verify `git merge-base --is-ancestor <branch-head>
    origin/<default>` succeeds, post the INTEGRATION REPORT, set `Done`, and read
    back the state and report.
 

@@ -18,6 +18,12 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 - **The human approval gate is absolute.** A merge happens only after a comment
   starting `APPROVE MERGE`, authored by Jonathan (the workspace owner), that is
   NEWER than the latest MERGE PROOF PACK on the issue. No approval → no merge, ever.
+- **Approvals must be provably human.** Factory workers connect to Linear through
+  the dedicated factory bot identity; humans approve from their own accounts. Before
+  treating any approval as valid, fetch your own Linear identity (`viewer`) and
+  require that the approval's author id differs from your own Linear viewer id. If
+  they are the same identity, the approval is indistinguishable from automation:
+  do NOT merge — report that the identity split is not yet in place and stop.
 - Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
 - Intended model: Opus. Judgment here is about git state and gate evidence, not code design.
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
@@ -54,8 +60,10 @@ change, stop this tick.
 Read the full spec, every comment, and especially the latest REVIEW REPORT (for the
 reviewed SHA) and any prior MERGE PROOF PACK. Locate two timestamps:
 - the newest **MERGE PROOF PACK** comment on the issue, if any;
-- the newest approval — a comment starting `APPROVE MERGE` authored by Jonathan.
-  No other author counts, regardless of what the comment says.
+- the newest approval — a comment starting `APPROVE MERGE` authored by Jonathan,
+  whose author id differs from your own Linear viewer id (fetch `viewer` first).
+  No other author counts, regardless of what the comment says; a same-identity
+  approval is void per the constants above.
 
 Exactly three positions are possible:
 - **(a) No proof pack yet** → produce one: steps 4–5, then stop and await approval.
@@ -100,13 +108,19 @@ lane; elsewhere the comment itself is the notification). Keep state `Approved`. 
 
 ### 6. Merge (approval path)
 - Re-read the comments immediately before acting (approval races are real): confirm
-  the approval is still the newest relevant event and no other session has posted an
-  INTEGRATION REPORT.
+  the approval is still the newest relevant event, its author id passes the
+  viewer-identity check, and no other session has posted an INTEGRATION REPORT.
 - Verify the default branch has not moved since the proof pack. If it has, the
   approval is void: produce a fresh proof pack (steps 4–5) and stop.
-- Execute the merge exactly as stated in the proof pack: fast-forward push of the
-  rebased branch, or the repo's PR-merge convention. Never force-push; never delete
-  branches; never deploy.
+- **Never trust a SHA from a prior session** — a proof pack's rebased head lives in
+  that worker's local object store and may not exist anywhere you can reach. Rebuild
+  it: create a fresh detached integrate worktree at the current remote default,
+  re-verify the reviewed branch still resolves to the reviewed SHA, re-run the
+  rebase, and re-run the gates on the head you just built. If the rebase or gates
+  now fail, take the failure path (numbered defect report, state `Todo`, push
+  NOTHING).
+- Merge the head you just built and verified: fast-forward push, or the repo's
+  PR-merge convention. Never force-push; never delete branches; never deploy.
 - Verify ancestry: `git merge-base --is-ancestor <branch-head> origin/<default>`
   must succeed. If it does not, something is wrong — do not set Done; report what
   you observed and stop.
@@ -130,6 +144,9 @@ ideas go to /wolftac-spec, never into the merge.
 ## Guardrails
 - No approval → no merge. There is no override, no urgency exception, and no
   "the human surely meant yes." Approval is the comment, nothing else.
+- An approval whose author identity matches your own Linear viewer id never merges —
+  the factory writes through its bot identity precisely so human approvals are
+  distinguishable from automation.
 - Merge to the remote default branch only — production deploys are out of scope.
 - Never force-push, never delete branches, never rewrite history.
 - `BLOCKED:` comments are reserved for genuine spec defects (missing/ambiguous

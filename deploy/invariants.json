@@ -123,6 +123,15 @@
     ]
   },
   {
+    "id": "integrate-human-approval-provenance",
+    "description": "Integrate requires the approval author to differ from the worker's own Linear viewer identity and rebuilds the rebased head at merge time instead of trusting prior-session SHAs.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)" }
+    ]
+  },
+  {
     "id": "integrate-one-per-tick-and-identity",
     "description": "Integrate processes one issue per invocation, backs off on races, skips unreachable repos silently, and reports agent identity.",
     "checks": [

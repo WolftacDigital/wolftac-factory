@@ -27,6 +27,12 @@ default branch.
   the latest MERGE PROOF PACK on the issue. No approval → no merge, ever. A Telegram
   "approve" reply is relayed into that Linear comment; Telegram is the notification
   lane, Linear is the record.
+- **Approvals must be provably human.** Factory workers connect to Linear through
+  the dedicated factory bot identity; humans approve from their own accounts. Fetch
+  your own Linear identity (`viewer`) before validating an approval and require that
+  the approval's author id differs from your own Linear viewer id. Same identity →
+  the approval is indistinguishable from automation: do NOT merge; report that the
+  identity split is not yet in place and stop.
 - Reports open with `**Agent:** Hermes / <model>`.
 - Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 
@@ -63,9 +69,11 @@ the WSL VM recycles between commands).
    REVIEW REPORT (for the reviewed SHA), and any prior MERGE PROOF PACK. Three
    positions: (a) no proof pack yet → produce one (steps 4–5), stop;
    (b) proof pack exists, no approval newer than it → stop silently, no comment;
-   (c) an `APPROVE MERGE` comment authored by Jonathan NEWER than the latest proof
-   pack → merge path (step 6). **Staleness guard:** an approval OLDER than the newest
-   proof pack is void — a re-rebase invalidates prior approval; never merge on it.
+   (c) an `APPROVE MERGE` comment authored by Jonathan, whose author id differs from
+   your own Linear viewer id, NEWER than the latest proof pack → merge path (step 6).
+   **Staleness guard:** an approval OLDER than the newest proof pack is void — a
+   re-rebase invalidates prior approval; never merge on it. A same-identity approval
+   is void per the contract above.
 
 4. **Rebase and re-run gates.** Fetch the remote; verify the published branch still
    resolves to the reviewed SHA (missing branch or SHA mismatch → the reviewed
@@ -94,14 +102,20 @@ the WSL VM recycles between commands).
    ```
 
 6. **Merge (approval path).** Re-read the comments immediately before acting; back
-   off if another session posted an INTEGRATION REPORT. If the default branch moved
-   since the proof pack, the approval is void — produce a fresh proof pack and stop.
-   Execute the merge exactly as stated in the proof pack (fast-forward push or the
-   repo's PR-merge convention). Never force-push, never delete branches, never
-   deploy. Verify `git merge-base --is-ancestor <branch-head> origin/<default>`
-   succeeds — if not, do not set Done; report what you observed. Post the
-   INTEGRATION REPORT, set state `Done`, then read the issue back and confirm the
-   report exists and the state is actually Done.
+   off if another session posted an INTEGRATION REPORT; re-verify the approval's
+   author id passes the viewer-identity check. If the default branch moved since the
+   proof pack, the approval is void — produce a fresh proof pack and stop.
+   **Never trust a SHA from a prior session** — a proof pack's rebased head lives in
+   that worker's local object store. Rebuild it: fresh detached integrate worktree at
+   the current remote default, re-verify the reviewed branch SHA, re-run the rebase,
+   re-run the gates on the head you just built (failure → numbered defect report,
+   state `Todo`, push NOTHING). Merge the head you just built and verified
+   (fast-forward push or the repo's PR-merge convention). Never force-push, never
+   delete branches, never deploy. Verify
+   `git merge-base --is-ancestor <branch-head> origin/<default>` succeeds — if not,
+   do not set Done; report what you observed. Post the INTEGRATION REPORT, set state
+   `Done`, then read the issue back and confirm the report exists and the state is
+   actually Done.
 
    ```text
    **INTEGRATION REPORT — MERGED**
@@ -118,6 +132,8 @@ the WSL VM recycles between commands).
 
 ## Guardrails
 - No approval → no merge. No override, no urgency exception.
+- An approval whose author identity matches your own Linear viewer id never merges —
+  the bot-identity split exists precisely so human approvals are distinguishable.
 - Merge to the remote default branch only; production deploys are out of scope.
 - Never force-push, never delete branches, never rewrite history.
 - `BLOCKED:` is reserved for genuine spec defects; an unreachable repo is a silent skip.

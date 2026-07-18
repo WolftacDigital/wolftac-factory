@@ -86,6 +86,8 @@ foreach ($file in $integrateFiles) {
     Require-Pattern $file "detached integrate\s+worktree" "does not require an isolated integrate worktree"
     Require-Pattern $file "[Nn]ever force-push" "missing the force-push prohibition"
     Require-Pattern $file "older than the\s+newest\s+proof pack" "missing the approval staleness guard"
+    Require-Pattern $file "differs\s+from\s+your\s+own\s+Linear\s+viewer\s+id" "missing the human-approval viewer-identity check"
+    Require-Pattern $file "[Nn]ever trust a SHA from a prior session" "merge path does not rebuild the rebased head at merge time"
 }
 
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"

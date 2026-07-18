@@ -39,6 +39,11 @@ session can review what Codex built.
 - **Spec template:** every spec follows `canonical/wolftac-spec/spec-template.md`.
   The **`Repo:`** header line at the top of every spec is mandatory — it's the
   working directory for that issue, and build/review refuse to guess at it.
+- **Linear identities are split:** factory workers connect to Linear through the
+  dedicated factory bot identity; humans comment and approve from their own
+  accounts. The integrate stage refuses any `APPROVE MERGE` authored by the same
+  identity it writes with — until the split exists in a workspace, integrate can
+  prepare proof packs but will never merge.
 - **Every report opens with an identity line:** `**Agent:** <platform / model>`
   (e.g. `Codex / gpt-5.6-sol`, `Hermes / gpt-5.6-sol`, `Claude Code / Opus 4.8`). This is how
   the human (and other agents) can tell who did what. Reviewers should prefer

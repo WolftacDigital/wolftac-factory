@@ -163,6 +163,9 @@ that file; stage skills record the actual model but never pretend to switch it m
 - Every spec has a mandatory **`Repo:`** header naming where the work happens; every
   build/review report opens with **`Agent: <platform / model>`** so you can always
   tell who did what.
+- Agents write to Linear through the factory bot identity; you approve merges from
+  your own account. Integrate refuses same-identity approvals, so nothing merges on
+  an approval a worker could have minted itself.
 - Model economics: spec on your strongest model or (Hermes only) the
   `wolftac-factory-spec` MoA preset. Run build/review as Claude Code `/loop`
   sessions, Hermes cron ticks, or Codex scheduled `exec` one-shots — optionally
