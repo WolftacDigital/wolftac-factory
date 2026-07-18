@@ -12,7 +12,7 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue**
 - You consume: state **Todo** • You produce: state **In Review**
-- State conveyor: `Todo` → `In Progress` (you, while working) → `In Review` (you, when done) → `Done` (/wolftac-review's call, never yours)
+- State conveyor: `Todo` → `In Progress` (you, while working) → `In Review` (you, when done) → `Approved` (/wolftac-review PASS) → `Done` (/wolftac-integrate after an approved merge — never yours)
 - Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
 - Intended model: Opus or Sonnet. Fable should be orchestrating, not executing.
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
@@ -108,7 +108,7 @@ Post a comment on the issue:
 - **Notes for review:** <anything the reviewer should look at first>
 ```
 
-Then `save_issue`: state `In Review`. **Do not mark anything Done — that is /wolftac-review's
+Then `save_issue`: state `In Review`. **Do not mark anything Done — that is /wolftac-integrate's
 exclusive right.**
 
 ### 9. Stop

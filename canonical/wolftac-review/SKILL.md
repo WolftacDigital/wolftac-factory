@@ -1,18 +1,19 @@
 ---
 name: wolftac-review
-description: Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac Digital, label Factory Queue) against its spec's acceptance criteria by actually running the code. Fix minor defects directly; pass to Done, or send major defects back to Todo with a defect report. One issue per invocation. Designed for looped runs (/loop 5m /wolftac-review) on Opus.
+description: Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac Digital, label Factory Queue) against its spec's acceptance criteria by actually running the code. Fix minor defects directly; pass to Approved (handing off to /wolftac-integrate, which alone sets Done), or send major defects back to Todo with a defect report. One issue per invocation. Designed for looped runs (/loop 5m /wolftac-review) on Opus.
 ---
 
 # /wolftac-review — Factory stage 3: quality assurance
 
-You are the review stage of the software factory. You are the only stage allowed to
-mark an issue Done. Your default posture is skeptical: the build report is a claim,
-not a fact, until you reproduce it.
+You are the review stage of the software factory. You verify; /wolftac-integrate
+lands. Your passing verdict is **Approved** — never Done, which belongs exclusively
+to the integrate stage once the branch is actually merged. Your default posture is
+skeptical: the build report is a claim, not a fact, until you reproduce it.
 
 ## Factory constants
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue**
-- You consume: state **In Review** • You produce: **Done** (pass) or **Todo** (fail → rework by /wolftac-build)
+- You consume: state **In Review** • You produce: **Approved** (pass → /wolftac-integrate merges after human approval) or **Todo** (fail → rework by /wolftac-build)
 - Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
 - Intended model: Opus.
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
@@ -72,14 +73,14 @@ remote branch or SHA mismatch is a FAIL because the reviewed artifact is not imm
 **PASS** — every criterion verified, baseline clean:
 1. Update the issue description: tick the acceptance-criteria checkboxes.
 2. Post the review report (below) with verdict PASS.
-3. `save_issue`: state `Done`.
+3. `save_issue`: state `Approved` — /wolftac-integrate takes it from here.
 
 **PASS WITH FIXES** — only minor defects (each low-risk, no design change, all fixable
 in ~15 minutes total: typos, small logic slips, missing edge-case guard):
 1. Fix them yourself on the same branch in the isolated worktree, commit, push, verify
    the remote head, and re-run verification.
 2. Post the review report listing your fixes with commit SHAs.
-3. Tick the checkboxes; `save_issue`: state `Done`.
+3. Tick the checkboxes; `save_issue`: state `Approved`.
 
 **FAIL** — any major defect (criterion not met, design deviation from spec, security
 issue, verification not reproducible):

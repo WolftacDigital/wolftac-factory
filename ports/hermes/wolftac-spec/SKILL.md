@@ -35,7 +35,7 @@ If this skill is invoked while Hermes is not already on `provider=moa`, `model=w
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — stages ONLY touch issues carrying this label
-- States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Done` (set ONLY by the review stage). Failed reviews go back to `Todo` with a defect list.
+- States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Approved` (review PASS, awaiting merge) → `Done` (set ONLY by the integrate stage after an approved merge). Failed reviews go back to `Todo` with a defect list.
 - Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
 - Linear tool names vary by platform (`create_issue`/`update_issue` vs `save_issue`) — use whatever Linear toolset this Hermes profile has (Linear MCP or Composio Linear).
 

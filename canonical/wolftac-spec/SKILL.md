@@ -12,7 +12,7 @@ issue containing a build-ready spec. You never write code in this stage.
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** (this is how /wolftac-build and /wolftac-review find factory work)
 - Filed state: **Todo**
-- State conveyor: `Todo` (specced) → `In Progress` (/wolftac-build working) → `In Review` (awaiting QA) → `Done` (reviewed & shipped)
+- State conveyor: `Todo` (specced) → `In Progress` (/wolftac-build working) → `In Review` (awaiting QA) → `Approved` (review PASS, awaiting merge) → `Done` (merged to the default branch by /wolftac-integrate)
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
   conventions above are the shared contract; any agent may build/wolftac-review what you spec.
 

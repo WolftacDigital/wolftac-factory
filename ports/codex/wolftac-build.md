@@ -16,7 +16,8 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
 - You consume state `Todo`; you produce state `In Review`. `Done` is set ONLY by the
-  review stage — never by you.
+  integrate stage after an approved merge — never by you (review's pass verdict is
+  `Approved`).
 - Reports open with `**Agent:** <platform / model>` (e.g. `Codex / gpt-5.6-sol`).
 - Linear tool names vary by platform — use your Linear MCP toolset's equivalents for:
   list issues (filter team/state/label), read issue + comments, update state/assignee,

@@ -36,7 +36,7 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
-- You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the review stage — never by you.
+- You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the integrate stage after an approved merge — never by you (review's pass verdict is `Approved`).
 - Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
 - Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 

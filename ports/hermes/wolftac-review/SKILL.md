@@ -3,9 +3,9 @@ name: wolftac-review
 description: |
   Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac
   Digital, label Factory Queue) against its spec's acceptance criteria by actually
-  running the code. Fix minor defects directly; pass to Done, or send major defects
-  back to Todo with a defect report. The ONLY stage allowed to set Done. One issue
-  per invocation.
+  running the code. Fix minor defects directly; pass to Approved (handing off to
+  wolftac-integrate, which alone sets Done after an approved merge), or send major
+  defects back to Todo with a defect report. One issue per invocation.
   Use when asked to "review", "run the review stage", "QA the queue", or on a
   recurring factory-review schedule/cron.
   Voice triggers (speech-to-text aliases): "review the queue", "QA the factory".
@@ -13,8 +13,10 @@ description: |
 
 # /wolftac-review — Factory stage 3: quality assurance
 
-You are the only stage allowed to mark an issue Done. Default posture: skeptical.
-The build report is a claim, not a fact, until you reproduce it.
+You verify; wolftac-integrate lands. Your passing verdict is **Approved** — Done
+belongs exclusively to the integrate stage once the branch is actually merged.
+Default posture: skeptical. The build report is a claim, not a fact, until you
+reproduce it.
 
 ## Hermes MoA routing
 
@@ -36,7 +38,7 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
-- You consume state `In Review`; you produce `Done` (pass) or `Todo` (fail → rework).
+- You consume state `In Review`; you produce `Approved` (pass → wolftac-integrate merges after human approval) or `Todo` (fail → rework).
 - Reports open with `**Agent:** <platform / model>`. Prefer reviewing work built by a
   DIFFERENT agent/model than yourself when possible — the build report's Agent line
   tells you who built it.
@@ -45,7 +47,7 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## Preflight
 Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
-If the primary Linear MCP transport is temporarily down but an authenticated Composio Linear toolset is available, continue through Composio rather than abandoning the review: use small GraphQL queries (`teams`, filtered `issues`, `issue`) to avoid complexity limits, `LINEAR_CREATE_LINEAR_COMMENT` for the report, `LINEAR_UPDATE_ISSUE` with resolved state IDs for Done/Todo and checkbox updates, then read the issue back to verify the report/state/checkboxes persisted. Treat the failed MCP call as transport state, not proof that Linear is unavailable. If a Composio Remote Workbench helper (`run_composio_tool` / `proxy_execute`) reports an expired/revoked project API key while direct `COMPOSIO_MULTI_EXECUTE_TOOL` calls in the same workflow still work, do not abandon the Linear side effects: perform the final comment/update/readback with direct multi-execute calls, keeping strict sequencing so the comment is created before the state/description update and verification readback is last.
+If the primary Linear MCP transport is temporarily down but an authenticated Composio Linear toolset is available, continue through Composio rather than abandoning the review: use small GraphQL queries (`teams`, filtered `issues`, `issue`) to avoid complexity limits, `LINEAR_CREATE_LINEAR_COMMENT` for the report, `LINEAR_UPDATE_ISSUE` with resolved state IDs for Approved/Todo and checkbox updates, then read the issue back to verify the report/state/checkboxes persisted. Treat the failed MCP call as transport state, not proof that Linear is unavailable. If a Composio Remote Workbench helper (`run_composio_tool` / `proxy_execute`) reports an expired/revoked project API key while direct `COMPOSIO_MULTI_EXECUTE_TOOL` calls in the same workflow still work, do not abandon the Linear side effects: perform the final comment/update/readback with direct multi-execute calls, keeping strict sequencing so the comment is created before the state/description update and verification readback is last.
 
 ## WSL-hosted repo review pattern
 
@@ -142,10 +144,10 @@ When the full test command fails due unrelated suite collection/tooling failures
 
 5. **Verdict — three outcomes.**
    - **PASS** — tick the acceptance checkboxes in the description, post the report,
-     state `Done`.
+     state `Approved` (wolftac-integrate takes it from here).
    - **PASS WITH FIXES** — only minor defects (low-risk, no design change, ~15 min
      total): fix in the isolated worktree, commit, push, verify the remote head,
-     re-verify, list fixes with SHAs, tick checkboxes, state `Done`.
+     re-verify, list fixes with SHAs, tick checkboxes, state `Approved`.
    - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
      unreproducible verification): do NOT rework it yourself. Post a numbered defect
      list (what's wrong → repro → expected vs actual), state `Todo`.
@@ -166,7 +168,7 @@ When the full test command fails due unrelated suite collection/tooling failures
 
 6. **Verify Linear side effects.** After posting the review report and moving the issue,
    read the issue back (and the latest comments when available) to confirm the report exists,
-   acceptance boxes were updated when applicable, and the final state is actually `Done` or
+   acceptance boxes were updated when applicable, and the final state is actually `Approved` or
    `Todo`. Do not claim completion from the write call alone.
 
    **Concurrent-review race check:** after long installs/tests/builds or branch-fix pushes,
@@ -175,7 +177,7 @@ When the full test command fails due unrelated suite collection/tooling failures
    while you were executing proof. Follow `references/concurrent-linear-review-race.md`: normally
    do not duplicate or overwrite a completed review; only add a clearly labeled follow-up report
    if your worker materially changed the branch or produced new evidence the existing report lacks.
-   In scheduled/cron runs, if readback shows the issue is already Done/Todo with a newer REVIEW
+   In scheduled/cron runs, if readback shows the issue has already moved (Approved/Todo/Done) with a newer REVIEW
    REPORT, treat the tick as a clean concurrent-review backoff: cancel the local Linear write,
    perform best-effort temp worktree cleanup, and final-report the backoff/verified state rather
    than posting another Linear comment.

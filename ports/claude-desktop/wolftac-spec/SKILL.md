@@ -11,7 +11,7 @@ write code in this stage.
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — stages ONLY touch issues carrying this label
-- States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Done` (set ONLY by the review stage). Failed reviews go back to `Todo` with a defect list.
+- States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Approved` (review PASS, awaiting merge) → `Done` (set ONLY by the integrate stage after an approved merge). Failed reviews go back to `Todo` with a defect list.
 - Reports open with `**Agent:** <platform / model>` (e.g. `Claude Desktop / Fable 5`).
 - Tool access: this runs on the claude.ai **Linear connector** (tools like `list_issues`,
   `save_issue`, `save_comment`). If Linear tools aren't available in this chat, ask the

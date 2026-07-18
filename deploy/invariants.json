@@ -94,6 +94,44 @@
     ]
   },
   {
+    "id": "review-produces-approved",
+    "description": "Review's passing verdicts set Approved; only integrate sets Done.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "state `Approved`" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "state `Approved`" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "state `Approved`" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "state `Approved`" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "set `Approved`" }
+    ]
+  },
+  {
+    "id": "integrate-approval-gate",
+    "description": "Integrate merges only after an APPROVE MERGE comment newer than the latest MERGE PROOF PACK, with a staleness guard.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*(OLDER|older) than the newest proof pack)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" }
+    ]
+  },
+  {
+    "id": "integrate-ancestry-and-safety",
+    "description": "Integrate verifies merge ancestry and never force-pushes.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" }
+    ]
+  },
+  {
+    "id": "integrate-one-per-tick-and-identity",
+    "description": "Integrate processes one issue per invocation, backs off on races, skips unreachable repos silently, and reports agent identity.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently[\\s\\S]{0,200}unreachable)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*unreachable)(?=[\\s\\S]*SILENTLY)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently skip)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" }
+    ]
+  },
+  {
     "id": "blocked-spec-defects-only",
     "description": "Build reserves BLOCKED comments for genuine spec defects.",
     "checks": [

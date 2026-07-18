@@ -1,13 +1,16 @@
 # Wolftac Factory
 
-This is your `/wolftac-spec` → `/wolftac-build` → `/wolftac-review` software factory:
-a repeatable pipeline where one agent turns an idea into a detailed spec, another
-builds it and proves it works, and a third independently re-verifies before anything
-is marked done. It runs across **Claude Code, Claude Desktop, Codex, and Hermes** —
-the whole hand-off happens through one shared Linear queue, not through this repo.
-Claude Code, Codex, and Hermes can run every stage; Claude Desktop participates
-fully in spec, and in build/review only when the chat has filesystem + terminal
-MCP access to the target repo.
+This is your `/wolftac-spec` → `/wolftac-build` → `/wolftac-review` →
+`/wolftac-integrate` software factory: a repeatable pipeline where one agent turns
+an idea into a detailed spec, another builds it and proves it works, a third
+independently re-verifies and marks it Approved, and a fourth lands the approved
+branch on the default branch — only after your explicit `APPROVE MERGE` — and marks
+it Done. Done means merged. It runs across **Claude Code, Claude Desktop, Codex,
+and Hermes** — the whole hand-off happens through one shared Linear queue, not
+through this repo. Claude Code, Codex, and Hermes can run every stage; Claude
+Desktop participates fully in spec, and in build/review only when the chat has
+filesystem + terminal MCP access to the target repo (integrate is not a Desktop
+stage).
 
 **This repo is the source of truth for the skill files themselves.** The copies
 under `~/.claude/skills`, `~/.agents/skills`, legacy `~/.codex/prompts`, and
@@ -23,10 +26,11 @@ README.md              This file — for you, the human
 canonical/              Claude Code skills (the reference implementation)
   wolftac-spec/          spec stage: idea -> Linear issue
   wolftac-build/          build stage: issue -> working, tested code
-  wolftac-review/         review stage: independent re-verification, the only stage that marks Done
-plugins/wolftac-factory/ Codex plugin with three native skills (authoritative Codex port)
+  wolftac-review/         review stage: independent re-verification -> Approved
+  wolftac-integrate/      integrate stage: rebase + gates + APPROVE MERGE -> merged, the only stage that marks Done
+plugins/wolftac-factory/ Codex plugin with four native skills (authoritative Codex port)
 ports/codex/            Deprecated `/prompts:wolftac-*` compatibility prompts
-ports/hermes/           Hermes skills (same three stages, Hermes' format)
+ports/hermes/           Hermes skills (same stages, Hermes' format)
   wolftac-review/references/   Proof patterns (e.g. reviewing WSL-hosted repos via a detached worktree)
 ports/claude-desktop/   Sources for Claude Desktop's uploadable skill bundles
 deploy/deploy.ps1       -Check (drift) / -Deploy (push to all local targets) / -Package (zip for handoff)
@@ -152,7 +156,9 @@ that file; stage skills record the actual model but never pretend to switch it m
 
 - Linear team **Wolftac Digital** (`WD`), queue label **Factory Queue**.
 - States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) →
-  `Done` — set only by the review stage. A failed review returns the issue to `Todo`
+  `Approved` (review passed, awaiting merge) → `Done` — set only by the integrate
+  stage, after your explicit `APPROVE MERGE` and an ancestry-verified merge. A failed
+  review — or a failed rebase/gate at integration — returns the issue to `Todo`
   with a defect list the next build treats as its work order.
 - Every spec has a mandatory **`Repo:`** header naming where the work happens; every
   build/review report opens with **`Agent: <platform / model>`** so you can always
@@ -163,8 +169,8 @@ that file; stage skills record the actual model but never pretend to switch it m
   scoped with a lane filter where the platform recipe supports it.
 
 Full detail — the exact procedure each stage follows — lives in
-`canonical/wolftac-{spec,build,review}/SKILL.md`. `AGENTS.md` is the shorter version
-written for an agent seeing this for the first time.
+`canonical/wolftac-{spec,build,review,integrate}/SKILL.md`. `AGENTS.md` is the
+shorter version written for an agent seeing this for the first time.
 
 ## Provenance
 

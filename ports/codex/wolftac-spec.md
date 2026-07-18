@@ -15,7 +15,7 @@ Feature idea (raw, from the user): $ARGUMENTS
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — stages ONLY touch issues carrying this label
-- States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Done` (set ONLY by the review stage). Failed reviews go back to `Todo` with a defect list.
+- States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Approved` (review PASS, awaiting merge) → `Done` (set ONLY by the integrate stage after an approved merge). Failed reviews go back to `Todo` with a defect list.
 - Reports open with `**Agent:** <platform / model>` so the cross-agent trail is auditable.
 - Linear tool names vary by platform (`create_issue`/`update_issue` here vs `save_issue` elsewhere) — use your Linear MCP toolset's equivalents. If no Linear tools are available, stop and tell the user to run the Linear MCP login for Codex (`[mcp_servers.linear]` is configured in `~/.codex/config.toml`; first use may require OAuth).
 

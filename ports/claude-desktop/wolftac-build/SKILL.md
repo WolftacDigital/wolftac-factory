@@ -18,8 +18,9 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
-- You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the review
-  stage — never by you.
+- You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the
+  integrate stage after an approved merge — never by you (review's pass verdict is
+  `Approved`).
 - Reports open with `**Agent:** <platform / model>` (e.g. `Claude Desktop / Fable 5`).
 - Tools: claude.ai Linear connector (`list_issues`, `get_issue`, `save_issue`,
   `save_comment`, `list_comments`). Not available → ask the user to enable it.

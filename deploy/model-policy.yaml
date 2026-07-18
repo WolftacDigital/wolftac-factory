@@ -19,6 +19,9 @@ harnesses:
       review:
         model: gpt-5.6-sol
         reasoning_effort: max
+      integrate:
+        model: gpt-5.6-sol
+        reasoning_effort: high
   claude-code:
     provider: anthropic
     stages:
@@ -27,6 +30,8 @@ harnesses:
       build:
         model: claude-opus-4-8
       review:
+        model: claude-opus-4-8
+      integrate:
         model: claude-opus-4-8
     value_lane:
       model: claude-sonnet-5
@@ -41,6 +46,9 @@ harnesses:
       review:
         acting_model: gpt-5.6-sol
         advisors: [claude-fable-5, claude-opus-4-8, google/gemma-4-31b-qat]
+      integrate:
+        acting_model: gpt-5.6-sol
+        advisors: [claude-opus-4-8]
 
 codex_exec_examples:
   spec: >-

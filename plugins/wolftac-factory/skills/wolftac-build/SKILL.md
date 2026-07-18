@@ -10,7 +10,8 @@ Implement exactly one queued issue and publish immutable evidence for review.
 ## Contract
 
 - Team `Wolftac Digital`; label `Factory Queue`; consume `Todo`; produce `In Review`.
-- One issue per invocation. `Done` belongs exclusively to `$wolftac-review`.
+- One issue per invocation. `Done` belongs exclusively to `$wolftac-integrate`;
+  review's pass verdict is `Approved`.
 - Reports start with `**Agent:** Codex / <actual model>`.
 - A lane argument filters project names or labels case-insensitively.
 

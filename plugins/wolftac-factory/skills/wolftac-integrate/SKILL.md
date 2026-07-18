@@ -1,0 +1,74 @@
+---
+name: wolftac-integrate
+description: Land one Approved issue from the Wolftac Digital Linear Factory Queue by rebasing the reviewed branch onto the remote default, re-running gates, posting a MERGE PROOF PACK, and merging only after Jonathan's APPROVE MERGE comment. The only stage that sets Done. Use for Wolftac Factory integration.
+---
+
+# Wolftac Integrate
+
+Land exactly one reviewed build. Done means the commits are ancestors of the remote
+default branch — nothing less.
+
+## Contract
+
+- Team `Wolftac Digital`; label `Factory Queue`; consume `Approved`.
+- Produce `Done` after an approved, ancestry-verified merge, or `Todo` on rebase
+  conflict / gate failure.
+- **The human approval gate is absolute:** merge only after a comment starting
+  `APPROVE MERGE`, authored by Jonathan, NEWER than the latest MERGE PROOF PACK.
+  No approval → no merge, ever.
+- One issue per invocation. Reports start with `**Agent:** Codex / <actual model>`.
+
+## Procedure
+
+1. Confirm Linear tools. List oldest `Approved` + `Factory Queue`, apply any lane
+   filter, and silently skip unreachable `Repo:` paths. Inspect assignee-held claims
+   first: when latest activity is older than four hours, post
+   `SWEPT: stale integrate claim, no activity since <timestamp>`, clear or replace
+   the stale assignee, and keep `Approved`.
+2. Claim by assigning `me` while preserving `Approved`; immediately re-read and back
+   off silently on a race.
+3. Read the spec, all comments, the latest REVIEW REPORT (reviewed SHA), and any
+   MERGE PROOF PACK. Three positions: no proof pack → produce one (steps 4–5);
+   proof pack but no newer approval → stop silently; approval newer than the latest
+   proof pack → merge (step 6). **Staleness guard:** an approval older than the
+   newest proof pack is void — never merge on it.
+4. Fetch the remote and verify the branch still resolves to the reviewed SHA (a
+   mismatch or missing branch → defect report, `Todo`, push nothing). Create a
+   detached integrate worktree at the current remote default; never touch the user
+   checkout; never force-push. Rebase the reviewed branch onto default and re-run
+   the spec's gates. Conflict or gate failure → numbered defect report
+   (wrong → repro → expected vs actual), `Todo`, push nothing, stop.
+5. Post the proof pack and stop, keeping `Approved`:
+
+   ```text
+   **MERGE PROOF PACK**
+   - **Agent:** Codex / <actual model>
+   - **Reviewed head:** <remote branch> @ <SHA>
+   - **Rebased head:** <SHA> (or "fast-forward — no rebase needed")
+   - **vs default:** <ahead/behind; conflicts and resolution, or none>
+   - **Gates re-run:** <commands and results>
+   - **Diffstat:** <files / insertions / deletions>
+   - **Risk:** <low/moderate/high + why>
+   - **Merge command (on approval):** <exact command>
+   - **Approval:** reply `APPROVE MERGE` on this issue. No merge occurs without it.
+   ```
+
+6. On approval: re-read comments immediately before acting; back off if another
+   session already posted an INTEGRATION REPORT. If default moved since the proof
+   pack, the approval is void — post a fresh proof pack and stop. Merge exactly as
+   stated (fast-forward push or repo PR convention); never force-push, delete
+   branches, or deploy. Verify `git merge-base --is-ancestor <branch-head>
+   origin/<default>` succeeds, post the INTEGRATION REPORT, set `Done`, and read
+   back the state and report.
+
+   ```text
+   **INTEGRATION REPORT — MERGED**
+   - **Agent:** Codex / <actual model>
+   - **Merged:** <branch> @ <SHA> → <default> @ <new SHA>
+   - **Ancestry verified:** merge-base --is-ancestor ✓
+   - **Approved by:** Jonathan, <approval timestamp>
+   - **Gates at merge:** <proof pack reference + anything re-run>
+   ```
+
+7. Clean up the detached worktree and stop. One issue per invocation. Secrets never
+   appear in proof packs or reports.

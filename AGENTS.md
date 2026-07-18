@@ -3,22 +3,26 @@
 This file is written **to you**, the agent — Claude Code, Claude Desktop, Codex, or
 Hermes. Someone handed you this repo (or a copy of its files) so you could become a
 worker in the Wolftac software factory: a `/wolftac-spec` → `/wolftac-build` →
-`/wolftac-review` pipeline where multiple agents share one Linear queue and hand work
-to each other through it. Read this file fully before installing anything.
+`/wolftac-review` → `/wolftac-integrate` pipeline where multiple agents share one
+Linear queue and hand work to each other through it. Read this file fully before
+installing anything.
 
 If you are Codex, you likely loaded this file automatically (Codex reads `AGENTS.md`
 from the repo root by convention) — good, that's the point.
 
 ## What this factory is, in one paragraph
 
-Instead of one agent doing everything in one session, work moves through three
+Instead of one agent doing everything in one session, work moves through four
 stages, each with a different agent/model: **spec** turns an idea into a detailed,
 testable plan and files it as a Linear issue; **build** picks up specced issues,
 implements them on a branch, and *proves* they work by running the code; **review**
-re-verifies independently and is the only stage allowed to mark work Done. Any agent
-on any platform can run any stage — the Linear issue itself carries all the context,
-so a Codex session can build what a Fable session specced, and a Hermes session can
-review what Codex built.
+re-verifies independently and marks passing work Approved; **integrate** rebases the
+approved branch onto the default branch, re-runs the gates, and — only after the
+human's explicit `APPROVE MERGE` — merges it and marks it Done. Done means merged:
+the only stage allowed to set it is integrate, and only after ancestry is verified.
+Any agent on any platform can run any stage — the Linear issue itself carries all
+the context, so a Codex session can build what a Fable session specced, and a Hermes
+session can review what Codex built.
 
 ## The factory contract (memorize this — it's the only thing that has to be shared)
 
@@ -27,10 +31,11 @@ review what Codex built.
 - **Queue label:** `Factory Queue` — you only ever touch issues carrying this label.
   Ignore everything else in the workspace.
 - **States, in order:** `Todo` (specced, ready to build) → `In Progress` (a build
-  session has claimed it) → `In Review` (built, awaiting QA) → `Done` (reviewed and
-  accepted — **only the review stage may set this**). A failed review sends the issue
-  back to `Todo` with a numbered defect list, which becomes the next build's work
-  order.
+  session has claimed it) → `In Review` (built, awaiting QA) → `Approved` (review
+  passed, awaiting merge) → `Done` (merged to the remote default branch — **only the
+  integrate stage may set this, and only after the human's `APPROVE MERGE`**). A
+  failed review — or a failed rebase/gate at integration — sends the issue back to
+  `Todo` with a numbered defect list, which becomes the next build's work order.
 - **Spec template:** every spec follows `canonical/wolftac-spec/spec-template.md`.
   The **`Repo:`** header line at the top of every spec is mandatory — it's the
   working directory for that issue, and build/review refuse to guess at it.
@@ -50,9 +55,9 @@ review what Codex built.
 
 The full procedure for each stage — exactly what to do, in what order, what to check,
 what to write in your report — lives in the canonical skill files. This file gets you
-installed and oriented; **`canonical/wolftac-{spec,build,review}/SKILL.md` is the
-actual spec you execute against.** Read the one(s) for the stage(s) you'll run before
-your first invocation.
+installed and oriented; **`canonical/wolftac-{spec,build,review,integrate}/SKILL.md`
+is the actual spec you execute against.** Read the one(s) for the stage(s) you'll run
+before your first invocation.
 
 **Naming note:** the deployed commands in this repo are `/wolftac-*`. If you find
 `/factory-*` names in `share/build-your-own-agent-factory.html`, those are
@@ -67,8 +72,8 @@ long-running session.
 
 ### Claude Code (CLI or IDE)
 
-1. Copy `canonical/wolftac-spec/`, `canonical/wolftac-build/`, `canonical/wolftac-review/`
-   into your skills directory:
+1. Copy `canonical/wolftac-spec/`, `canonical/wolftac-build/`, `canonical/wolftac-review/`,
+   `canonical/wolftac-integrate/` into your skills directory:
    - Windows: `%USERPROFILE%\.claude\skills\`
    - macOS/Linux/WSL: `~/.claude/skills/`
 2. **Line endings matter.** These files must be LF, not CRLF — a stray `\r` in the
@@ -79,8 +84,8 @@ long-running session.
 3. Restart your session — skills load at startup, not live.
 4. Confirm the Linear MCP connector is authorized for the Wolftac Digital workspace
    (claude.ai connector settings, or `claude mcp` / `/mcp` in an interactive session).
-5. Verify: `/wolftac-spec`, `/wolftac-build`, `/wolftac-review` should appear as
-   invocable skills.
+5. Verify: `/wolftac-spec`, `/wolftac-build`, `/wolftac-review`, `/wolftac-integrate`
+   should appear as invocable skills.
 
 ### Codex (CLI, Desktop, or IDE plugin)
 
@@ -104,8 +109,9 @@ long-running session.
 
 ### Hermes
 
-1. Copy `ports/hermes/wolftac-spec/`, `wolftac-build/`, `wolftac-review/` into your
-   Hermes profile's skills directory (Windows default: `%LOCALAPPDATA%\hermes\skills\`).
+1. Copy `ports/hermes/wolftac-spec/`, `wolftac-build/`, `wolftac-review/`,
+   `wolftac-integrate/` into your Hermes profile's skills directory (Windows default:
+   `%LOCALAPPDATA%\hermes\skills\`).
 2. Wire Linear into `config.yaml` under `mcp_servers:` (back up `config.yaml` first —
    this is a live agent config):
    ```yaml
@@ -159,8 +165,10 @@ than pretending the model team ran.
   only. If a spec deals with tokens or credentials, redact them in every report.
 - **No scope creep.** Build exactly what the spec's Technical Approach and Acceptance
   Criteria describe. Ideas for more get noted as "suggest /wolftac-spec," not built.
-- **Only the review stage sets `Done`.** If you are the build stage and you think
-  something is finished, the correct end state is `In Review` — never `Done`.
+- **Only the integrate stage sets `Done`, and only after the human's explicit
+  `APPROVE MERGE`.** Build ends at `In Review`; review's passing verdict is
+  `Approved`. If you think something is finished, hand it forward — never mark it
+  Done yourself from build or review.
 - **If a spec is genuinely wrong or ambiguous**, don't guess on load-bearing
   decisions — post `BLOCKED: <specific question>` and return the issue to `Todo`.
 
@@ -192,6 +200,7 @@ before relying on it; never schedule aspirational syntax.
 ```
 /loop 5m /wolftac-build [lane]     # build line, session in/reaching the target repo
 /loop 5m /wolftac-review           # review line
+/loop 10m /wolftac-integrate       # integrate line — merges only on APPROVE MERGE
 ```
 
 Permission precondition: an unattended loop stalls at the first tool call that
@@ -268,6 +277,7 @@ read its canonical definition:
 - `canonical/wolftac-spec/SKILL.md` + `canonical/wolftac-spec/spec-template.md`
 - `canonical/wolftac-build/SKILL.md`
 - `canonical/wolftac-review/SKILL.md`
+- `canonical/wolftac-integrate/SKILL.md`
 
 Platform-specific prompt/skill text (`ports/*`) carries the same procedure adapted to
 each platform's tools and constraints — read your own if you want the exact wording

@@ -66,6 +66,28 @@ foreach ($file in $reviewFiles) {
     }
 }
 
+# Review's passing verdict is Approved; a review surface that still sets Done is a defect.
+foreach ($file in $reviewFiles) {
+    $content = Read-RepoFile $file
+    if ($content -and [regex]::IsMatch($content, "(set|state)\s+``Done``", "IgnoreCase")) {
+        $errors.Add("$file - review surface still sets Done; passing verdicts must set Approved (only integrate sets Done)")
+    }
+}
+
+$integrateFiles = @(
+    "canonical\wolftac-integrate\SKILL.md",
+    "ports\hermes\wolftac-integrate\SKILL.md",
+    "plugins\wolftac-factory\skills\wolftac-integrate\SKILL.md"
+)
+foreach ($file in $integrateFiles) {
+    Require-Pattern $file "MERGE PROOF PACK" "missing the MERGE PROOF PACK contract"
+    Require-Pattern $file "APPROVE MERGE" "missing the APPROVE MERGE human approval gate"
+    Require-Pattern $file "merge-base --is-ancestor" "does not verify merge ancestry before Done"
+    Require-Pattern $file "detached integrate\s+worktree" "does not require an isolated integrate worktree"
+    Require-Pattern $file "[Nn]ever force-push" "missing the force-push prohibition"
+    Require-Pattern $file "older than the\s+newest\s+proof pack" "missing the approval staleness guard"
+}
+
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
 try {
     $manifest = Read-RepoFile $pluginManifest | ConvertFrom-Json

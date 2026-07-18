@@ -1,6 +1,6 @@
 ---
 name: wolftac-review
-description: Independently review one In Review issue from the Wolftac Digital Linear Factory Queue at its published commit, reproduce the test plan, and set Done only on verified success or Todo on a documented failure. Use for Wolftac Factory QA and acceptance review.
+description: Independently review one In Review issue from the Wolftac Digital Linear Factory Queue at its published commit, reproduce the test plan, and set Approved on verified success (handing off to $wolftac-integrate, which alone sets Done) or Todo on a documented failure. Use for Wolftac Factory QA and acceptance review.
 ---
 
 # Wolftac Review
@@ -10,7 +10,8 @@ Independently verify exactly one published build. Treat the build report as a cl
 ## Contract
 
 - Team `Wolftac Digital`; label `Factory Queue`; consume `In Review`.
-- Produce `Done` on PASS/PASS WITH FIXES or `Todo` on FAIL.
+- Produce `Approved` on PASS/PASS WITH FIXES (handoff to `$wolftac-integrate`, the
+  only stage that sets Done) or `Todo` on FAIL.
 - One issue per invocation. Prefer a different model/agent than the builder.
 - Reports start with `**Agent:** Codex / <actual model>`.
 
@@ -53,6 +54,6 @@ Independently verify exactly one published build. Treat the build report as a cl
    - **Suggestions (out of scope):** <future $wolftac-spec ideas>
    ```
 
-7. On PASS, tick criteria and set `Done`. On FAIL, set `Todo`; the defect list becomes
-   the next build order. Read back the state, report, and checkboxes. Clean up the
-   detached worktree and stop.
+7. On PASS, tick criteria and set `Approved` — `$wolftac-integrate` lands it after
+   human approval. On FAIL, set `Todo`; the defect list becomes the next build order.
+   Read back the state, report, and checkboxes. Clean up the detached worktree and stop.
