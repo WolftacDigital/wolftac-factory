@@ -40,6 +40,7 @@ Use this when `/wolftac-review` is running on Windows/Git Bash and the Linear sp
 4. Dependency handling:
    - Prefer the project's lockfile install command when a lockfile exists.
    - If no lockfile is present and the source repo already has a known-good `node_modules`, a temporary verification-only reuse is acceptable in a cron review. State this in the report.
+   - If no lockfile exists and you must run `npm install --no-audit --no-fund` inside the detached worktree, remember it may generate a local `package-lock.json`. Treat that as a verification artifact, not a source diff; remove it before cleanup and do not report it as an unrelated committed change unless it was present in the reviewed branch diff.
    - For Next/Turbopack projects on Windows, **copy** `node_modules` into the detached worktree rather than using a junction/symlink to the source repo. Turbopack can reject a linked `node_modules` as outside the project filesystem root (`Symlink [project]/node_modules is invalid, it points out of the filesystem root`) even though lint/typecheck/tests may run. Remove any failed link before copying, then re-run build/test proof from the copied dependency tree.
    - Do not turn dependency absence or npm cache/install setup failures into durable negative conclusions; they are setup state. Capture the workaround used and keep pursuing real proof.
 

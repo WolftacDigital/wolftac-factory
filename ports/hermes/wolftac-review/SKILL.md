@@ -124,6 +124,41 @@ When the full test command fails due unrelated suite collection/tooling failures
    `builder()` returns `undefined` → caller still sends/writes/approves → renderer omits the
    artifact, then require the build to fail closed or block before the external action.
 
+   **Human-approval and cross-invocation artifact checks:** for merge/deploy/publish or other
+   privileged workflows, do not accept `author == owner` as human proof when workers use the
+   owner's account. Verify that automation cannot mint an accepted approval, and prove the
+   gate-tested rebased/artifact SHA is fetchable from a fresh clone or is deterministically
+   reconstructed with gates rerun. A temporary worktree/local object is not a durable handoff.
+   When the design depends on a dedicated bot/service identity, inspect the live authenticated
+   viewer and workspace user inventory, then prove both sides: worker-authored approval is
+   rejected and a genuine human approval from a different immutable ID is accepted end to end.
+   A missing bot identity makes the positive path unverified, not “operator setup complete.”
+   A provisioned bot account and an ad hoc bot-auth fixture are still insufficient:
+   inspect the delivered onboarding/deploy/account-selection path and the actual scheduled
+   worker's viewer. Probe every Linear transport available to that actual runtime,
+   not only the preferred bot path. Prove the privileged worker is capability-isolated
+   to the bot identity and cannot also write through the human credential: a process
+   that authenticates as the bot through one transport but as the human through a
+   default MCP is still dual-capable, and prompt text saying “never use MCP” is not
+   isolation. If production bot-only wiring is left as follow-up, the delivered
+ approval path is inoperable or self-approvable; treat that as blocking unless the
+ approved spec explicitly makes wiring a separate prerequisite.
+ If Jonathan later amends the approved spec to move runtime capability isolation into a
+ named successor issue, re-read the current issue description and comments before judging:
+ do not keep failing the current issue against superseded scope. Still audit the delivered
+ contract for internal consistency. A skill cannot mandate bot-authenticated GraphQL while
+ also telling workers to load or call the session/default Linear MCP/toolset; remove that
+ contradiction and add negative semantic/invariant coverage that rejects default-transport
+ instructions. A low-risk text-and-guard correction may be PASS WITH FIXES only after the
+ remote head is pushed, re-fetched, and every gate is rerun.
+ Require every proof pack to persist the exact default ref/SHA used for gates; a later worker
+   cannot enforce “default has not moved” from ahead/behind counts or an unpublished rebased SHA.
+   For Telegram/Slack/webhook relays, verify immutable source-event provenance that the merge
+   worker cannot mint rather than assuming a relayed Linear comment is human-authored.
+   Follow `references/human-approval-and-rebased-artifact-review.md` and treat self-approvable
+   gates, an unexercised positive identity path, missing default-head proof, or fresh-clone-missing
+   approved artifacts as blocking defects.
+
    **Automation bypass / URL secret masking checks:** when reviewing tooling that passes a
    secret through query params (for example Vercel `x-vercel-protection-bypass`), do not
    accept raw-string redaction alone. Force a regression that logs an error containing the
@@ -141,6 +176,45 @@ When the full test command fails due unrelated suite collection/tooling failures
    value the criterion names; fail the review if the test only checks that token values appear
    somewhere in a file and still passes after the mapped value is changed. See
    `references/theme-brand-review-proof.md`.
+
+   **Public map / premium homepage checks:** when acceptance criteria require a Mapbox globe,
+   terrain, hillshade, route arcs, map controls, hero media, responsive first viewport, or
+   Lighthouse thresholds, follow `references/public-map-homepage-review.md`. Do not treat
+   “Mapbox runtime loaded” as enough: inspect resource status by class, scroll lazy map
+   sections into view, exercise filters/tour/reset/terrain, and verify both complete Mapbox
+   blocking and partial source failures (for example terrain DEM 403/401 after style load).
+   A blank/unstable canvas, misleading terrain-control state, uncaught page errors, or a
+   missed explicit Lighthouse threshold is a blocking review defect. If homepage program links
+   or map controls are in scope, also run the lazy-init/fallback probe in
+   `references/homepage-map-lazy-init-review.md`: click a map filter before/while the map
+   engine initializes, click a homepage program/service link, capture `pageerror`, and verify
+   unusable placeholder Mapbox tokens fall back cleanly instead of throwing.
+
+   **Static route shell / no-JS checks:** when acceptance criteria say every route uses a
+   shared shell, preserves clean legacy routes, or keeps primary content progressively
+   enhanced, follow `references/static-route-shell-no-js-review.md`. Do not trust a passing
+   manifest/smoke/e2e suite until you inspect whether tests skip `/`, `/404`, or utility
+   routes. With JavaScript disabled, explicitly probe `/` and at least one generated route
+   for real nav links, footer/legal links, active-route state, CTA links, H1/body content,
+   and noscript copy. If generated pages pass but the homepage still says JavaScript is
+   required or has zero nav links/footer, fail the review and call out the test blind spot.
+
+   **Static-site CTA contrast checks:** for marketing/static pages with shared button
+   styles, DOM text and href checks are not enough. Inspect the rendered CTA bands visually
+   and/or with computed styles to confirm primary and secondary labels remain readable on
+   their actual backgrounds in light and dark sections. A low-risk CSS-only contrast fix can
+   be handled as PASS WITH FIXES only after route/e2e/smoke tests rerun, browser/vision proof
+   confirms the label is visible, and the pushed remote head is verified. See
+   `references/static-site-cta-contrast-review.md`.
+
+   **Editorial static-site review checks:** for blog/article/library issues with migrated
+   legacy copy, unique metadata, filterable report cards, newsletter failure states, and
+   stacked PRs, follow `references/editorial-static-site-review-proof.md`. In particular,
+   diff against the actual PR base branch when stacked, run smoke/e2e against an explicit
+   scratch-port `BASE_URL` rather than a default localhost server, normalize live legacy
+   Webflow text before judging copy preservation, use browser/vision proof for readable
+   editorial layout, and use focused secret/debug patterns to avoid false positives from
+   public-token documentation.
 
 5. **Verdict — three outcomes.**
    - **PASS** — tick the acceptance checkboxes in the description, post the report,

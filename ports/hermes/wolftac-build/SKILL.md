@@ -43,6 +43,11 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## Preflight
 Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
+### Completion-budget gate
+Before claiming an issue, estimate the change surface and the remaining execution/tool budget. Reserve the final 20% of the run for at least one fix cycle, the full test plan, diff review, commit/push verification, the Linear build report, and the `In Review` transition. If that reserve cannot be protected, skip the candidate without claiming it rather than leaving partially edited work in `In Progress`.
+
+For broad multi-file work, follow `references/build-execution-budget-and-batching.md`: batch independent reads, use coherent multi-file edits, never edit the same file concurrently, and run the cheapest compile/type check after each logical batch.
+
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
@@ -91,7 +96,23 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
 4. **Branch safely.** Fetch the remote, then create a dedicated worktree for the
    issue's Linear-generated branch from the current remote default branch. Never switch
    branches in a checkout with user changes and never commit directly to main/master.
-   A dirty worktree owned by another process or human is a fail-closed condition.
+   A dirty *target/reused issue worktree* owned by another process or human is a
+   fail-closed condition. A dirty source checkout does not by itself block creating a
+   separate clean issue worktree from the fetched remote default branch: leave the dirty
+   checkout untouched, do not switch it, and verify the new worktree starts clean.
+
+   If the Linear-generated branch already contains approved implementation commits but
+   predates current `origin/main`, inspect its branch-only history before changing it.
+   Without explicit history-rewrite approval, preserve those commits and merge
+   `origin/main` into the branch in its dedicated worktree rather than resetting and
+   force-pushing. During a merge, `git status` may list many current-main paths; prove
+   issue scope with `git diff --cached origin/main` before commit and the final diff
+   against `origin/main` afterward. See
+   `references/existing-feature-branch-main-integration.md`.
+
+   For WSL-hosted Next.js/WebGL work, also use
+   `references/wsl-webgl-build-pitfalls.md` for line endings, React state/fallback
+   design, build verification, and honest browser-proof boundaries.
 
 5. **Implement — guardrails.** Read the repo's CLAUDE.md/AGENTS.md first; match
    conventions. Build exactly to the spec's Technical approach and Acceptance criteria.
@@ -100,7 +121,13 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
    stop. Don't guess on load-bearing decisions.
 
 6. **Verify.** Execute the spec's Test plan literally. Every criterion needs evidence
-   from running code — "looks right" is not verification.
+   from running code — "looks right" is not verification. Classify proof precisely:
+   automated command output, live browser/API behavior, or an unavailable fixture path.
+   If a live criterion needs config, credentials, or a fixture that is not safely
+   available, do not mutate secrets/config merely to manufacture proof. Run every safe
+   check, describe the unverified interaction under **Deviations from spec**, and make
+   it the reviewer's first explicit check; never imply that an empty/fallback smoke
+   proved the configured live path.
 
 7. **Commit.** Descriptive messages; record SHAs. Review the staged file list before
    committing: never commit artifacts (`__pycache__/`, `*.pyc`, `node_modules/`,
