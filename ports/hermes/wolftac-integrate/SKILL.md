@@ -24,9 +24,18 @@ default branch.
   `Todo` (rebase conflict / gate failure → rework).
 - **The human approval gate is absolute.** A merge happens only after a comment
   starting `APPROVE MERGE`, authored by Jonathan (the workspace owner), NEWER than
-  the latest MERGE PROOF PACK on the issue. No approval → no merge, ever. A Telegram
-  "approve" reply is relayed into that Linear comment; Telegram is the notification
-  lane, Linear is the record.
+  the latest MERGE PROOF PACK on the issue. No approval → no merge, ever.
+- **Telegram is notification-only.** Never relay a Telegram reply into the Linear
+  approval comment — a relayed approval is authored by the relay's identity (this
+  gateway's Linear connection), which makes it automation-minted and void under the
+  viewer-identity check. Jonathan approves directly in Linear from his own account;
+  Linear is the record.
+- **Worker Linear identity is the bot, enforced at the connection.** Every Linear
+  read and write this stage performs uses the factory bot credentials
+  (`LINEAR_FACTORY_BOT_TOKEN` from the profile environment, via the Linear GraphQL
+  API) — never this profile's default Linear MCP connection, which is authenticated
+  as the human operator. If the bot token is absent, invalid, or expired, fail
+  closed: claim nothing, post nothing, report the missing precondition, and stop.
 - **Approvals must be provably human.** Factory workers connect to Linear through
   the dedicated factory bot identity; humans approve from their own accounts. Fetch
   your own Linear identity (`viewer`) before validating an approval and require that
@@ -85,8 +94,9 @@ the WSL VM recycles between commands).
    defect report (what's wrong → repro → expected vs actual), state `Todo`, push
    NOTHING, clean up, stop.
 
-5. **Post the MERGE PROOF PACK and notify.** Comment on the issue, then notify
-   Jonathan via the Telegram approval lane. Keep state `Approved`. Stop.
+5. **Post the MERGE PROOF PACK and notify.** Comment on the issue (as the bot),
+   then send Jonathan a Telegram notification (notify-only — never write the
+   approval for him). Keep state `Approved`. Stop.
 
    ```text
    **MERGE PROOF PACK**

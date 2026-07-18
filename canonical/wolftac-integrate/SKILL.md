@@ -24,6 +24,16 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
   require that the approval's author id differs from your own Linear viewer id. If
   they are the same identity, the approval is indistinguishable from automation:
   do NOT merge — report that the identity split is not yet in place and stop.
+- **Worker Linear identity is the bot, enforced at the connection.** Every Linear
+  read and write this stage performs uses the factory bot credentials
+  (`LINEAR_FACTORY_BOT_TOKEN` from the environment, via the Linear GraphQL API) —
+  never the session's default Linear connection, which may be authenticated as the
+  human. If the bot token is absent, invalid, or expired, fail closed: claim
+  nothing, post nothing, report the missing precondition, and stop.
+- **Notification lanes are notify-only.** No relay, bridge, or automation may post
+  the approval comment on the human's behalf — a relayed approval is authored by
+  the relay's identity and is void under the viewer-identity check. The human
+  approves directly in Linear from their own account.
 - Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
 - Intended model: Opus. Judgment here is about git state and gate evidence, not code design.
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
@@ -104,8 +114,10 @@ Comment on the issue:
 - **Approval:** reply `APPROVE MERGE` on this issue. No merge occurs without it.
 ```
 
-Notify Jonathan through the platform's channel lane (on Hermes, the Telegram approval
-lane; elsewhere the comment itself is the notification). Keep state `Approved`. Stop.
+Notify Jonathan through the platform's channel lane (on Hermes, a Telegram
+notification; elsewhere the comment itself is the notification). Notification lanes
+are notify-only — the approval itself must be authored by Jonathan directly in
+Linear. Keep state `Approved`. Stop.
 
 ### 6. Merge (approval path)
 - Re-read the comments immediately before acting (approval races are real): confirm

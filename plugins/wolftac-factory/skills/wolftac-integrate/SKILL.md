@@ -21,6 +21,14 @@ default branch — nothing less.
   own Linear identity (`viewer`) and require that the approval's author id differs
   from your own Linear viewer id. Same identity → do NOT merge; report that the
   identity split is missing and stop.
+- **Worker Linear identity is the bot, enforced at the connection:** all Linear
+  reads/writes in this stage use the factory bot credentials
+  (`LINEAR_FACTORY_BOT_TOKEN` env var, Linear GraphQL API) — never the session's
+  default Linear connection. Token absent/invalid/expired → fail closed: claim
+  nothing, post nothing, report the precondition, stop.
+- **Notification lanes are notify-only:** no relay or automation ever posts the
+  approval comment on the human's behalf — a relayed approval is authored by the
+  relay's identity and is void.
 - One issue per invocation. Reports start with `**Agent:** Codex / <actual model>`.
 
 ## Procedure

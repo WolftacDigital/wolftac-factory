@@ -90,6 +90,9 @@ foreach ($file in $integrateFiles) {
     Require-Pattern $file "[Nn]ever trust a SHA from a prior session" "merge path does not rebuild the rebased head at merge time"
     Require-Pattern $file "Default\s+head" "proof pack does not record the default-branch SHA it verified against"
     Require-Pattern $file "EQUALITY" "merge path does not enforce default-head SHA equality against the proof pack"
+    Require-Pattern $file "LINEAR_FACTORY_BOT_TOKEN" "stage does not mandate bot-credentialed Linear I/O"
+    Require-Pattern $file "fail\s+closed" "stage does not fail closed when bot credentials are missing"
+    Require-Pattern $file "(notify-only|notification-only|notification lanes are notify)" "notification lanes are not restricted to notify-only"
 }
 
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
