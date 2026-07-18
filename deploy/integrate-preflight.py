@@ -7,25 +7,34 @@ recipe). Exits non-zero with a specific message and ZERO side effects when any
 assertion fails; the worker must then stop without claiming anything.
 
 Assertions:
-  1. Bot credentials present in the env file (token, or app id+secret to mint).
-  2. No Linear MCP/toolset wired into the runtime's profile config — the
-     human's Linear write path must not exist in this runtime.
-  3. The bot token authenticates and `viewer` resolves to the expected factory
-     bot id (re-minted automatically via client_credentials when invalid).
+  1. Bot credentials present in the profile env (token, or app id+secret to mint).
+  2. No Linear-capable transport wired anywhere in the profile: EVERY *.yaml/*.yml
+     directly under the profile root is scanned, and ANY occurrence of the tokens
+     `linear` or `composio` (quoted, inline, block, or commented — fail-closed by
+     design) is a violation. Composio counts because it can proxy Linear tools.
+  3. The bot token authenticates and `viewer` resolves to the pinned factory bot
+     id. Re-mint via client_credentials happens only when needed, and a freshly
+     minted token is VERIFIED to be the factory bot BEFORE it is persisted.
 
-Exit codes: 0 ok · 2 missing/unmintable credentials · 3 human Linear toolset
-present · 4 viewer identity mismatch · 5 env/config unreadable.
+The expected bot id is pinned in this file and is deliberately NOT overridable
+by flag or environment — a caller that could supply its own id could defeat the
+gate. Rotating the bot identity is a reviewed change to this constant.
 
-Credential VALUES are never printed. Output is ids, names, and booleans only.
+Exit codes: 0 ok · 2 missing/unmintable credentials · 3 Linear-capable transport
+wired in the profile · 4 viewer identity mismatch · 5 profile root/env unreadable.
 
-Honest residual trust (documented per spec): a config scan proves the profile
-does not WIRE a Linear MCP; it cannot prove what an arbitrary process could do
+Credential VALUES are never printed. Output is paths, ids, names, and counts only.
+
+Honest residual trust: the scan proves the profile's on-disk config wires no
+Linear-capable transport; it cannot prove what an arbitrary process could do
 with credentials found elsewhere on the host. Isolation is by profile
-construction — this preflight verifies that construction, it does not replace it.
+construction — this preflight verifies that construction on every tick, and the
+Linear comment audit trail (author ids) verifies conduct after the fact.
 """
-import argparse, json, os, re, sys, urllib.request, urllib.parse
+import argparse, glob, json, os, re, sys, urllib.request, urllib.parse
 
-DEFAULT_BOT_ID = "b8fece8e-8ec5-4125-b4b2-d7fa882db137"  # Wolftac Factory Bot
+EXPECTED_BOT_ID = "b8fece8e-8ec5-4125-b4b2-d7fa882db137"  # Wolftac Factory Bot — pinned, not overridable
+FORBIDDEN_TOKENS = re.compile(r"\b(linear|composio)\b", re.I)
 
 def lf(t): return t.replace("\r\n", "\n").replace("\r", "\n")
 
@@ -33,26 +42,31 @@ def load_env(path):
     try:
         txt = lf(open(path, encoding="utf-8").read())
     except OSError as e:
-        print(f"PREFLIGHT FAIL (5): cannot read env file {path}: {e.strerror}")
+        print(f"PREFLIGHT FAIL (5): cannot read profile env {path}: {e.strerror}")
         sys.exit(5)
     def get(k):
         m = re.search(rf"^{k}=(.*)$", txt, re.M)
         return m.group(1).strip() if m else ""
     return txt, get
 
-def config_has_linear(path):
-    """True if the profile config wires any enabled Linear MCP server."""
-    try:
-        cfg = lf(open(path, encoding="utf-8").read())
-    except OSError as e:
-        print(f"PREFLIGHT FAIL (5): cannot read profile config {path}: {e.strerror}")
-        sys.exit(5)
-    # Match a 'linear' server key under mcp_servers that is not disabled.
-    block = re.search(r"^\s*linear\s*:\s*$(?P<body>(?:\n^\s{4,}.*$)*)", cfg, re.M)
-    if not block:
-        return False
-    body = block.group("body") or ""
-    return not re.search(r"^\s*enabled\s*:\s*false\s*$", body, re.M)
+def scan_profile_configs(root):
+    """Fail-closed capability scan: any linear/composio token in any yaml under root."""
+    files = sorted(glob.glob(os.path.join(root, "*.yaml")) + glob.glob(os.path.join(root, "*.yml")))
+    for p in files:
+        try:
+            content = lf(open(p, encoding="utf-8").read())
+        except OSError as e:
+            print(f"PREFLIGHT FAIL (5): cannot read profile config {p}: {e.strerror}")
+            sys.exit(5)
+        m = FORBIDDEN_TOKENS.search(content)
+        if m:
+            print(f"PREFLIGHT FAIL (3): {p} contains the token '{m.group(0)}' — a Linear-capable "
+                  "transport (direct or Composio-proxied) may be wired into this profile; the scan is "
+                  "fail-closed (quoted/inline/commented forms all count). This runtime is NOT "
+                  "capability-isolated; claim nothing")
+            sys.exit(3)
+    print(f"capability check: scanned profile root {root} — {len(files)} yaml file(s) "
+          f"({', '.join(os.path.basename(f) for f in files) or 'none'}); no Linear-capable transport tokens — OK")
 
 def viewer(token):
     q = json.dumps({"query": "{ viewer { id name } }"}).encode()
@@ -65,7 +79,7 @@ def viewer(token):
     except Exception:
         return None
 
-def remint(env_path, env_txt, app_id, secret):
+def mint(app_id, secret):
     data = urllib.parse.urlencode({
         "grant_type": "client_credentials", "client_id": app_id,
         "client_secret": secret, "scope": "read,write"}).encode()
@@ -74,64 +88,70 @@ def remint(env_path, env_txt, app_id, secret):
         headers={"Content-Type": "application/x-www-form-urlencoded"})
     try:
         resp = json.loads(urllib.request.urlopen(req).read())
+        return resp.get("access_token"), resp.get("expires_in")
     except Exception:
-        return None
-    token = resp.get("access_token")
-    if not token:
-        return None
+        return None, None
+
+def persist_token(env_path, env_txt, token):
     if re.search(r"^LINEAR_FACTORY_BOT_TOKEN=", env_txt, re.M):
         env_txt = re.sub(r"^LINEAR_FACTORY_BOT_TOKEN=.*$",
                          "LINEAR_FACTORY_BOT_TOKEN=" + token, env_txt, flags=re.M)
     else:
         env_txt += "\nLINEAR_FACTORY_BOT_TOKEN=" + token + "\n"
     open(env_path, "w", encoding="utf-8", newline="\n").write(env_txt)
-    print(f"token re-minted via client_credentials (expires_in: {resp.get('expires_in')}) and stored")
-    return token
 
 def main():
     ap = argparse.ArgumentParser()
-    default_root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "hermes")
-    ap.add_argument("--env", default=os.environ.get("FACTORY_BOT_ENV",
-                    os.path.join(default_root, ".env")))
-    ap.add_argument("--config", default=os.environ.get("FACTORY_PROFILE_CONFIG",
-                    os.path.join(default_root, "config.yaml")))
-    ap.add_argument("--expected-bot-id", default=os.environ.get(
-                    "LINEAR_FACTORY_BOT_ID", DEFAULT_BOT_ID))
+    default_root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "hermes",
+                                "profiles", "factory-integrate")
+    ap.add_argument("--profile-root", default=default_root,
+                    help="Root of the isolated worker profile (scanned root and its .env are "
+                         "both reported in output so the audit trail shows what was checked)")
     a = ap.parse_args()
 
-    env_txt, get = load_env(a.env)
+    root = os.path.abspath(a.profile_root)
+    if not os.path.isdir(root):
+        print(f"PREFLIGHT FAIL (5): profile root {root} does not exist")
+        sys.exit(5)
+    env_path = os.path.join(root, ".env")
+    env_txt, get = load_env(env_path)
     token = get("LINEAR_FACTORY_BOT_TOKEN")
     app_id, secret = get("LINEAR_FACTORY_APP_ID"), get("LINEAR_FACTORY_APP_SECRET")
     if not token and not (app_id and secret):
-        print("PREFLIGHT FAIL (2): no bot token and no app credentials to mint one — fail closed, claim nothing")
+        print(f"PREFLIGHT FAIL (2): {env_path} has no bot token and no app credentials to mint one — "
+              "fail closed, claim nothing")
         sys.exit(2)
 
-    if config_has_linear(a.config):
-        print(f"PREFLIGHT FAIL (3): profile config {a.config} wires an enabled Linear MCP server — "
-              "this runtime has a human Linear write path and is NOT capability-isolated; claim nothing")
-        sys.exit(3)
-    print("capability check: no Linear MCP wired in profile config — OK")
+    scan_profile_configs(root)
 
     v = viewer(token) if token else None
     if v is None:
         if not (app_id and secret):
             print("PREFLIGHT FAIL (2): bot token invalid and no app credentials to re-mint — fail closed")
             sys.exit(2)
-        token = remint(a.env, env_txt, app_id, secret)
-        if token is None:
+        fresh, expires = mint(app_id, secret)
+        if fresh is None:
             print("PREFLIGHT FAIL (2): token re-mint failed — fail closed, claim nothing")
             sys.exit(2)
-        v = viewer(token)
+        v = viewer(fresh)
         if v is None:
-            print("PREFLIGHT FAIL (2): re-minted token did not authenticate — fail closed")
+            print("PREFLIGHT FAIL (2): re-minted token did not authenticate — fail closed, nothing persisted")
             sys.exit(2)
+        if v.get("id") != EXPECTED_BOT_ID:
+            print(f"PREFLIGHT FAIL (4): re-minted token resolves to {v.get('name')} ({v.get('id')}), "
+                  f"not the pinned factory bot {EXPECTED_BOT_ID} — nothing persisted, claim nothing")
+            sys.exit(4)
+        persist_token(env_path, env_txt, fresh)
+        print(f"token re-minted via client_credentials (expires_in: {expires}), viewer-verified as the "
+              "factory bot, then stored")
 
-    if v.get("id") != a.expected_bot_id:
-        print(f"PREFLIGHT FAIL (4): viewer is {v.get('name')} ({v.get('id')}), expected factory bot "
-              f"{a.expected_bot_id} — this runtime is not the bot; claim nothing")
+    if v.get("id") != EXPECTED_BOT_ID:
+        print(f"PREFLIGHT FAIL (4): viewer is {v.get('name')} ({v.get('id')}), expected pinned factory "
+              f"bot {EXPECTED_BOT_ID} — this runtime is not the bot; claim nothing")
         sys.exit(4)
 
-    print(f"PREFLIGHT OK: viewer = {v.get('name')} ({v.get('id')}); no human Linear write path in profile config")
+    print(f"PREFLIGHT OK: profile {root}; viewer = {v.get('name')} ({v.get('id')}); "
+          "no Linear-capable transport wired in profile configs")
     sys.exit(0)
 
 if __name__ == "__main__":

@@ -104,7 +104,11 @@ foreach ($file in $integrateFiles) {
 # WD-281: the preflight and runtime recipe must ship with the repo and keep their contracts.
 Require-Pattern "deploy\integrate-preflight.py" "PREFLIGHT FAIL \(3\)" "preflight lost the dual-capable-runtime (human Linear path) violation check"
 Require-Pattern "deploy\integrate-preflight.py" "client_credentials" "preflight lost the token re-mint path"
-Require-Pattern "deploy\bot-runtime.md" "hermes cron create" "bot-runtime recipe lost the verified worker-creation command"
+Require-Pattern "deploy\integrate-preflight.py" "composio" "preflight capability scan lost Composio-proxied transport detection"
+Require-Pattern "deploy\integrate-preflight.py" "EXPECTED_BOT_ID\s*=" "preflight lost the pinned (non-overridable) bot id"
+Require-Pattern "deploy\integrate-preflight.py" "(?s)viewer\(fresh\).{0,700}persist_token" "re-mint must viewer-verify a fresh token BEFORE persisting it"
+Require-Pattern "deploy\bot-runtime.md" "cron create" "bot-runtime recipe lost the verified worker-creation command"
+Require-Pattern "deploy\bot-runtime.md" "factory-integrate" "bot-runtime recipe lost the isolated profile"
 
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
 try {
