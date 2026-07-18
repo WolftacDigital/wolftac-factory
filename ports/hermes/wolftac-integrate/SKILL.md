@@ -45,6 +45,10 @@ default branch.
 - Reports open with `**Agent:** Hermes / <model>`.
 
 ## Preflight
+REQUIRED first step: run `python deploy/integrate-preflight.py` from the factory
+repo (recipe: `deploy/bot-runtime.md`) — it asserts bot credentials, re-mints an
+expired token, verifies this profile wires no human Linear path, and confirms
+`viewer` is the factory bot; any non-zero exit → fail closed, claim nothing.
 Require `LINEAR_FACTORY_BOT_TOKEN`, then query `viewer` through the Linear GraphQL API
 with that credential before any queue read. Do not load or use this profile's default
 Linear MCP/toolset. Every queue read, issue/comment read, claim, report, and state

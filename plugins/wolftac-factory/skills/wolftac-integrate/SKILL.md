@@ -33,6 +33,10 @@ default branch — nothing less.
 
 ## Procedure
 
+0. REQUIRED first: run `python deploy/integrate-preflight.py` from the factory
+   repo (recipe: `deploy/bot-runtime.md`) — bot credentials, token re-mint,
+   no-human-Linear-path, viewer==bot; any non-zero exit → stop with zero side
+   effects.
 1. Before queue access, require `LINEAR_FACTORY_BOT_TOKEN` and query `viewer` through
    the Linear GraphQL API with that credential. Do not load or use the session's
    default Linear MCP/toolset. Missing/invalid/expired token or unsuccessful viewer

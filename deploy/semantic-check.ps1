@@ -98,7 +98,13 @@ foreach ($file in $integrateFiles) {
     if ([regex]::IsMatch($content, '(ToolSearch|`(?:list_issues|get_issue|save_issue|list_comments|save_comment)`|Confirm Linear tools|use this profile''s Linear toolset equivalents)', "IgnoreCase")) {
         $errors.Add("$file - integrate procedure references the default/human Linear tool path instead of bot-authenticated GraphQL")
     }
+    Require-Pattern $file "integrate-preflight" "missing the REQUIRED runtime preflight step"
 }
+
+# WD-281: the preflight and runtime recipe must ship with the repo and keep their contracts.
+Require-Pattern "deploy\integrate-preflight.py" "PREFLIGHT FAIL \(3\)" "preflight lost the dual-capable-runtime (human Linear path) violation check"
+Require-Pattern "deploy\integrate-preflight.py" "client_credentials" "preflight lost the token re-mint path"
+Require-Pattern "deploy\bot-runtime.md" "hermes cron create" "bot-runtime recipe lost the verified worker-creation command"
 
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
 try {

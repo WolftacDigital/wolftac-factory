@@ -41,6 +41,13 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 
 ## Procedure
 
+### 0. Preflight (REQUIRED)
+Run `python deploy/integrate-preflight.py` from the factory repo (recipe:
+`deploy/bot-runtime.md`) before anything else. It asserts bot credentials,
+re-mints an expired token, verifies the runtime wires no human Linear path, and
+confirms `viewer` is the factory bot. Any non-zero exit → stop immediately with
+zero side effects.
+
 ### 1. Pick up work
 - Before reading the queue, require `LINEAR_FACTORY_BOT_TOKEN` and query `viewer`
   through the Linear GraphQL API with that credential. Missing/invalid/expired token
