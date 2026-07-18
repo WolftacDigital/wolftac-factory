@@ -74,16 +74,20 @@ hermes -p factory-integrate cron create --name "Wolftac Factory Integrate Worker
 
    The preflight is invoked by ABSOLUTE path so the Mission Control workdir
    never matters.
-3. **Pin the job's provider/model immediately after creation** with the
-   supported pin flow (backs up jobs.json, edits atomically, verifies by
-   readback — `hermes cron edit` has no model flags, and unpinned jobs skip
-   every run after any global model drift):
+3. **Pin the job's provider/model immediately after creation** through the
+   documented Hermes control plane — the agent's own `cronjob` tool, invoked
+   from a one-shot session under the isolated profile (proven live 2026-07-18,
+   session `20260718_105210_c45f27`):
 
 ```
-python D:\Wolftac\wolftac-factory\deploy\pin-cron-model.py \
-  --job-name "Wolftac Factory Integrate Worker" \
-  --provider openai-codex --model gpt-5.6-sol
+hermes -p factory-integrate chat -q "Use the cronjob tool: action='update', job_id='<JOB_ID>', provider='openai-codex', model='gpt-5.6-sol'. Then action='list' and report the job's provider and model fields verbatim."
 ```
+
+   Verify the readback shows both fields. Offline fallback (no session
+   possible): `python D:\Wolftac\wolftac-factory\deploy\pin-cron-model.py
+   --job-name "Wolftac Factory Integrate Worker" --provider openai-codex
+   --model gpt-5.6-sol` — backup + atomic write + readback, but prefer the
+   control-plane route above.
 4. The profile's scheduler/gateway must be running for cron ticks to fire —
    operator-managed, same as the existing factory workers.
 
