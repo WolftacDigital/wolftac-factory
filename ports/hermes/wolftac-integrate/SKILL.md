@@ -92,6 +92,7 @@ the WSL VM recycles between commands).
    **MERGE PROOF PACK**
    - **Agent:** Hermes / <model>
    - **Reviewed head:** <remote branch> @ <SHA from review report>
+   - **Default head:** origin/<default> @ <exact SHA the gates ran against>
    - **Rebased head:** <SHA after rebase> (or "fast-forward — no rebase needed")
    - **vs default:** <ahead/behind; conflicts and resolution, or none>
    - **Gates re-run:** <each gate command and result>
@@ -103,8 +104,10 @@ the WSL VM recycles between commands).
 
 6. **Merge (approval path).** Re-read the comments immediately before acting; back
    off if another session posted an INTEGRATION REPORT; re-verify the approval's
-   author id passes the viewer-identity check. If the default branch moved since the
-   proof pack, the approval is void — produce a fresh proof pack and stop.
+   author id passes the viewer-identity check. Fetch and compare the current
+   `origin/<default>` SHA for EQUALITY against the proof pack's recorded **Default
+   head** SHA — any inequality means the default moved and the approval is void:
+   produce a fresh proof pack and stop.
    **Never trust a SHA from a prior session** — a proof pack's rebased head lives in
    that worker's local object store. Rebuild it: fresh detached integrate worktree at
    the current remote default, re-verify the reviewed branch SHA, re-run the rebase,

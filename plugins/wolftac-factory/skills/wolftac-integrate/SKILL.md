@@ -50,6 +50,7 @@ default branch — nothing less.
    **MERGE PROOF PACK**
    - **Agent:** Codex / <actual model>
    - **Reviewed head:** <remote branch> @ <SHA>
+   - **Default head:** origin/<default> @ <exact SHA the gates ran against>
    - **Rebased head:** <SHA> (or "fast-forward — no rebase needed")
    - **vs default:** <ahead/behind; conflicts and resolution, or none>
    - **Gates re-run:** <commands and results>
@@ -61,8 +62,9 @@ default branch — nothing less.
 
 6. On approval: re-read comments immediately before acting; back off if another
    session already posted an INTEGRATION REPORT; re-verify the viewer-identity
-   check. If default moved since the proof pack, the approval is void — post a
-   fresh proof pack and stop. **Never trust a SHA from a prior session** — rebuild:
+   check. Fetch and compare the current `origin/<default>` SHA for EQUALITY against
+   the proof pack's recorded **Default head** SHA — any inequality voids the
+   approval: post a fresh proof pack and stop. **Never trust a SHA from a prior session** — rebuild:
    fresh detached integrate worktree at current default, re-verify the reviewed
    branch SHA, re-run the rebase and gates on the head you just built (failure →
    numbered defect report, `Todo`, push nothing). Merge the head you just built

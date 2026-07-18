@@ -88,6 +88,8 @@ foreach ($file in $integrateFiles) {
     Require-Pattern $file "older than the\s+newest\s+proof pack" "missing the approval staleness guard"
     Require-Pattern $file "differs\s+from\s+your\s+own\s+Linear\s+viewer\s+id" "missing the human-approval viewer-identity check"
     Require-Pattern $file "[Nn]ever trust a SHA from a prior session" "merge path does not rebuild the rebased head at merge time"
+    Require-Pattern $file "Default\s+head" "proof pack does not record the default-branch SHA it verified against"
+    Require-Pattern $file "EQUALITY" "merge path does not enforce default-head SHA equality against the proof pack"
 }
 
 $pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"

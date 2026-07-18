@@ -94,6 +94,7 @@ Comment on the issue:
 **MERGE PROOF PACK**
 - **Agent:** Claude Code / <model>
 - **Reviewed head:** <remote branch> @ <SHA from review report>
+- **Default head:** origin/<default> @ <exact SHA the gates ran against>
 - **Rebased head:** <SHA after rebase onto current default> (or "fast-forward — no rebase needed")
 - **vs default:** <ahead/behind counts; conflicts encountered and how resolved, or none>
 - **Gates re-run:** <each gate command and result>
@@ -110,8 +111,10 @@ lane; elsewhere the comment itself is the notification). Keep state `Approved`. 
 - Re-read the comments immediately before acting (approval races are real): confirm
   the approval is still the newest relevant event, its author id passes the
   viewer-identity check, and no other session has posted an INTEGRATION REPORT.
-- Verify the default branch has not moved since the proof pack. If it has, the
-  approval is void: produce a fresh proof pack (steps 4–5) and stop.
+- Verify the default branch has not moved since the proof pack: fetch, then compare
+  the current `origin/<default>` SHA for EQUALITY against the proof pack's recorded
+  **Default head** SHA. Any inequality means the approval is void: produce a fresh
+  proof pack (steps 4–5) and stop.
 - **Never trust a SHA from a prior session** — a proof pack's rebased head lives in
   that worker's local object store and may not exist anywhere you can reach. Rebuild
   it: create a fresh detached integrate worktree at the current remote default,
