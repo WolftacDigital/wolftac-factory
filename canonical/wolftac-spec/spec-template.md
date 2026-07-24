@@ -9,7 +9,8 @@ What's broken or missing, for whom, and why it matters now. One tight paragraph.
 - Concrete outcomes that define success. Each one observable after shipping.
 
 ## Non-goals
-- Explicitly out of scope. This section protects /wolftac-build from scope creep — be generous here.
+This section protects /wolftac-build from scope creep — be generous here.
+- NG-1: <Out-of-scope item>
 
 ## User flow
 Step-by-step of what the user sees and does once this ships. Number the steps.
@@ -22,9 +23,11 @@ Step-by-step of what the user sees and does once this ships. Number the steps.
 - **Dependencies:** libraries, env vars, external services
 
 ## Acceptance criteria
-- [ ] Each criterion must be independently testable by a reviewer who didn't build it
-- [ ] Prefer "user can X and sees Y" over "code does Z"
-- [ ] Include at least one failure/edge case criterion
+- [ ] AC-1: <Independently testable criterion; prefer "user can X and sees Y" over "code does Z">
+- [ ] AC-2: <Failure/edge case criterion>
+
+IDs are stable once filed — never renumber; deletions leave gaps.
+No acceptance criterion may require a non-goal. If one does, resolve it with the user before filing.
 
 ## Quality gates
 Answer each gate substantively or with `N/A — <reason>`; bare `N/A` is non-compliant.
@@ -40,7 +43,7 @@ A criterion with no row is a template violation. Filling this table is where the
 
 | Criterion | Test-plan step | Expected observable result |
 |---|---|---|
-| <Acceptance criterion 1> | <Test-plan step proving it> | <Observable pass result> |
+| AC-1 | <Test-plan step proving AC-1> | <Observable pass result> |
 
 ## Test plan
 How /wolftac-build proves it works and /wolftac-review re-proves it independently: exact commands to run,

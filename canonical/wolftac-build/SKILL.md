@@ -69,6 +69,12 @@ never commit directly to main/master. If an existing worktree is dirty and clear
 belongs to another process or human, fail closed without modifying it.
 
 ### 5. Implement — with guardrails
+- **Before editing anything**, when the spec uses `AC-N`/`NG-N` IDs, compare every
+  `AC-N` against every `NG-N`. Non-goals are binding. An acceptance criterion that
+  requires a non-goal is a spec defect: post
+  `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and stop.
+  Old-format (unnumbered) specs proceed under the existing rules.
+- If it is not in the Linear issue, it does not exist — no side-channel instructions.
 - Read the repo's CLAUDE.md first; match its conventions.
 - Build exactly what the spec's Technical approach and Acceptance criteria describe.
   **No scope creep**: tangential improvements get noted in your build report as

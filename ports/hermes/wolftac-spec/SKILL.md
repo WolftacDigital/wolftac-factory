@@ -62,6 +62,7 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    ## Problem
    ## Goals
    ## Non-goals
+   - NG-1: <out-of-scope item>
    ## User flow
    ## Technical approach
    - **Entry points / affected files:** (real paths, verified)
@@ -70,7 +71,8 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    - **Key decisions:**
    - **Dependencies:**
    ## Acceptance criteria
-   - [ ] (each independently testable by a reviewer who didn't build it; include ≥1 failure/edge case)
+   - [ ] AC-1: <independently testable criterion; prefer "user can X and sees Y" over "code does Z">
+   - [ ] AC-2: <failure/edge case criterion>
    ## Quality gates
    - Accessibility:
    - Security / privacy:
@@ -81,7 +83,7 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    ## Evidence map
    | Criterion | Test-plan step | Expected observable result |
    |---|---|---|
-   | <one row per acceptance criterion> | <matching test-plan step> | <observable pass result> |
+   | AC-1 | <matching test-plan step> | <observable pass result> |
    ## Test plan
    (exact commands + expected results)
    ## Build notes
@@ -93,7 +95,11 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    is invalid. The Evidence map must include one row per acceptance criterion; a
    criterion with no row is a template violation. While filling it, check criteria for
    mutual contradiction and resolve conflicts before filing (WD-211 AC3/AC4 is the
-   motivating example).
+   motivating example). Assign stable `AC-N` IDs to acceptance criteria and stable
+   `NG-N` IDs to non-goals. IDs are stable once filed — never renumber; deletions
+   leave gaps. Before filing, compare every `AC-N` against every `NG-N`. No acceptance
+   criterion may require a non-goal; resolve any conflict with the user before filing.
+   The Non-goals section protects /wolftac-build from scope creep — be generous.
 
 3. **One approval pass.** Show the draft, single go/no-go, accept edits, then file.
 

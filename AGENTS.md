@@ -39,6 +39,8 @@ session can review what Codex built.
 - **Spec template:** every spec follows `canonical/wolftac-spec/spec-template.md`.
   The **`Repo:`** header line at the top of every spec is mandatory — it's the
   working directory for that issue, and build/review refuse to guess at it.
+- **Issue is the instruction boundary:** If it is not in the Linear issue, it does
+  not exist — no side-channel instructions.
 - **Linear identities are split:** factory workers connect to Linear through the
   dedicated factory bot identity; humans comment and approve from their own
   accounts. The integrate stage refuses any `APPROVE MERGE` authored by the same

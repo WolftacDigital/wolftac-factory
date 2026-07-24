@@ -141,6 +141,27 @@
     ]
   },
   {
+    "id": "binding-ac-ng-cross-check",
+    "description": "Build cross-checks every numbered acceptance criterion against every numbered non-goal before editing.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" }
+    ]
+  },
+  {
+    "id": "linear-issue-only-instruction-boundary",
+    "description": "Build and factory onboarding reject side-channel instructions outside the Linear issue.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "AGENTS.md", "pattern": "does\\s+not exist — no side-channel instructions" }
+    ]
+  },
+  {
     "id": "blocked-spec-defects-only",
     "description": "Build reserves BLOCKED comments for genuine spec defects.",
     "checks": [
