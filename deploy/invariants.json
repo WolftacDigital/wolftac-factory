@@ -162,6 +162,27 @@
     ]
   },
   {
+    "id": "slack-approval-gate",
+    "description": "Integrate's approval gate includes the Slack :rocket: reaction lane bound to deploy/approval-policy.json, with the typed APPROVE MERGE fallback retained.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)" },
+      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*APPROVE MERGE)" },
+      { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*slack_channel_id)(?=[\\s\\S]*approver_slack_user_id)" }
+    ]
+  },
+  {
+    "id": "no-worker-reactions",
+    "description": "Workers are forbidden from adding reactions to factory notification messages (read-only on reactions), mirroring the Linear bot-identity rule.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "AGENTS.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" }
+    ]
+  },
+  {
     "id": "blocked-spec-defects-only",
     "description": "Build reserves BLOCKED comments for genuine spec defects.",
     "checks": [

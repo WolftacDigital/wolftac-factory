@@ -18,7 +18,9 @@ testable plan and files it as a Linear issue; **build** picks up specced issues,
 implements them on a branch, and *proves* they work by running the code; **review**
 re-verifies independently and marks passing work Approved; **integrate** rebases the
 approved branch onto the default branch, re-runs the gates, and — only after the
-human's explicit `APPROVE MERGE` — merges it and marks it Done. Done means merged:
+human's explicit approval (a 🚀 reaction by the configured approver on the newest
+Slack approval message, or the typed `APPROVE MERGE` fallback) — merges it and
+marks it Done. Done means merged:
 the only stage allowed to set it is integrate, and only after ancestry is verified.
 Any agent on any platform can run any stage — the Linear issue itself carries all
 the context, so a Codex session can build what a Fable session specced, and a Hermes
@@ -33,7 +35,11 @@ session can review what Codex built.
 - **States, in order:** `Todo` (specced, ready to build) → `In Progress` (a build
   session has claimed it) → `In Review` (built, awaiting QA) → `Approved` (review
   passed, awaiting merge) → `Done` (merged to the remote default branch — **only the
-  integrate stage may set this, and only after the human's `APPROVE MERGE`**). A
+  integrate stage may set this, and only after the human's approval: Jonathan's
+  `:rocket:` reaction on the newest Slack approval message (reactor id must equal
+  `approver_slack_user_id` in `deploy/approval-policy.json`, verified by API read;
+  any other reactor is ignored) or his typed `APPROVE MERGE` comment as the
+  fallback**). Workers never add reactions to factory notification messages. A
   failed review — or a failed rebase/gate at integration — sends the issue back to
   `Todo` with a numbered defect list, which becomes the next build's work order.
 - **Spec template:** every spec follows `canonical/wolftac-spec/spec-template.md`.

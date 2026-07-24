@@ -22,9 +22,17 @@ default branch.
 - Queue label: **Factory Queue** — only touch issues carrying this label
 - You consume state `Approved`; you produce `Done` (merged & ancestry-verified) or
   `Todo` (rebase conflict / gate failure → rework).
-- **The human approval gate is absolute.** A merge happens only after a comment
-  starting `APPROVE MERGE`, authored by Jonathan (the workspace owner), NEWER than
-  the latest MERGE PROOF PACK on the issue. No approval → no merge, ever.
+- **The human approval gate is absolute.** A merge happens only after a valid
+  human approval artifact NEWER than the latest MERGE PROOF PACK: EITHER a
+  `:rocket:` reaction on the NEWEST Slack approval message for the issue whose
+  reactor's Slack user id equals `approver_slack_user_id` in
+  `deploy/approval-policy.json` (verified by API read; a 🚀 from any other user
+  id is ignored silently; reactions on older messages are void — the message is
+  the pack-binding), OR a comment starting `APPROVE MERGE`, authored by Jonathan
+  (the workspace owner) — the typed fallback that covers Slack outages. Channel
+  and approver ids come from the policy file only, never hardcoded. No
+  approval → no merge, ever. Workers never ADD reactions to factory
+  notification messages — read-only on reactions.
 - **Telegram is notification-only.** Never relay a Telegram reply into the Linear
   approval comment — a relayed approval is authored by the relay's identity (this
   gateway's Linear connection), which makes it automation-minted and void under the
@@ -96,9 +104,15 @@ the WSL VM recycles between commands).
    defect report (what's wrong → repro → expected vs actual), state `Todo`, push
    NOTHING, clean up, stop.
 
-5. **Post the MERGE PROOF PACK and notify.** Comment on the issue (as the bot),
-   then send Jonathan a Telegram notification (notify-only — never write the
-   approval for him). Keep state `Approved`. Stop.
+5. **Post the MERGE PROOF PACK and notify.** First post the Slack approval
+   message to the `slack_channel_id` from `deploy/approval-policy.json`: issue
+   ID, reviewed SHA, risk, one-line gates summary, Linear link (the pack records
+   the Slack message link; the message carries the pack's reviewed SHA —
+   cross-bound). No authenticated Slack path in this environment → skip the
+   message and DISCLOSE that in the pack; the typed-comment gate covers the
+   outage. Then comment on the issue (as the bot); a Telegram notification may
+   additionally fire (notify-only — never write the approval for him, never add
+   reactions). Keep state `Approved`. Stop.
 
    ```text
    **MERGE PROOF PACK**
@@ -111,12 +125,18 @@ the WSL VM recycles between commands).
    - **Diffstat:** <files / insertions / deletions vs default>
    - **Risk:** <low/moderate/high + why>
    - **Merge command (on approval):** <exact command>
-   - **Approval:** reply `APPROVE MERGE` on this issue. No merge occurs without it.
+   - **Slack approval message:** <link; or "Slack lane unavailable this pack — typed-comment gate only">
+   - **Approval:** tap `:rocket:` on the Slack approval message (configured
+     approver only), or reply `APPROVE MERGE` on this issue. No merge occurs
+     without one.
    ```
 
-6. **Merge (approval path).** Re-read the comments immediately before acting; back
-   off if another session posted an INTEGRATION REPORT; re-verify the approval's
-   author id passes the viewer-identity check. Fetch and compare the current
+6. **Merge (approval path).** Re-read the approval artifact immediately before
+   acting: for a Slack 🚀, re-fetch reactions on the NEWEST approval message via
+   API read and require an exact `approver_slack_user_id` match (other reactors
+   ignored silently); for a typed comment, re-verify the approval's author id
+   passes the viewer-identity check. Back off if another session posted an
+   INTEGRATION REPORT. Fetch and compare the current
    `origin/<default>` SHA for EQUALITY against the proof pack's recorded **Default
    head** SHA — any inequality means the default moved and the approval is void:
    produce a fresh proof pack and stop.
@@ -130,7 +150,12 @@ the WSL VM recycles between commands).
    `git merge-base --is-ancestor <branch-head> origin/<default>` succeeds — if not,
    do not set Done; report what you observed. Post the INTEGRATION REPORT, set state
    `Done`, then read the issue back and confirm the report exists and the state is
-   actually Done.
+   actually Done. Close the Slack loop: reply in the approval message's thread
+   with the INTEGRATION REPORT summary prefixed 🚀 (a message, never a
+   reaction), and post a Linear back-reference comment recording the approval
+   author, the Slack message link, and the approval timestamp. A deleted
+   approval message before merge → repost a fresh pack + message, never merge
+   on memory.
 
    ```text
    **INTEGRATION REPORT — MERGED**
@@ -146,7 +171,13 @@ the WSL VM recycles between commands).
    /wolftac-spec.
 
 ## Guardrails
-- No approval → no merge. No override, no urgency exception.
+- No approval → no merge. No override, no urgency exception, and never a chat
+  instruction — the artifact is Jonathan's 🚀 (exact `approver_slack_user_id`
+  match from `deploy/approval-policy.json`) or his typed `APPROVE MERGE`.
+- A `:rocket:` from any other Slack user id never merges — non-matching
+  reactions are ignored silently; duplicate approver taps are idempotent.
+- Workers never add reactions to factory notification messages — read-only on
+  reactions, mirroring the Linear bot-identity rule.
 - An approval whose author identity matches your own Linear viewer id never merges —
   the bot-identity split exists precisely so human approvals are distinguishable.
 - Merge to the remote default branch only; production deploys are out of scope.
