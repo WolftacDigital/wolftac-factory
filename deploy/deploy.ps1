@@ -25,6 +25,11 @@ $Pairs = @(
     @{ Src = "ports\codex\wolftac-spec.md";             Dst = "$env:USERPROFILE\.codex\prompts\wolftac-spec.md" }
     @{ Src = "ports\codex\wolftac-build.md";            Dst = "$env:USERPROFILE\.codex\prompts\wolftac-build.md" }
     @{ Src = "ports\codex\wolftac-review.md";           Dst = "$env:USERPROFILE\.codex\prompts\wolftac-review.md" }
+    # WD-281: the integrate preflight ships INTO the isolated profile so the
+    # scheduled worker's prompt has a stable absolute path that survives review
+    # worktrees, branch deletion, and merges (the round-4 defect was a cron job
+    # wired to a deleted worktree copy of this script).
+    @{ Src = "deploy\integrate-preflight.py";           Dst = "$env:LOCALAPPDATA\hermes\profiles\factory-integrate\deploy\integrate-preflight.py" }
 )
 
 # Tree-backed ports must stay complete as their skills gain references and UI metadata.

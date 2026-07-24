@@ -22,7 +22,8 @@ nothing inherited from the human operator's profile). Root:
 2. **`.env`** — the bot credentials only: `LINEAR_FACTORY_APP_ID`,
    `LINEAR_FACTORY_APP_SECRET`, `LINEAR_FACTORY_BOT_TOKEN` — PLUS blank
    overrides that neutralize any human Linear-capable credentials inherited
-   from the root env or shell (`LINEAR_API_KEY=`, `COMPOSIO_API_KEY=`). The
+   from the root env or shell (`LINEAR_API_KEY=`, `LINEAR_OAUTH_TOKEN=`,
+   `COMPOSIO_API_KEY=`). The
    preflight's executing-runtime check inspects the process environment it
    inherits from the worker and exits 3 if any such credential is non-empty,
    so a profile missing these overrides cannot start work. Values are never
@@ -74,7 +75,20 @@ hermes -p factory-integrate cron create --name "Wolftac Factory Integrate Worker
   --workdir D:\Wolftac\MissionControl \
   --deliver local \
   "every 10m" \
-  "Run one wolftac-integrate tick: FIRST run 'python D:\Wolftac\wolftac-factory\deploy\integrate-preflight.py' and stop immediately on any non-zero exit; otherwise work at most one Approved Factory Queue issue per the skill; merge only on a valid APPROVE MERGE; if nothing is awaiting integration or any precondition fails, exit cleanly."
+  "Run one wolftac-integrate tick: FIRST run 'python C:/Users/logan_vwagmmf/AppData/Local/hermes/profiles/factory-integrate/deploy/integrate-preflight.py' and stop immediately on any non-zero exit; otherwise work at most one Approved Factory Queue issue per the skill; merge only on a valid APPROVE MERGE; if nothing is awaiting integration or any precondition fails, exit cleanly."
+```
+
+The prompt's preflight path is the **profile-deployed copy** (shipped by
+`deploy/deploy.ps1` into `profiles\factory-integrate\deploy\`), NOT a repo
+checkout or review worktree path: worktrees get deleted and branch paths die at
+merge, which is exactly how the round-4 scheduled worker broke. The deployed
+copy survives all of that and stays in sync with the repo on every deploy.
+To repair an existing job's prompt or workdir, use the supported CLI editor and
+read it back:
+
+```
+hermes -p factory-integrate cron edit <job-id> --prompt "<the prompt above>" --workdir D:\Wolftac\MissionControl
+hermes -p factory-integrate cron list
 ```
 
    The preflight is invoked by ABSOLUTE path so the Mission Control workdir

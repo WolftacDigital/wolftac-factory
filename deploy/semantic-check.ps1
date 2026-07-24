@@ -112,6 +112,9 @@ Require-Pattern "deploy\integrate-preflight.py" "(?s)viewer\(fresh\).{0,700}pers
 Require-Pattern "deploy\bot-runtime.md" "cron create" "bot-runtime recipe lost the verified worker-creation command"
 Require-Pattern "deploy\bot-runtime.md" "factory-integrate" "bot-runtime recipe lost the isolated profile"
 Require-Pattern "deploy\bot-runtime.md" "pin-cron-model" "bot-runtime recipe lost the supported model-pin flow"
+Require-Pattern "deploy\deploy.ps1" "profiles\\factory-integrate\\deploy\\integrate-preflight\.py" "deploy lost the profile-deployed preflight pair (stable cron path)"
+Require-Pattern "deploy\bot-runtime.md" "profile-deployed copy" "bot-runtime recipe lost the stable profile-deployed preflight path doctrine"
+Require-Pattern "deploy\bot-runtime.md" "cron edit" "bot-runtime recipe lost the supported prompt/workdir repair route"
 Require-Pattern "deploy\integrate-preflight.py" "os\.replace" "token persistence lost its atomic write"
 Require-Pattern "deploy\pin-cron-model.py" "(?s)os\.replace.{0,600}readback" "pin tool lost atomic write or readback verification"
 

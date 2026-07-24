@@ -5,3 +5,4 @@
 config.toml
 .env
 .env.*
+__pycache__/
