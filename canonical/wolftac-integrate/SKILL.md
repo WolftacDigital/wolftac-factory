@@ -1,6 +1,6 @@
 ---
 name: wolftac-integrate
-description: Factory stage 4 — land the oldest Approved Linear factory issue (team Wolftac Digital, label Factory Queue) by rebasing the reviewed branch onto the remote default branch in a detached worktree, re-running the spec's gates, posting a MERGE PROOF PACK, and merging ONLY after Jonathan's explicit APPROVE MERGE comment. The only stage that sets Done. One issue per invocation. Designed for looped runs (/loop 10m /wolftac-integrate).
+description: Factory stage 4 — land the oldest Approved Linear factory issue (team Wolftac Digital, label Factory Queue) by rebasing the reviewed branch onto the remote default branch in a detached worktree, re-running the spec's gates, posting a MERGE PROOF PACK, and merging ONLY after Jonathan's valid human approval artifact. The only stage that sets Done. One issue per invocation. Designed for looped runs (/loop 10m /wolftac-integrate).
 ---
 
 # /wolftac-integrate — Factory stage 4: integration
@@ -26,11 +26,23 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
      ignored silently. Reactions on OLDER approval messages are void — the
      message is the pack-binding, so a re-rebase (new pack → new message)
      structurally invalidates prior reactions.
-  2. **Typed comment (silent fallback):** a comment starting `APPROVE MERGE`,
-     authored by Jonathan (the workspace owner), on the Linear issue — the
-     original gate, retained so a Slack outage never blocks a merge.
+  2. **Typed comment (silent fallback):** a comment starting `APPROVE MERGE` or
+     `APPROVED MERGE`, matched case-insensitively, authored by Jonathan (the
+     workspace owner), on the Linear issue — the original gate, retained so a
+     Slack outage never blocks a merge.
   Channel and approver ids come from `deploy/approval-policy.json` only — never
   hardcode them in skill text or prompts. No approval → no merge, ever.
+- **Factory Slack identity is always bot-authored.** Every factory Slack post,
+  including the approval message and post-merge thread reply, uses
+  `SLACK_FACTORY_BOT_TOKEN` from the environment with Slack Web API
+  `chat.postMessage`; reaction verification uses `reactions.get` with that same
+  bot token, never a human Slack session. Select `username` and `icon_emoji` from
+  `deploy/approval-policy.json`'s `sender_identities` entry keyed by platform;
+  resolve Hermes as `hermes@<hostname>`. Use `fallback_identity` when the key is
+  unmapped. Never post a factory message through the human's Slack identity. If
+  the bot token is absent, invalid, or expired, post no Slack message, disclose
+  the unavailable Slack lane in the proof pack, and use only the typed-comment
+  gate for that pack.
 - **Workers may not add reactions to factory notification messages.** A worker
   reacting to its own (or any) approval message would blur the human-artifact
   boundary exactly the way a self-authored `APPROVE MERGE` would. Read
@@ -95,11 +107,12 @@ reviewed SHA) and any prior MERGE PROOF PACK. Locate two timestamps:
   message for this issue whose reactor id equals `approver_slack_user_id` from
   `deploy/approval-policy.json` (verify by API read; reactions from any other
   user id are ignored silently; reactions on older messages are void), OR a
-  comment starting `APPROVE MERGE` authored by Jonathan, whose author id differs
-  from your own Linear viewer id (fetch `viewer` first). No other author or
-  reactor counts, regardless of what the comment says; a same-identity approval
-  is void per the constants above. If this environment has no Slack read path,
-  evaluate the typed-comment lane only.
+  comment starting `APPROVE MERGE` or `APPROVED MERGE` (case-insensitive)
+  authored by Jonathan, whose author id differs from your own Linear viewer id
+  (fetch `viewer` first). No other author or reactor counts, regardless of what
+  the comment says; a same-identity approval is void per the constants above. If
+  this environment lacks a valid `SLACK_FACTORY_BOT_TOKEN`, evaluate the
+  typed-comment lane only and disclose the unavailable Slack lane in the pack.
 
 Exactly three positions are possible:
 - **(a) No proof pack yet** → produce one: steps 4–5, then stop and await approval.
@@ -126,12 +139,17 @@ Exactly three positions are possible:
 
 ### 5. Post the MERGE PROOF PACK and notify
 Post a **Slack approval message** to the `slack_channel_id` from
-`deploy/approval-policy.json` containing: the issue ID, the reviewed SHA, the
-risk line, a one-line gates summary, and the Linear issue link. The message and
-the proof pack cross-bind: the pack records the Slack message link, and the
-Slack message carries the pack's reviewed SHA. If this environment has no
-authenticated Slack path, skip the message and DISCLOSE that in the pack — the
-typed-comment gate covers the outage (fail-graceful, never fail-open).
+`deploy/approval-policy.json` using `SLACK_FACTORY_BOT_TOKEN` and
+`chat.postMessage`. Select the message's `username` and `icon_emoji` from the
+policy's `sender_identities` entry for the current platform (Hermes uses
+`hermes@<hostname>`), or `fallback_identity` when unmapped. Include the issue ID,
+reviewed SHA, risk line, one-line gates summary, and Linear issue link. The
+message and the proof pack cross-bind: the pack records the Slack message link,
+and the Slack message carries the pack's reviewed SHA. Never use the human's
+Slack identity. If the bot token is absent, invalid, or expired, skip every
+Slack post and DISCLOSE that in the pack — the case-insensitive typed-comment
+gate (`APPROVE MERGE` or `APPROVED MERGE`) covers the outage (fail-graceful,
+never fail-open).
 
 Then comment on the issue:
 
@@ -149,7 +167,8 @@ Then comment on the issue:
 - **Slack approval message:** <link to the message posted above; or "Slack lane
   unavailable this pack — typed-comment gate only" when disclosed>
 - **Approval:** tap `:rocket:` on the Slack approval message (configured approver
-  only), or reply `APPROVE MERGE` on this issue. No merge occurs without one.
+  only), or reply `APPROVE MERGE` (also accepts `APPROVED MERGE`,
+  case-insensitively) on this issue. No merge occurs without one.
 ```
 
 Notify Jonathan through the platform's channel lane (the Slack approval message
@@ -161,12 +180,14 @@ comment). Keep state `Approved`. Stop.
 
 ### 6. Merge (approval path)
 - Re-read the approval artifact immediately before acting (approval races are
-  real): for a Slack 🚀, re-fetch the reactions on the NEWEST approval message
-  via API read and confirm a reaction whose reactor id equals the policy file's
-  `approver_slack_user_id` is present (any other reactor is ignored silently);
-  for a typed comment, confirm it is still the newest relevant event and its
-  author id passes the viewer-identity check. Either way, confirm no other
-  session has posted an INTEGRATION REPORT.
+  real): for a Slack 🚀, call `reactions.get` on the NEWEST approval message
+  using `SLACK_FACTORY_BOT_TOKEN` and confirm a reaction whose reactor id equals
+  the policy file's `approver_slack_user_id` is present (any other reactor is
+  ignored silently); never use a human Slack session. For a typed comment,
+  confirm it is still the newest relevant event, starts `APPROVE MERGE` or
+  `APPROVED MERGE` case-insensitively, and its author id passes the
+  viewer-identity check. Either way, confirm no other session has posted an
+  INTEGRATION REPORT.
 - Verify the default branch has not moved since the proof pack: fetch, then compare
   the current `origin/<default>` SHA for EQUALITY against the proof pack's recorded
   **Default head** SHA. Any inequality means the approval is void: produce a fresh
@@ -187,12 +208,16 @@ comment). Keep state `Approved`. Stop.
   bot-authenticated GraphQL connection. Read the issue back through that connection
   and confirm the report exists and the state is actually Done.
 - Close the Slack loop: reply in the approval message's thread with the
-  INTEGRATION REPORT summary prefixed 🚀 (a message, not a reaction — workers
-  never add reactions), and post a back-reference comment on the Linear issue
-  recording the approval author, the Slack message link, and the approval
-  timestamp, so the on-issue audit trail stays complete when the approval was a
-  reaction rather than a comment. If a Slack approval message was deleted before
-  merge, repost a fresh pack + message rather than merging on memory.
+  INTEGRATION REPORT summary prefixed 🚀 using `chat.postMessage`,
+  `SLACK_FACTORY_BOT_TOKEN`, and the same policy-selected sender identity (a
+  message, not a reaction — workers never add reactions), and post a
+  back-reference comment on the Linear issue recording the approval author, the
+  Slack message link, and the approval timestamp, so the on-issue audit trail
+  stays complete when the approval was a reaction rather than a comment. If the
+  bot token becomes unavailable, disclose the omitted thread reply in the
+  Linear report; never substitute a human Slack session. If a Slack approval
+  message was deleted before merge, repost a fresh pack + message rather than
+  merging on memory.
 
 ```
 **INTEGRATION REPORT — MERGED**
@@ -212,8 +237,9 @@ ideas go to /wolftac-spec, never into the merge.
 - No approval → no merge. There is no override, no urgency exception, and no
   "the human surely meant yes." Approval is Jonathan's 🚀 on the newest Slack
   approval message (exact `approver_slack_user_id` match from
-  `deploy/approval-policy.json`) or his typed `APPROVE MERGE` comment — nothing
-  else, and never a chat instruction.
+  `deploy/approval-policy.json`) or his typed comment starting `APPROVE MERGE`
+  or `APPROVED MERGE`, case-insensitively — nothing else, and never a chat
+  instruction.
 - A `:rocket:` from any other Slack user id never merges — non-matching
   reactions are ignored silently, and duplicate taps by the approver are
   idempotent (one valid reaction suffices; extras change nothing).

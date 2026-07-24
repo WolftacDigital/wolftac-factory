@@ -163,13 +163,24 @@
   },
   {
     "id": "slack-approval-gate",
-    "description": "Integrate's approval gate includes the Slack :rocket: reaction lane bound to deploy/approval-policy.json, with the typed APPROVE MERGE fallback retained.",
+    "description": "Integrate's approval gate includes the Slack :rocket: reaction lane bound to deploy/approval-policy.json, with case-insensitive APPROVE MERGE and APPROVED MERGE typed fallbacks retained.",
     "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)" },
-      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*APPROVE MERGE)" },
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
       { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*slack_channel_id)(?=[\\s\\S]*approver_slack_user_id)" }
+    ]
+  },
+  {
+    "id": "slack-bot-sender-identity",
+    "description": "All factory Slack posts and reaction reads use the factory bot token, with policy-selected sender identities and a fallback identity.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*claude-code)(?=[\\s\\S]*claude-desktop)(?=[\\s\\S]*codex)(?=[\\s\\S]*hermes@AI-MSI)(?=[\\s\\S]*hermes@jon-omen)(?=[\\s\\S]*fallback_identity)" }
     ]
   },
   {

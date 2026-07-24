@@ -19,7 +19,8 @@ implements them on a branch, and *proves* they work by running the code; **revie
 re-verifies independently and marks passing work Approved; **integrate** rebases the
 approved branch onto the default branch, re-runs the gates, and — only after the
 human's explicit approval (a 🚀 reaction by the configured approver on the newest
-Slack approval message, or the typed `APPROVE MERGE` fallback) — merges it and
+Slack approval message, or the case-insensitive typed `APPROVE MERGE` /
+`APPROVED MERGE` fallback) — merges it and
 marks it Done. Done means merged:
 the only stage allowed to set it is integrate, and only after ancestry is verified.
 Any agent on any platform can run any stage — the Linear issue itself carries all
@@ -38,8 +39,13 @@ session can review what Codex built.
   integrate stage may set this, and only after the human's approval: Jonathan's
   `:rocket:` reaction on the newest Slack approval message (reactor id must equal
   `approver_slack_user_id` in `deploy/approval-policy.json`, verified by API read;
-  any other reactor is ignored) or his typed `APPROVE MERGE` comment as the
-  fallback**). Workers never add reactions to factory notification messages. A
+  any other reactor is ignored) or his typed comment starting `APPROVE MERGE` or
+  `APPROVED MERGE`, case-insensitively, as the fallback**). Workers never add
+  reactions to factory notification messages. Every factory Slack post uses
+  `SLACK_FACTORY_BOT_TOKEN` with `chat.postMessage`, selecting `username` and
+  `icon_emoji` from `deploy/approval-policy.json`'s platform/hostname-keyed
+  `sender_identities`, or `fallback_identity` when unmapped; `reactions.get`
+  uses the same bot token, never a human Slack session. A
   failed review — or a failed rebase/gate at integration — sends the issue back to
   `Todo` with a numbered defect list, which becomes the next build's work order.
 - **Spec template:** every spec follows `canonical/wolftac-spec/spec-template.md`.
@@ -49,7 +55,8 @@ session can review what Codex built.
   not exist — no side-channel instructions.
 - **Linear identities are split:** factory workers connect to Linear through the
   dedicated factory bot identity; humans comment and approve from their own
-  accounts. The integrate stage refuses any `APPROVE MERGE` authored by the same
+  accounts. The integrate stage refuses any typed approval comment
+  (`APPROVE MERGE` or `APPROVED MERGE`, case-insensitively) authored by the same
   identity it writes with — until the split exists in a workspace, integrate can
   prepare proof packs but will never merge. Integrate performs ALL of its Linear
   I/O with the bot credentials (`LINEAR_FACTORY_BOT_TOKEN`), failing closed when
@@ -182,7 +189,7 @@ than pretending the model team ran.
 - **No scope creep.** Build exactly what the spec's Technical Approach and Acceptance
   Criteria describe. Ideas for more get noted as "suggest /wolftac-spec," not built.
 - **Only the integrate stage sets `Done`, and only after the human's explicit
-  `APPROVE MERGE`.** Build ends at `In Review`; review's passing verdict is
+  approval artifact.** Build ends at `In Review`; review's passing verdict is
   `Approved`. If you think something is finished, hand it forward — never mark it
   Done yourself from build or review.
 - **If a spec is genuinely wrong or ambiguous**, don't guess on load-bearing
@@ -216,7 +223,7 @@ before relying on it; never schedule aspirational syntax.
 ```
 /loop 5m /wolftac-build [lane]     # build line, session in/reaching the target repo
 /loop 5m /wolftac-review           # review line
-/loop 10m /wolftac-integrate       # integrate line — merges only on APPROVE MERGE
+/loop 10m /wolftac-integrate       # integrate line — merges only on a valid approval artifact
 ```
 
 Permission precondition: an unattended loop stalls at the first tool call that

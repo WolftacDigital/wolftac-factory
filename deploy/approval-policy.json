@@ -1,4 +1,30 @@
 {
   "slack_channel_id": "C0BKL3LR8RJ",
-  "approver_slack_user_id": "U040Y6QPU49"
+  "approver_slack_user_id": "U040Y6QPU49",
+  "sender_identities": {
+    "claude-code": {
+      "username": "Claude",
+      "icon_emoji": ":robot_face:"
+    },
+    "claude-desktop": {
+      "username": "Claude",
+      "icon_emoji": ":robot_face:"
+    },
+    "codex": {
+      "username": "Codex",
+      "icon_emoji": ":zap:"
+    },
+    "hermes@AI-MSI": {
+      "username": "Logan",
+      "icon_emoji": ":wolf:"
+    },
+    "hermes@jon-omen": {
+      "username": "Zeus",
+      "icon_emoji": ":trident:"
+    }
+  },
+  "fallback_identity": {
+    "username": "Wolftac Factory",
+    "icon_emoji": ":factory:"
+  }
 }
