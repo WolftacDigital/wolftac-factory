@@ -51,7 +51,10 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
-   `Factory Queue`. If invoked with an argument (e.g. "build agentic"), treat it as a
+   `Factory Queue`. Exhaust pagination before concluding the queue or stale-claim set is
+   empty. If the listing omits project names, first filter to active `Factory Queue`
+   issues, then enrich those candidates before applying a lane filter; do not infer a
+   project lane from the issue title. If invoked with an argument (e.g. "build agentic"), treat it as a
    lane filter: only consider issues whose Linear project name or labels contain it
    (case-insensitive). Highest priority first, oldest on ties. Skip issues whose latest
    comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
@@ -59,12 +62,39 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
    Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
    `In Progress` issues with label `Factory Queue` (and the lane filter, if any).
-   If the most recent comment, or `startedAt`/claim time when there are no comments,
+   Before resetting one, resolve its Linear-generated branch against `git worktree
+   list --porcelain` and inspect any owning issue worktree. A dirty issue worktree is
+   preserved operator-attention work, not proof of abandonment: do not sweep, reset,
+   claim, edit, commit, or discard it, even when Linear activity is older than four
+   hours. Report the worktree path and diff stat in the cron result and follow
+   `references/stale-claim-dirty-worktree-safety.md`. If no dirty issue worktree exists
+   and the most recent comment, or `startedAt`/claim time when there are no comments,
    is OLDER than 4 hours, you may post exactly
    `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
    If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
    sweep it. This sweep is the ONLY time build posts a comment during pickup; during
    a claim-race back off you post NOTHING.
+
+   Before claiming each selected `Todo` candidate, resolve its Linear-generated branch
+   against `git worktree list --porcelain` and inspect any owning/reused issue worktree.
+   For WSL repos, make this a repository-identity-verified, explicit-path probe: pass the
+   literal spec repo path and branch ref to WSL (do not rely on nested shell variables),
+   and confirm `git rev-parse --show-toplevel` plus `git remote get-url origin` identify
+   the intended repo before trusting the worktree list. If output resolves to the host
+   current checkout or any unexpected repo, treat the probe as invalid and rerun it
+   before any Linear claim mutation. The claim is permitted only after this explicit
+   probe and the target worktree dirty check complete successfully.
+   A dirty dedicated worktree is operator-attention work even while Linear says `Todo`:
+   do not claim, edit, commit, reset, discard, comment, or change state. Report its path
+   and complete dirty summary, then consider the next lane-eligible candidate in normal
+   priority order. Use `git diff --stat` for unstaged changes, `git diff --cached --stat`
+   for staged changes, and `git status --short` for untracked paths; a branch-range diff
+   such as `git diff --stat origin/main...HEAD` does **not** include uncommitted work.
+   Follow `references/stale-claim-dirty-worktree-safety.md` for both stale `In Progress`
+   claims and dirty reused worktrees on `Todo` candidates. In scheduled runs, this is an
+   actionable operator-attention result, not a generic empty queue, so normal
+   nothing-buildable suppression does not hide it.
+
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
 2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Immediately

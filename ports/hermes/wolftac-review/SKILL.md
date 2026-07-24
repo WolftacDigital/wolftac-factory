@@ -155,9 +155,15 @@ When the full test command fails due unrelated suite collection/tooling failures
    cannot enforce “default has not moved” from ahead/behind counts or an unpublished rebased SHA.
    For Telegram/Slack/webhook relays, verify immutable source-event provenance that the merge
    worker cannot mint rather than assuming a relayed Linear comment is human-authored.
-   Follow `references/human-approval-and-rebased-artifact-review.md` and treat self-approvable
-   gates, an unexercised positive identity path, missing default-head proof, or fresh-clone-missing
-   approved artifacts as blocking defects.
+   Follow `references/human-approval-and-rebased-artifact-review.md`. Its Hermes-specific
+   section covers binding preflight proof to the real `HERMES_HOME`, enumerating direct
+   Linear/Composio/delegated transports, immutable bot IDs, profile-scoped cron paths,
+   subprocess credential-inheritance probes, and persisted-job/session timeline checks.
+   A clean profile YAML or successful one-shot chat is not scheduled-runtime proof: read
+   the current job prompt and newest run output, and require the end-to-end fixture to
+   postdate runtime creation in that profile's session inventory.
+   Treat self-approvable gates, an unexercised positive identity path, missing default-head
+   proof, fresh-clone-missing approved artifacts, or fixture-only isolation as blocking defects.
 
    **Automation bypass / URL secret masking checks:** when reviewing tooling that passes a
    secret through query params (for example Vercel `x-vercel-protection-bypass`), do not
@@ -243,7 +249,9 @@ When the full test command fails due unrelated suite collection/tooling failures
 6. **Verify Linear side effects.** After posting the review report and moving the issue,
    read the issue back (and the latest comments when available) to confirm the report exists,
    acceptance boxes were updated when applicable, and the final state is actually `Approved` or
-   `Todo`. Do not claim completion from the write call alone.
+   `Todo`. When verifying Markdown checkboxes, accept Linear's normalized uppercase `- [X]`
+   form as checked; GraphQL writes using `- [x]` may read back as `- [X]`. Do not claim
+   completion from the write call alone.
 
    **Concurrent-review race check:** after long installs/tests/builds or branch-fix pushes,
    re-fetch the issue status and latest comments immediately before any Linear write. Linear
