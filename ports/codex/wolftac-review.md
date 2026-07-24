@@ -17,7 +17,9 @@ posture: skeptical. The build report is a claim, not a fact, until you reproduce
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
-- You consume state `In Review`; you produce `Approved` (pass → wolftac-integrate merges after human approval) or `Todo` (fail → rework).
+- You consume state `In Review`; you produce `Approved` (pass → wolftac-integrate
+  merges after human approval), `Todo` (fail → rework), or parked `In Review`
+  assigned to Jonathan (needs product decision).
 - Reports open with `**Agent:** <platform / model>`. When possible, prefer reviewing
   work built by a DIFFERENT agent/model than yourself — cross-agent review catches
   more (the build report's Agent line tells you who built it).
@@ -32,6 +34,10 @@ posture: skeptical. The build report is a claim, not a fact, until you reproduce
    it as a lane filter: only consider issues whose Linear project name or labels
    contain it (case-insensitive). Skip — SILENTLY, no comment or state change — issues
    whose spec **Repo:** path is unreachable from this session's environment.
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip an issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+   later Jonathan decision comment. Do not comment or change state. Jonathan's later
+   decision comment plus removal of his assignment clears the park.
    Before choosing an unclaimed review, perform a read-first stale-claim sweep:
    inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
    filter, if any). If the most recent comment, or `startedAt`/claim time when there
@@ -63,7 +69,15 @@ posture: skeptical. The build report is a claim, not a fact, until you reproduce
    tokens, no debug leftovers, input validation on new endpoints/forms, error paths
    don't crash, no unrelated files in the diff.
 
-5. **Verdict — three outcomes.**
+   **REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one tag; never
+   stack tags on one finding:
+   - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
+   - `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
+   - `[SECURITY]` — security finding; first-class and greppable.
+   - `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
+     Jonathan can make.
+
+5. **Verdict — four outcomes.**
    - **PASS** — tick the acceptance-criteria checkboxes in the issue description, post
      the report, set state `Approved` (wolftac-integrate takes it from here).
    - **PASS WITH FIXES** — only minor defects (each low-risk, no design change, all
@@ -71,20 +85,32 @@ posture: skeptical. The build report is a claim, not a fact, until you reproduce
      the remote head, re-verify, list fixes with SHAs, tick checkboxes, set `Approved`.
    - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
      unreproducible verification): do NOT rework it yourself. Post the report with a
-     numbered defect list (what's wrong → repro → expected vs actual), set state
-     `Todo` — the build stage treats your list as its work order.
+     numbered defect list; every finding gets exactly one tag plus what's wrong →
+     repro → expected vs actual. Set state `Todo` — the build stage treats your list
+     as its work order.
+   - **NEEDS HUMAN** — any `[SCOPE-CONFLICT]` finding or finding requiring a product
+     decision. Post `REVIEW REPORT — NEEDS HUMAN`, name the exact decision in one
+     tagged `[SCOPE-CONFLICT]` line, assign the issue to Jonathan, and keep state
+     `In Review`; do NOT move it. The report must instruct: Jonathan comments his
+     decision, then removes his assignment; the issue re-enters the review queue with
+     his decision as part of the work order.
+
+   **NEEDS HUMAN is FORBIDDEN for ordinary decidable defects — decidable defects
+   require FAIL; only product decisions may park an issue.**
 
    Report format (comment on the issue):
 
    ```
-   **REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL>**
+   **REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL | NEEDS HUMAN>**
    - **Agent:** Codex / <model>
    - **Criteria:** <n>/<total> verified — one line per criterion: ✓/✗ + evidence
    - **Test plan reproduced:** <commands run, results>
    - **Baseline checks:** <secrets/debug/validation/error-paths — clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Reviewed head:** <remote branch> @ <exact verified SHA>
-   - **Defects:** <none, or numbered list with repro + expected vs actual>
+   - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [SCOPE-CONFLICT], then repro + expected vs actual>
+   - **Human decision:** <none, or [SCOPE-CONFLICT] Decide <the exact product decision needed>>
+   - **Park / un-park:** <not parked, or assign to Jonathan; keep In Review; Jonathan comments his decision, removes his assignment, and the issue re-enters the review queue with that decision as work order>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 

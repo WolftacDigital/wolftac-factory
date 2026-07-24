@@ -202,5 +202,43 @@
       { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" },
       { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" }
     ]
+  },
+  {
+    "id": "review-finding-taxonomy",
+    "description": "Every review surface documents the four-tag, exactly-one-tag finding taxonomy.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" }
+    ]
+  },
+  {
+    "id": "needs-human-pickup-skip",
+    "description": "Build and review pickup surfaces silently skip parked NEEDS HUMAN work.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" }
+    ]
+  },
+  {
+    "id": "rework-first-build-ordering",
+    "description": "Every build surface selects FAIL rework before fresh Todo work while preserving priority and age inside each tier.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" }
+    ]
   }
 ]

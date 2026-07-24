@@ -76,6 +76,33 @@ session can review what Codex built.
   agentic`, `/wolftac-review crm` — only work issues whose Linear project name or
   labels contain that word (case-insensitive). No argument = work the whole queue.
 
+### Review verdicts and parked work
+
+Review has exactly four outcomes:
+
+| Verdict | Meaning | Conveyor action |
+|---|---|---|
+| `PASS` | Every criterion and baseline check passes. | Set `Approved`. |
+| `PASS WITH FIXES` | The reviewer applies and verifies only minor, low-risk fixes. | Set `Approved`. |
+| `FAIL` | One or more ordinary decidable defects, security findings, or unmet criteria require rework. | Post the tagged defect list and set `Todo`. |
+| `NEEDS HUMAN` | A `[SCOPE-CONFLICT]` or other product decision requires Jonathan's verdict. | Assign Jonathan and keep `In Review`; do not move state. |
+
+Every review finding carries exactly one tag: `[AC-N]`, `[DEFECT]`, `[SECURITY]`, or
+`[SCOPE-CONFLICT]`. `NEEDS HUMAN` is forbidden for ordinary decidable defects:
+decidable defects are `FAIL`; only product decisions park an issue. A parked report
+must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and instruct
+Jonathan to comment his decision, then remove his assignment. Once unassigned, the
+issue re-enters the review queue with his decision comment as part of the work order.
+
+Review pickup silently skips an issue whose latest review report is `NEEDS HUMAN`
+while it remains assigned to Jonathan or lacks his later decision comment. Build
+pickup also silently skips any `Todo` issue whose latest review report is
+`NEEDS HUMAN`. Neither stage comments or changes state while skipping parked work.
+For buildable `Todo` work, issues whose latest review report is `FAIL` form the
+rework tier and are selected before fresh issues; priority
+(`Urgent` > `High` > `Medium` > `Low`) and oldest-first ordering apply within each
+tier.
+
 The full procedure for each stage — exactly what to do, in what order, what to check,
 what to write in your report — lives in the canonical skill files. This file gets you
 installed and oriented; **`canonical/wolftac-{spec,build,review,integrate}/SKILL.md`

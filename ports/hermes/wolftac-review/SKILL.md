@@ -38,7 +38,9 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
-- You consume state `In Review`; you produce `Approved` (pass → wolftac-integrate merges after human approval) or `Todo` (fail → rework).
+- You consume state `In Review`; you produce `Approved` (pass → wolftac-integrate
+  merges after human approval), `Todo` (fail → rework), or parked `In Review`
+  assigned to Jonathan (needs product decision).
 - Reports open with `**Agent:** <platform / model>`. Prefer reviewing work built by a
   DIFFERENT agent/model than yourself when possible — the build report's Agent line
   tells you who built it.
@@ -86,6 +88,10 @@ When the full test command fails due unrelated suite collection/tooling failures
    filter (match Linear project name or labels, case-insensitive). Skip — SILENTLY,
    no comment or state change — issues whose spec **Repo:** path is unreachable from
    this environment.
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip an issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+   later Jonathan decision comment. Do not comment or change state. Jonathan's later
+   decision comment plus removal of his assignment clears the park.
    Before choosing an unclaimed review, perform a read-first stale-claim sweep:
    inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
    filter, if any). If the most recent comment, or `startedAt`/claim time when there
@@ -222,7 +228,15 @@ When the full test command fails due unrelated suite collection/tooling failures
    editorial layout, and use focused secret/debug patterns to avoid false positives from
    public-token documentation.
 
-5. **Verdict — three outcomes.**
+   **REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one tag; never
+   stack tags on one finding:
+   - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
+   - `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
+   - `[SECURITY]` — security finding; first-class and greppable.
+   - `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
+     Jonathan can make.
+
+5. **Verdict — four outcomes.**
    - **PASS** — tick the acceptance checkboxes in the description, post the report,
      state `Approved` (wolftac-integrate takes it from here).
    - **PASS WITH FIXES** — only minor defects (low-risk, no design change, ~15 min
@@ -230,26 +244,39 @@ When the full test command fails due unrelated suite collection/tooling failures
      re-verify, list fixes with SHAs, tick checkboxes, state `Approved`.
    - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
      unreproducible verification): do NOT rework it yourself. Post a numbered defect
-     list (what's wrong → repro → expected vs actual), state `Todo`.
+     list; every finding gets exactly one tag plus what's wrong → repro → expected vs
+     actual. Set state `Todo`.
+   - **NEEDS HUMAN** — any `[SCOPE-CONFLICT]` finding or finding requiring a product
+     decision. Post `REVIEW REPORT — NEEDS HUMAN`, name the exact decision in one
+     tagged `[SCOPE-CONFLICT]` line, assign the issue to Jonathan, and keep state
+     `In Review`; do NOT move it. The report must instruct: Jonathan comments his
+     decision, then removes his assignment; the issue re-enters the review queue with
+     his decision as part of the work order.
+
+   **NEEDS HUMAN is FORBIDDEN for ordinary decidable defects — decidable defects
+   require FAIL; only product decisions may park an issue.**
 
    Report format (comment on the issue):
 
    ```
-   **REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL>**
+   **REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL | NEEDS HUMAN>**
    - **Agent:** Hermes / <model>
    - **Criteria:** <n>/<total> verified — one line per criterion: ✓/✗ + evidence
    - **Test plan reproduced:** <commands run, results>
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Reviewed head:** <remote branch> @ <exact verified SHA>
-   - **Defects:** <none, or numbered list>
+   - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [SCOPE-CONFLICT]>
+   - **Human decision:** <none, or [SCOPE-CONFLICT] Decide <the exact product decision needed>>
+   - **Park / un-park:** <not parked, or assign to Jonathan; keep In Review; Jonathan comments his decision, removes his assignment, and the issue re-enters the review queue with that decision as work order>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
 6. **Verify Linear side effects.** After posting the review report and moving the issue,
    read the issue back (and the latest comments when available) to confirm the report exists,
-   acceptance boxes were updated when applicable, and the final state is actually `Approved` or
-   `Todo`. When verifying Markdown checkboxes, accept Linear's normalized uppercase `- [X]`
+   acceptance boxes were updated when applicable, and the final state is actually `Approved`,
+   `Todo`, or parked `In Review` assigned to Jonathan. When verifying Markdown checkboxes,
+   accept Linear's normalized uppercase `- [X]`
    form as checked; GraphQL writes using `- [x]` may read back as `- [X]`. Do not claim
    completion from the write call alone.
 

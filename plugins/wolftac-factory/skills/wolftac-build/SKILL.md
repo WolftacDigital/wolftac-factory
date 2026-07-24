@@ -23,7 +23,13 @@ Implement exactly one queued issue and publish immutable evidence for review.
    sweep newer activity.
 2. List `Todo` + `Factory Queue`, apply the lane, skip blocked dependencies, latest
    `BLOCKED:` comments, and unreachable `Repo:` paths. Skip environment mismatches
-   silently. Choose highest priority, oldest first. Exit cleanly when none qualify.
+   silently. **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review
+   report is `REVIEW REPORT — NEEDS HUMAN`; it is parked awaiting Jonathan. Do not
+   comment or change state. **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues,
+   select issues whose latest review report is `REVIEW REPORT — FAIL` before fresh
+   `Todo` issues. Within the rework tier and within the fresh tier, preserve priority
+   order (Urgent > High > Medium > Low), oldest first on ties. Exit cleanly when none
+   qualify.
 3. Claim by setting `In Progress` and assignee `me`; immediately re-read state and
    assignee. Back off silently on any race. Read the full spec and every comment; the
    newest FAIL report is the rework order.
@@ -33,8 +39,9 @@ Implement exactly one queued issue and publish immutable evidence for review.
 5. Fetch the remote. Create a dedicated issue worktree for the Linear branch from the
    current remote default branch. Never switch a checkout with user changes, never
    overwrite another process's dirty worktree, and never commit to main/master.
-6. Read repository instructions. Implement only the technical approach and acceptance
-   criteria. Put tangential ideas in the report as `suggest $wolftac-spec`.
+6. Read the repo's CLAUDE.md/AGENTS.md first; match its conventions. Implement only
+   the technical approach and acceptance criteria. Put tangential ideas in the report
+   as `suggest $wolftac-spec`.
 7. Run the test plan literally and collect execution evidence for every criterion.
    Fix failures and rerun. Inspection alone is not proof.
 8. Review status and staged files, exclude secrets and generated artifacts, and commit

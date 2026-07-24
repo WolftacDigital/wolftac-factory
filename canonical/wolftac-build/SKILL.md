@@ -35,7 +35,14 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
   during pickup; during a claim-race back off you post NOTHING.
 - Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-build agentic`), only
   consider issues whose Linear project name or labels contain it (case-insensitive).
-- Pick the highest priority (Urgent > High > Medium > Low), oldest first on ties. Skip:
+- **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+  `REVIEW REPORT — NEEDS HUMAN`; it is parked awaiting Jonathan. Do not comment or
+  change state.
+- **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+  review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+  rework tier and within the fresh tier, preserve priority order
+  (Urgent > High > Medium > Low), oldest first on ties.
+- Skip:
   - issues whose most recent comment is a `BLOCKED:` comment (they need a human/respec),
   - issues with unresolved blocking relations (check with `get_issue`),
   - issues whose spec **Repo:** path is unreachable from THIS session's environment
@@ -75,7 +82,7 @@ belongs to another process or human, fail closed without modifying it.
   `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and stop.
   Old-format (unnumbered) specs proceed under the existing rules.
 - If it is not in the Linear issue, it does not exist — no side-channel instructions.
-- Read the repo's CLAUDE.md first; match its conventions.
+- Read the repo's CLAUDE.md/AGENTS.md first; match its conventions.
 - Build exactly what the spec's Technical approach and Acceptance criteria describe.
   **No scope creep**: tangential improvements get noted in your build report as
   "suggest /wolftac-spec", not built.

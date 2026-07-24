@@ -29,8 +29,15 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
    `Factory Queue`. If an argument was given (e.g. `/wolftac-build agentic`), treat it as a
    lane filter: only consider issues whose Linear project name or labels contain it
-   (case-insensitive). Choose highest priority, oldest first on ties. Skip issues whose
-   latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
+   (case-insensitive).
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN`; it is parked awaiting Jonathan. Do not comment or
+   change state.
+   **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+   review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+   rework tier and within the fresh tier, preserve priority order
+   (Urgent > High > Medium > Low), oldest first on ties.
+   Skip issues whose latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
    SILENTLY, no comment or state change — issues whose spec **Repo:** path is
    unreachable from this session's environment (they belong to a differently-homed
    session; `BLOCKED:` is reserved for genuine spec defects).
@@ -67,7 +74,7 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
    comment `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and
    stop. Old-format (unnumbered) specs proceed under the existing rules.
    If it is not in the Linear issue, it does not exist — no side-channel instructions.
-   Read the repo's AGENTS.md / CLAUDE.md first; match conventions. Build exactly what
+   Read the repo's CLAUDE.md/AGENTS.md first; match conventions. Build exactly what
    the spec's Technical approach and Acceptance criteria describe — NO scope creep
    (tangents go in your report as "suggest /wolftac-spec").
    Secrets in .env, never hardcoded. Spec ambiguous in a way that blocks correct

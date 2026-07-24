@@ -30,8 +30,15 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 1. **Pick up work.** `list_issues`: team `Wolftac Digital`, state `Todo`, label
    `Factory Queue`. If the user gave a lane filter (e.g. "build the crm lane"), only
    consider issues whose Linear project name or labels contain it (case-insensitive).
-   Highest priority, oldest on ties. Skip issues whose latest comment starts
-   `BLOCKED:`, issues with unresolved blocking relations, and — SILENTLY, no comment
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN`; it is parked awaiting Jonathan. Do not comment or
+   change state.
+   **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+   review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+   rework tier and within the fresh tier, preserve priority order
+   (Urgent > High > Medium > Low), oldest first on ties.
+   Skip issues whose latest comment starts `BLOCKED:`, issues with unresolved
+   blocking relations, and — SILENTLY, no comment
    or state change — issues whose spec **Repo:** path this chat cannot reach
    (`BLOCKED:` is reserved for genuine spec defects).
    Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
@@ -69,7 +76,7 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    comment `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and
    stop. Old-format (unnumbered) specs proceed under the existing rules.
    If it is not in the Linear issue, it does not exist — no side-channel instructions.
-   Read the repo's CLAUDE.md first; match conventions. Build exactly to the spec's
+   Read the repo's CLAUDE.md/AGENTS.md first; match conventions. Build exactly to the spec's
    Technical approach and Acceptance criteria — NO scope creep (tangents go in the
    report as "suggest /wolftac-spec"). Secrets in .env, never hardcoded. Blocking
    ambiguity → `BLOCKED: <questions>` comment, state `Todo`, stop.

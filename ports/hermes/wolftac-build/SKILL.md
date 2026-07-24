@@ -56,8 +56,15 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    issues, then enrich those candidates before applying a lane filter; do not infer a
    project lane from the issue title. If invoked with an argument (e.g. "build agentic"), treat it as a
    lane filter: only consider issues whose Linear project name or labels contain it
-   (case-insensitive). Highest priority first, oldest on ties. Skip issues whose latest
-   comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
+   (case-insensitive).
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN`; it is parked awaiting Jonathan. Do not comment or
+   change state.
+   **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+   review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+   rework tier and within the fresh tier, preserve priority order
+   (Urgent > High > Medium > Low), oldest first on ties.
+   Skip issues whose latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
    SILENTLY, no comment or state change — issues whose spec **Repo:** path is
    unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
    Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
