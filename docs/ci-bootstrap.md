@@ -55,6 +55,12 @@ protecting `main`.
 
 ## 2. Require only the factory check
 
+Prerequisite: the repository's GitHub plan must support branch protection. For a
+private repository, an HTTP 403 response saying `Upgrade to GitHub Pro or make this
+repository public to enable this feature` means the PUT made no change. Stop there;
+do not claim the check is required and do not make the repository public as a
+workaround without explicit owner approval.
+
 Replace the owner and repository in the endpoint when bootstrapping another repo.
 This is the exact PowerShell command used for
 `WolftacDigital/wolftac-factory`:
