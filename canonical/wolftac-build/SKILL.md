@@ -107,7 +107,7 @@ Publish the branch with `git push -u origin <branch>` and verify the remote head
 equals the local head SHA. If the repository has no writable remote, do not move the
 issue to `In Review`; report the publication blocker without exposing credentials.
 
-**PR-CREATE-CONTRACT:** After the push and remote-SHA verification, create one
+**PR-CREATE-BROKEN:** After the push and remote-SHA verification, create one
 non-draft PR per issue when the repository has a GitHub remote. First run
 `gh pr view <branch>`; if a PR already exists for that branch, reuse its URL
 and never open a second. Otherwise run:
