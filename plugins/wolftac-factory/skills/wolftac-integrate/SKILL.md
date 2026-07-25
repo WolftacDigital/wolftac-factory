@@ -83,7 +83,11 @@ default branch — nothing less.
    Slack identity. Missing, invalid, or expired bot token → skip every Slack
    post and DISCLOSE in the pack; the case-insensitive typed-comment gate
    (`APPROVE MERGE` or `APPROVED MERGE`) covers the outage. Then post the proof
-   pack and stop, keeping `Approved`:
+   pack and stop, keeping `Approved`. Before writing the merge command, apply the
+   **PR-MERGE-TRANSITION-RULE:** query for an existing PR whose head is the reviewed
+   branch. If one exists, record `gh pr merge <n> --merge`; if none exists, record
+   the existing direct fast-forward push for this pre-PR-era in-flight issue. The
+   human approval gate is unchanged:
 
    ```text
    **MERGE PROOF PACK**
@@ -113,10 +117,16 @@ default branch — nothing less.
    approval: post a fresh proof pack and stop. **Never trust a SHA from a prior session** — rebuild:
    fresh detached integrate worktree at current default, re-verify the reviewed
    branch SHA, re-run the rebase and gates on the head you just built (failure →
-   numbered defect report, `Todo`, push nothing). Merge the head you just built
-   (fast-forward push or repo PR convention); never force-push, delete branches,
-   or deploy. Verify `git merge-base --is-ancestor <branch-head>
-   origin/<default>` succeeds, post the INTEGRATION REPORT, set `Done`, and read
+   numbered defect report, `Todo`, push nothing).
+   **PR-MERGE-TRANSITION-RULE:** Query the reviewed branch for a PR again. If it
+   exists, merge with `gh pr merge <n> --merge`; if none exists, treat it as a
+   pre-PR-era in-flight issue and use the existing direct fast-forward push of the
+   verified rebuilt head. Never auto-merge — Jonathan's valid `:rocket:` or typed
+   approval remains the ONLY merge trigger. Never force-push, delete branches, or
+   deploy. Fetch and verify
+   `git merge-base --is-ancestor <reviewed-SHA> origin/<default>` and
+   `git merge-base --is-ancestor <branch-head> origin/<default>` both succeed, post
+   the INTEGRATION REPORT, set `Done`, and read
    back the state and report. Close the Slack loop with `chat.postMessage`:
    thread-reply the report summary prefixed 🚀 on the approval message using
    `SLACK_FACTORY_BOT_TOKEN` and the same policy-selected sender identity (a

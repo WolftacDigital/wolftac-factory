@@ -1,0 +1,37 @@
+name: Factory Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  factory-checks:
+    name: factory-checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check cross-port parity
+        run: ./deploy/parity-check.ps1
+
+      - name: Check workflow semantics
+        run: ./deploy/semantic-check.ps1
+
+      - name: Reject CR bytes in tracked source documents
+        run: |
+          $extensions = @(".md", ".json", ".ps1", ".yml")
+          $tracked = @(git ls-files | Where-Object {
+            $extensions -contains [IO.Path]::GetExtension($_).ToLowerInvariant()
+          })
+          $withCr = @($tracked | Where-Object {
+            ([IO.File]::ReadAllBytes($_) -contains 13)
+          })
+          if ($withCr.Count -gt 0) {
+            $withCr | ForEach-Object { Write-Output "CR BYTE: $_" }
+            throw "LF check failed: tracked source documents contain CR bytes"
+          }
+          Write-Output "LF OK: $($tracked.Count) tracked source documents contain no CR bytes"

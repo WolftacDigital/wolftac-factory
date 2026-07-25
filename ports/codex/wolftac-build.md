@@ -91,6 +91,18 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
    writable remote exists, do not advance the issue to `In Review`; report the
    publication blocker without exposing credentials.
 
+   **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
+   non-draft PR per issue for a GitHub remote. First run
+   `gh pr view --head <branch>` and reuse its URL if present; never create a second
+   PR for the branch. Otherwise run
+   `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
+   blank line, `Closes WD-NNN`, another blank line, and
+   `Linear: <issue URL>" --base main --head <branch>`. Retry a `gh` rate-limit or
+   transient failure once; after a second failure, record the PR-creation blocker
+   without failing a build whose branch published successfully. With no GitHub
+   remote, skip PR steps and record `local-only repo — no PR`; execution verification
+   is unchanged.
+
 8. **Hand off.** Comment on the issue:
 
    ```
@@ -99,7 +111,8 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
    - **Implemented:** <what was built, per spec section>
    - **Verified:** <exact commands run and results, per acceptance criterion>
    - **Branch / commits:** <branch> @ <SHAs>
-   - **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
+   - **Published head:** <remote branch> @ <exact remote SHA>
+   - **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
    - **Deviations from spec:** <none, or what and why>
    - **Notes for review:** <what the reviewer should look at first>
    ```

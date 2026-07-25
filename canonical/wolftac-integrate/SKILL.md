@@ -153,6 +153,12 @@ never fail-open).
 
 Then comment on the issue:
 
+Before writing the merge command, apply the **PR-MERGE-TRANSITION-RULE:** query for
+an existing PR whose head is the reviewed branch. If one exists, record
+`gh pr merge <n> --merge`; if none exists, this is a pre-PR-era in-flight issue and
+record the existing direct fast-forward push command. The choice does not weaken or
+bypass the human approval gate.
+
 ```
 **MERGE PROOF PACK**
 - **Agent:** Claude Code / <model>
@@ -199,11 +205,17 @@ comment). Keep state `Approved`. Stop.
   rebase, and re-run the gates on the head you just built. If the rebase or gates
   now fail, take the failure path (numbered defect report, state `Todo`, push
   NOTHING).
-- Merge the head you just built and verified: fast-forward push, or the repo's
-  PR-merge convention. Never force-push; never delete branches; never deploy.
-- Verify ancestry: `git merge-base --is-ancestor <branch-head> origin/<default>`
-  must succeed. If it does not, something is wrong — do not set Done; report what
-  you observed and stop.
+- **PR-MERGE-TRANSITION-RULE:** Query the reviewed branch for a PR again. If a PR
+  exists, merge it with `gh pr merge <n> --merge` so GitHub creates the repository's
+  merge commit. If no PR exists, treat it as a pre-PR-era in-flight issue and use the
+  existing direct fast-forward push of the head you just rebuilt and verified. Never
+  auto-merge: Jonathan's valid `:rocket:` or typed approval remains the ONLY merge
+  trigger. Never force-push; never delete branches; never deploy.
+- Fetch the remote and verify ancestry: both
+  `git merge-base --is-ancestor <reviewed-SHA> origin/<default>` and
+  `git merge-base --is-ancestor <branch-head> origin/<default>` must succeed. If
+  either does not, something is wrong — do not set Done; report what you observed
+  and stop.
 - Post the INTEGRATION REPORT, then update the issue to state `Done` through the
   bot-authenticated GraphQL connection. Read the issue back through that connection
   and confirm the report exists and the state is actually Done.

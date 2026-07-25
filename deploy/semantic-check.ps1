@@ -22,11 +22,11 @@ function Require-Pattern([string]$RelativePath, [string]$Pattern, [string]$Messa
 }
 
 $specFiles = @(
-    "canonical\wolftac-spec\spec-template.md",
-    "ports\codex\wolftac-spec.md",
-    "ports\claude-desktop\wolftac-spec\SKILL.md",
-    "ports\hermes\wolftac-spec\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-spec\references\spec-template.md"
+    "canonical/wolftac-spec/spec-template.md",
+    "ports/codex/wolftac-spec.md",
+    "ports/claude-desktop/wolftac-spec/SKILL.md",
+    "ports/hermes/wolftac-spec/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md"
 )
 foreach ($file in $specFiles) {
     $content = Read-RepoFile $file
@@ -37,11 +37,11 @@ foreach ($file in $specFiles) {
 }
 
 $buildFiles = @(
-    "canonical\wolftac-build\SKILL.md",
-    "ports\codex\wolftac-build.md",
-    "ports\claude-desktop\wolftac-build\SKILL.md",
-    "ports\hermes\wolftac-build\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-build\SKILL.md"
+    "canonical/wolftac-build/SKILL.md",
+    "ports/codex/wolftac-build.md",
+    "ports/claude-desktop/wolftac-build/SKILL.md",
+    "ports/hermes/wolftac-build/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-build/SKILL.md"
 )
 foreach ($file in $buildFiles) {
     Require-Pattern $file "dedicated (issue )?worktree" "does not require an isolated build worktree"
@@ -50,11 +50,11 @@ foreach ($file in $buildFiles) {
 }
 
 $reviewFiles = @(
-    "canonical\wolftac-review\SKILL.md",
-    "ports\codex\wolftac-review.md",
-    "ports\claude-desktop\wolftac-review\SKILL.md",
-    "ports\hermes\wolftac-review\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-review\SKILL.md"
+    "canonical/wolftac-review/SKILL.md",
+    "ports/codex/wolftac-review.md",
+    "ports/claude-desktop/wolftac-review/SKILL.md",
+    "ports/hermes/wolftac-review/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-review/SKILL.md"
 )
 foreach ($file in $reviewFiles) {
     $content = Read-RepoFile $file
@@ -75,9 +75,9 @@ foreach ($file in $reviewFiles) {
 }
 
 $integrateFiles = @(
-    "canonical\wolftac-integrate\SKILL.md",
-    "ports\hermes\wolftac-integrate\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-integrate\SKILL.md"
+    "canonical/wolftac-integrate/SKILL.md",
+    "ports/hermes/wolftac-integrate/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md"
 )
 foreach ($file in $integrateFiles) {
     $content = Read-RepoFile $file
@@ -100,7 +100,7 @@ foreach ($file in $integrateFiles) {
     }
 }
 
-$pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
+$pluginManifest = "plugins/wolftac-factory/.codex-plugin/plugin.json"
 try {
     $manifest = Read-RepoFile $pluginManifest | ConvertFrom-Json
     if ($manifest.name -ne "wolftac-factory" -or $manifest.skills -ne "./skills/") {
@@ -125,7 +125,7 @@ foreach ($skill in $skillFiles) {
     }
 }
 
-$scanRoots = @("canonical", "ports", "plugins", "README.md", "AGENTS.md", "deploy\hermes-moa-presets.yaml.example")
+$scanRoots = @("canonical", "ports", "plugins", "README.md", "AGENTS.md", "deploy/hermes-moa-presets.yaml.example")
 $staleModelPattern = "gpt-5" + [regex]::Escape(".5")
 foreach ($root in $scanRoots) {
     $path = Join-Path $RepoRoot $root

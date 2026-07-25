@@ -205,13 +205,13 @@
   },
   {
     "id": "review-finding-taxonomy",
-    "description": "Every review surface documents the four-tag, exactly-one-tag finding taxonomy.",
+    "description": "Every review surface documents the five-tag, exactly-one-tag finding taxonomy.",
     "checks": [
-      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
-      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
-      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
-      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" }
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" }
     ]
   },
   {
@@ -239,6 +239,37 @@
       { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
       { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
       { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" }
+    ]
+  },
+  {
+    "id": "build-pr-create-contract",
+    "description": "Every build surface creates or reuses one non-draft PR after branch publication and records it separately.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" }
+    ]
+  },
+  {
+    "id": "review-required-ci-gate",
+    "description": "Every review surface requires green configured checks, waits without verdict on pending/outage, and tags failed jobs CI.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" }
+    ]
+  },
+  {
+    "id": "integrate-pr-merge-transition",
+    "description": "Every integrate surface uses a merge-commit PR path when a PR exists and retains direct fast-forward only for pre-PR work.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" }
     ]
   }
 ]

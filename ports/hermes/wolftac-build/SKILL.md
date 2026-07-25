@@ -178,6 +178,18 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    `git push -u origin <branch>` and verify the remote head equals local `HEAD`. If no
    writable remote exists, do not advance the issue to `In Review`.
 
+   **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
+   non-draft PR per issue for a GitHub remote. Run `gh pr view --head <branch>` first
+   and reuse the existing PR URL when present; never open a second PR for the branch.
+   Otherwise run
+   `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
+   blank line, `Closes WD-NNN`, another blank line, and
+   `Linear: <issue URL>" --base main --head <branch>`. Retry a `gh` rate-limit or
+   transient failure once; if it fails again, record the PR-creation blocker without
+   failing a build whose branch published successfully. With no GitHub remote, skip
+   PR steps and record `local-only repo — no PR`; execution verification is
+   unchanged.
+
 8. **Hand off.** Comment:
 
    ```
@@ -186,7 +198,8 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    - **Implemented:** <what was built, per spec section>
    - **Verified:** <exact commands run and results, per criterion>
    - **Branch / commits:** <branch> @ <SHAs>
-   - **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
+   - **Published head:** <remote branch> @ <exact remote SHA>
+   - **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
    - **Deviations from spec:** <none, or what and why>
    - **Notes for review:** <what the reviewer should check first>
    ```

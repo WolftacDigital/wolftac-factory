@@ -122,6 +122,18 @@ When the full test command fails due unrelated suite collection/tooling failures
    no debug leftovers, input validation on new endpoints/forms, error paths don't
    crash, no unrelated files in the diff.
 
+   **CI-REQUIRED-CHECK-GATE:** Before any PASS verdict, determine whether the repo has
+   a GitHub remote and required checks. No GitHub remote → record `local-only repo`
+   and continue the execution-verified flow. No required checks configured → record
+   `no required checks — execution-verified only` and proceed as today. When required
+   checks exist, resolve the PR for the published branch and run
+   `gh pr checks <n> --required`; all required checks must be green before PASS or
+   PASS WITH FIXES. PENDING/queued → post a short `waiting on CI` note and END
+   WITHOUT A VERDICT, leaving `In Review`. A GitHub/CI outage or indeterminate queue
+   result is also waiting and must never become a false FAIL. A FAILED required check
+   produces one `[CI]` finding naming the failing job and verdict FAIL. After any
+   review fix changes the head, rerun the gate and wait for the new checks.
+
    **Fail-open config check:** when an acceptance criterion says a safety/compliance artifact
    must always be present (unsubscribe links, auth checks, audit writes, tenant scoping,
    suppression gates), inspect the config-missing path as well as the happy path. Optional
@@ -233,6 +245,7 @@ When the full test command fails due unrelated suite collection/tooling failures
    - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
    - `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
    - `[SECURITY]` — security finding; first-class and greppable.
+   - `[CI]` — a required GitHub check failed; name the failing job.
    - `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
      Jonathan can make.
 
@@ -263,10 +276,11 @@ When the full test command fails due unrelated suite collection/tooling failures
    - **Agent:** Hermes / <model>
    - **Criteria:** <n>/<total> verified — one line per criterion: ✓/✗ + evidence
    - **Test plan reproduced:** <commands run, results>
+   - **CI:** <all required checks green; no required checks — execution-verified only; local-only repo; or waiting/failure detail>
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Reviewed head:** <remote branch> @ <exact verified SHA>
-   - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [SCOPE-CONFLICT]>
+   - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [CI], [SCOPE-CONFLICT]>
    - **Human decision:** <none, or [SCOPE-CONFLICT] Decide <the exact product decision needed>>
    - **Park / un-park:** <not parked, or assign to Jonathan; keep In Review; Jonathan comments his decision, removes his assignment, and the issue re-enters the review queue with that decision as work order>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
