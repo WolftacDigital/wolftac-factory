@@ -93,7 +93,7 @@ from the Linear queue, implement it exactly to spec, prove it works, hand it to 
 
    **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
    non-draft PR per issue for a GitHub remote. First run
-   `gh pr view --head <branch>` and reuse its URL if present; never create a second
+   `gh pr view <branch>` and reuse its URL if present; never create a second
    PR for the branch. Otherwise run
    `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
    blank line, `Closes WD-NNN`, another blank line, and

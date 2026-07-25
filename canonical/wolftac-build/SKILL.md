@@ -109,7 +109,7 @@ issue to `In Review`; report the publication blocker without exposing credential
 
 **PR-CREATE-CONTRACT:** After the push and remote-SHA verification, create one
 non-draft PR per issue when the repository has a GitHub remote. First run
-`gh pr view --head <branch>`; if a PR already exists for that branch, reuse its URL
+`gh pr view <branch>`; if a PR already exists for that branch, reuse its URL
 and never open a second. Otherwise run:
 
 ```text

@@ -179,7 +179,7 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    writable remote exists, do not advance the issue to `In Review`.
 
    **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
-   non-draft PR per issue for a GitHub remote. Run `gh pr view --head <branch>` first
+   non-draft PR per issue for a GitHub remote. Run `gh pr view <branch>` first
    and reuse the existing PR URL when present; never open a second PR for the branch.
    Otherwise run
    `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a

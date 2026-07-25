@@ -91,7 +91,7 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    writable remote exists, do not advance the issue to `In Review`.
 
    **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
-   non-draft PR per issue for a GitHub remote. Run `gh pr view --head <branch>` first
+   non-draft PR per issue for a GitHub remote. Run `gh pr view <branch>` first
    and reuse an existing PR URL; never open a second PR for the branch. Otherwise run
    `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
    blank line, `Closes WD-NNN`, another blank line, and

@@ -50,7 +50,7 @@ Implement exactly one queued issue and publish immutable evidence for review.
    advance to `In Review`; report the blocker without exposing credentials.
 9. **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
    non-draft PR per issue for a GitHub remote. First run
-   `gh pr view --head <branch>` and reuse an existing PR URL; never open a second PR
+   `gh pr view <branch>` and reuse an existing PR URL; never open a second PR
    for the branch. Otherwise run
    `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
    blank line, `Closes WD-NNN`, another blank line, and
