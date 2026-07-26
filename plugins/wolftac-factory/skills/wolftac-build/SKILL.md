@@ -52,7 +52,17 @@ Implement exactly one queued issue and publish immutable evidence for review.
    descriptively. Push with `git push -u origin <branch>` and verify the remote head
    SHA equals local `HEAD`. If publication fails or no writable remote exists, do not
    advance to `In Review`; report the blocker without exposing credentials.
-9. Post:
+9. **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
+   non-draft PR per issue for a GitHub remote. First run
+   `gh pr view <branch>` and reuse an existing PR URL; never open a second PR
+   for the branch. Otherwise run
+   `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
+   blank line, `Closes WD-NNN`, another blank line, and
+   `Linear: <issue URL>" --base main --head <branch>`. Retry a `gh` rate-limit or
+   transient failure once; after a second failure, record the PR-creation blocker
+   without failing a successfully published branch. With no GitHub remote, skip PR
+   steps and record `local-only repo — no PR`; execution verification is unchanged.
+10. Post:
 
    ```text
    **BUILD REPORT**
@@ -60,12 +70,13 @@ Implement exactly one queued issue and publish immutable evidence for review.
    - **Implemented:** <spec-scoped summary>
    - **Verified:** <commands and results mapped to criteria>
    - **Branch / commits:** <branch> @ <SHAs>
-   - **Published head:** <remote branch> @ <exact SHA; PR URL when available>
+   - **Published head:** <remote branch> @ <exact SHA>
+   - **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
    - **Deviations from spec:** <none or explained>
    - **Notes for review:** <highest-risk areas first>
    ```
 
-10. Set `In Review`, verify the persisted state/comment, clean up the worktree when
+11. Set `In Review`, verify the persisted state/comment, clean up the worktree when
     safe, and stop.
 
 ## Guardrails

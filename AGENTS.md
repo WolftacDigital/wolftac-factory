@@ -53,6 +53,10 @@ session can review what Codex built.
   working directory for that issue, and build/review refuse to guess at it.
 - **Issue is the instruction boundary:** If it is not in the Linear issue, it does
   not exist — no side-channel instructions.
+- **One PR per published issue branch:** after build pushes and verifies the remote
+  SHA, it creates one non-draft GitHub PR and records the URL in the BUILD REPORT.
+  Reuse an existing PR for the branch; never create a duplicate. A local-only repo
+  records `local-only repo — no PR` and keeps the execution-verified flow.
 - **Linear identities are split:** factory workers connect to Linear through the
   dedicated factory bot identity; humans comment and approve from their own
   accounts. The integrate stage refuses any typed approval comment
@@ -84,11 +88,12 @@ Review has exactly four outcomes:
 |---|---|---|
 | `PASS` | Every criterion and baseline check passes. | Set `Approved`. |
 | `PASS WITH FIXES` | The reviewer applies and verifies only minor, low-risk fixes. | Set `Approved`. |
-| `FAIL` | One or more ordinary decidable defects, security findings, or unmet criteria require rework. | Post the tagged defect list and set `Todo`. |
+| `FAIL` | One or more ordinary decidable defects, failed CI checks, security findings, or unmet criteria require rework. | Post the tagged defect list and set `Todo`. |
 | `NEEDS HUMAN` | A `[SCOPE-CONFLICT]` or other product decision requires Jonathan's verdict. | Assign Jonathan and keep `In Review`; do not move state. |
 
-Every review finding carries exactly one tag: `[AC-N]`, `[DEFECT]`, `[SECURITY]`, or
-`[SCOPE-CONFLICT]`. `NEEDS HUMAN` is forbidden for ordinary decidable defects:
+Every review finding carries exactly one tag: `[AC-N]`, `[DEFECT]`, `[SECURITY]`,
+`[CI]`, or `[SCOPE-CONFLICT]`. `[CI]` means a GitHub check failed and the
+finding names the failing job. `NEEDS HUMAN` is forbidden for ordinary decidable defects:
 decidable defects are `FAIL`; only product decisions park an issue. A parked report
 must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and instruct
 Jonathan to comment his decision, then remove his assignment. Once unassigned, the
@@ -111,6 +116,13 @@ For buildable `Todo` work, issues whose latest review report is `FAIL` form the
 rework tier and are selected before fresh issues; priority
 (`Urgent` > `High` > `Medium` > `Low`) and oldest-first ordering apply within each
 tier.
+
+Before any PASS verdict, review enumerates every check on the published branch's PR
+with `gh pr checks <n>`: any red check, required or advisory, is a `[CI]` FAIL; any
+pending/queued/outage result gets `waiting on CI` and no verdict; only a PR with no
+checks records `no CI checks present — execution-verified only`. Required-ness affects
+only GitHub's server-side merge enforcement, never the Factory verdict; with no GitHub
+remote or no PR, review records `local-only repo` and keeps the execution-verified flow.
 
 The full procedure for each stage — exactly what to do, in what order, what to check,
 what to write in your report — lives in the canonical skill files. This file gets you
@@ -228,6 +240,11 @@ than pretending the model team ran.
   approval artifact.** Build ends at `In Review`; review's passing verdict is
   `Approved`. If you think something is finished, hand it forward — never mark it
   Done yourself from build or review.
+- **Integrate uses the issue PR when one exists.** After the unchanged human approval
+  gate and rebuilt-head gates, run `gh pr merge <n> --merge` for the branch's PR.
+  Never auto-merge. If no PR exists for a pre-PR-era in-flight issue, use the existing
+  direct fast-forward path. After either path, verify the reviewed SHA is an ancestor
+  of the remote default branch before setting `Done`.
 - **If a spec is genuinely wrong or ambiguous**, don't guess on load-bearing
   decisions — post `BLOCKED: <specific question>` and return the issue to `Todo`.
 

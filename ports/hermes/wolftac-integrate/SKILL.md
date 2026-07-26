@@ -129,6 +129,11 @@ the WSL VM recycles between commands).
    `APPROVED MERGE`) covers the outage. Then comment on the issue (as the bot);
    a Telegram notification may additionally fire (notify-only — never write the
    approval for him, never add reactions). Keep state `Approved`. Stop.
+   Before writing the merge command, apply the **PR-MERGE-TRANSITION-RULE:** query
+   for an existing PR whose head is the reviewed branch. If one exists, record
+   `gh pr merge <n> --merge`; if none exists, this is a pre-PR-era in-flight issue
+   and record the existing direct fast-forward push. The human approval gate is
+   unchanged.
 
    ```text
    **MERGE PROOF PACK**
@@ -162,10 +167,15 @@ the WSL VM recycles between commands).
    that worker's local object store. Rebuild it: fresh detached integrate worktree at
    the current remote default, re-verify the reviewed branch SHA, re-run the rebase,
    re-run the gates on the head you just built (failure → numbered defect report,
-   state `Todo`, push NOTHING). Merge the head you just built and verified
-   (fast-forward push or the repo's PR-merge convention). Never force-push, never
-   delete branches, never deploy. Verify
-   `git merge-base --is-ancestor <branch-head> origin/<default>` succeeds — if not,
+   state `Todo`, push NOTHING).
+   **PR-MERGE-TRANSITION-RULE:** Query the reviewed branch for a PR again. If it
+   exists, merge with `gh pr merge <n> --merge`; if none exists, treat it as a
+   pre-PR-era in-flight issue and use the existing direct fast-forward push of the
+   verified rebuilt head. Never auto-merge — Jonathan's valid `:rocket:` or typed
+   approval remains the ONLY merge trigger. Never force-push, delete branches, or
+   deploy. Fetch and verify both
+   `git merge-base --is-ancestor <reviewed-SHA> origin/<default>` and
+   `git merge-base --is-ancestor <branch-head> origin/<default>` succeed — if not,
    do not set Done; report what you observed. Post the INTEGRATION REPORT, set state
    `Done`, then read the issue back and confirm the report exists and the state is
    actually Done. Close the Slack loop with `chat.postMessage`: reply in the

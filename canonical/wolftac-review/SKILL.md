@@ -67,6 +67,25 @@ Never switch the active user checkout. Read `git log` and
 remote branch or SHA mismatch is a FAIL because the reviewed artifact is not immutable.
 
 ### 4. Verify by execution, not inspection
+**CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repository has
+a GitHub remote and resolve the PR for the published branch. With no GitHub remote or
+no PR, record a `local-only repo` line and continue the existing execution-verified
+flow. For a PR, enumerate all checks with `gh pr checks <n>`; check presence, not
+required-ness, controls the Factory verdict. `--required` must NOT be used to decide
+the verdict.
+
+- Any FAILED check → add one `[CI]` finding naming the failing job and use verdict
+  FAIL. An advisory/non-required red check blocks PASS exactly as a required one does.
+- Any PENDING, queued, or in-progress check → post a short `waiting on CI` note and
+  END WITHOUT A VERDICT, leaving the issue in `In Review`.
+- GitHub/CI outage or an indeterminate queue result → treat it as waiting, post the
+  short note, and end without a verdict. A CI outage or queue must never become a
+  false FAIL.
+- Only when the PR has NO checks at all → record
+  `no CI checks present — execution-verified only` and proceed exactly as before.
+- When all present checks are green → continue the execution review. A green required
+  check is never approval — the human merge gate is unchanged.
+
 - Re-run the spec's **Test plan** yourself, from scratch. Do not trust the build
   report's claimed results — reproduce them.
 - Walk EVERY acceptance criterion: pass/fail with observed evidence.
@@ -79,6 +98,7 @@ never stack tags on one finding:
 - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
 - `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
 - `[SECURITY]` — security finding; first-class and greppable.
+- `[CI]` — a GitHub check failed; name the failing job.
 - `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
   Jonathan can make.
 
@@ -92,7 +112,8 @@ never stack tags on one finding:
 **PASS WITH FIXES** — only minor defects (each low-risk, no design change, all fixable
 in ~15 minutes total: typos, small logic slips, missing edge-case guard):
 1. Fix them yourself on the same branch in the isolated worktree, commit, push, verify
-   the remote head, and re-run verification.
+   the remote head, re-run verification, and re-run the CI check-presence gate for the
+   new head; do not PASS while its checks are pending.
 2. Post the review report listing your fixes with commit SHAs.
 3. Tick the checkboxes; `save_issue`: state `Approved`.
 
@@ -123,10 +144,11 @@ Review report format (comment on the issue):
 - **Agent:** Claude Code / <model>
 - **Criteria:** <n>/<total> verified — <one line per criterion: ✓/✗ + evidence>
 - **Test plan reproduced:** <commands run, results>
+- **CI:** <all checks green; no CI checks present — execution-verified only; local-only repo; or waiting/failure detail>
 - **Baseline checks:** <secrets/debug/validation/error-paths — clean or findings>
 - **Fixes applied:** <none, or list with SHAs>
 - **Reviewed head:** <remote branch> @ <exact verified SHA>
-- **Defects:** <none, or numbered list; every finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [SCOPE-CONFLICT], then repro + expected vs actual>
+- **Defects:** <none, or numbered list; every finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [CI], [SCOPE-CONFLICT], then repro + expected vs actual>
 - **Human decision:** <none, or exactly one tagged line: [SCOPE-CONFLICT] Decide <the exact product decision needed>>
 - **Park / un-park:** <not parked, or "Assign to Jonathan; keep In Review. Jonathan comments his decision, then removes his assignment; the issue re-enters the review queue with that decision as part of the work order.">
 - **Suggestions (out of scope):** <ideas for a future /wolftac-spec, if any>

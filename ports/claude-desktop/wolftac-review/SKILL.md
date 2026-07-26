@@ -68,11 +68,27 @@ Codex, or Hermes, and STOP. Never mark an issue Approved based on reading report
    no debug leftovers, input validation on new endpoints/forms, error paths don't
    crash, no unrelated files in the diff.
 
+   **CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repo has a
+   GitHub remote and resolve the PR for the published branch. No GitHub remote or no
+   PR → record `local-only repo` and continue the execution-verified flow. For a PR,
+   enumerate all checks with `gh pr checks <n>`; check presence, not required-ness,
+   controls the Factory verdict. `--required` must NOT be used to decide the verdict.
+   Any FAILED check produces one `[CI]` finding naming the failing job and verdict
+   FAIL; an advisory/non-required red check blocks PASS exactly as a required one
+   does. Any PENDING, queued, or in-progress check → post `waiting on CI` and END
+   WITHOUT A VERDICT, leaving `In Review`. A GitHub/CI outage or indeterminate queue
+   is also waiting and must never become a false FAIL. Only when the PR has NO checks
+   at all → record `no CI checks present — execution-verified only` and proceed as
+   today. When all present checks are green, continue the execution review. A green
+   required check is never approval — the human merge gate is unchanged. Rerun this
+   gate after any review fix changes the branch head.
+
    **REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one tag; never
    stack tags on one finding:
    - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
    - `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
    - `[SECURITY]` — security finding; first-class and greppable.
+   - `[CI]` — a GitHub check failed; name the failing job.
    - `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
      Jonathan can make.
 
@@ -103,10 +119,11 @@ Codex, or Hermes, and STOP. Never mark an issue Approved based on reading report
    - **Agent:** Claude Desktop / <model>
    - **Criteria:** <n>/<total> verified — one line per criterion: ✓/✗ + evidence
    - **Test plan reproduced:** <commands run, results>
+   - **CI:** <all checks green; no CI checks present — execution-verified only; local-only repo; or waiting/failure detail>
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Reviewed head:** <remote branch> @ <exact verified SHA>
-   - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [SCOPE-CONFLICT]>
+   - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [CI], [SCOPE-CONFLICT]>
    - **Human decision:** <none, or [SCOPE-CONFLICT] Decide <the exact product decision needed>>
    - **Park / un-park:** <not parked, or assign to Jonathan; keep In Review; Jonathan comments his decision, removes his assignment, and the issue re-enters the review queue with that decision as work order>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>

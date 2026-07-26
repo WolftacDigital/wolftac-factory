@@ -111,6 +111,25 @@ Publish the branch with `git push -u origin <branch>` and verify the remote head
 equals the local head SHA. If the repository has no writable remote, do not move the
 issue to `In Review`; report the publication blocker without exposing credentials.
 
+**PR-CREATE-CONTRACT:** After the push and remote-SHA verification, create one
+non-draft PR per issue when the repository has a GitHub remote. First run
+`gh pr view <branch>`; if a PR already exists for that branch, reuse its URL
+and never open a second. Otherwise run:
+
+```text
+gh pr create --title "WD-NNN: <issue title>" --body "<summary>
+
+Closes WD-NNN
+
+Linear: <issue URL>" --base main --head <branch>
+```
+
+If `gh` reports a rate-limit or transient failure, retry once. If the retry fails,
+record the PR-creation blocker in the BUILD REPORT but do not fail a build whose
+branch published successfully. For a local-only repository with no GitHub remote,
+skip PR commands and record `local-only repo — no PR`; execution verification and
+the rest of the handoff are unchanged.
+
 ### 8. Hand off
 Post a comment on the issue:
 
@@ -120,7 +139,8 @@ Post a comment on the issue:
 - **Implemented:** <what was built, per spec section>
 - **Verified:** <exact commands run and their results, per acceptance criterion>
 - **Branch / commits:** <branch> @ <SHAs>
-- **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
+- **Published head:** <remote branch> @ <exact remote SHA>
+- **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
 - **Deviations from spec:** <none, or what and why>
 - **Notes for review:** <anything the reviewer should look at first>
 ```
