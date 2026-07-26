@@ -96,8 +96,17 @@ issue re-enters the review queue with his decision comment as part of the work o
 
 Review pickup silently skips an issue whose latest review report is `NEEDS HUMAN`
 while it remains assigned to Jonathan or lacks his later decision comment. Build
-pickup also silently skips any `Todo` issue whose latest review report is
-`NEEDS HUMAN`. Neither stage comments or changes state while skipping parked work.
+pickup applies the identical test to `Todo` issues. Neither stage comments or changes
+state while skipping parked work.
+
+**Clearing a park is a two-part action, and both parts are required:** Jonathan
+comments his decision *from his own Linear account*, and his assignment is removed.
+Only then does the issue become pickable again, with that comment as part of the work
+order. A decision relayed on Jonathan's behalf by an agent does **not** clear the park
+— the comment author must be Jonathan himself, for the same identity reason integrate
+refuses a bot-authored approval. Relaying a chat decision into Linear as an agent
+records the intent but leaves the issue parked; say so plainly rather than implying
+the issue is unblocked.
 For buildable `Todo` work, issues whose latest review report is `FAIL` form the
 rework tier and are selected before fresh issues; priority
 (`Urgent` > `High` > `Medium` > `Low`) and oldest-first ordering apply within each
