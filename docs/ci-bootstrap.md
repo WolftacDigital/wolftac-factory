@@ -53,6 +53,10 @@ do not compare user-profile deployment targets, so no deployed-file path is skip
 Open a pull request and wait for the stable `factory-checks` job to pass before
 protecting `main`.
 
+Factory review is presence-based: it enumerates every PR check and blocks PASS on any
+red check even in repositories that never enable protection. Branch protection adds
+server-side enforcement against human merges; it does not make CI meaningful to review.
+
 ## 2. Require only the factory check
 
 Prerequisite: the repository's GitHub plan must support branch protection. For a

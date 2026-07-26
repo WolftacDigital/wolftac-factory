@@ -254,13 +254,24 @@
   },
   {
     "id": "review-required-ci-gate",
-    "description": "Every review surface requires green configured checks, waits without verdict on pending/outage, and tags failed jobs CI.",
+    "description": "Every review surface enumerates present PR checks, waits without verdict on pending/outage, and tags failed jobs CI.",
     "checks": [
-      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
-      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
-      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
-      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-REQUIRED-CHECK-GATE)(?=[\\s\\S]*gh pr checks <n> --required)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" }
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" }
+    ]
+  },
+  {
+    "id": "review-ci-red-blocks-pass",
+    "description": "Every review surface states that all present checks govern the verdict and advisory red checks block PASS.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one does)(?=[\\s\\S]*--required` must NOT be used to decide\\s+the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS[\\s\\S]{0,20}exactly as a required one does)(?=[\\s\\S]*--required` must NOT be used to\\s+decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one\\s+does)(?=[\\s\\S]*--required` must NOT be used to decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one\\s+does)(?=[\\s\\S]*--required` must NOT be used to decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one does)(?=[\\s\\S]*--required` must NOT be used to decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" }
     ]
   },
   {

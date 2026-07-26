@@ -88,11 +88,11 @@ Review has exactly four outcomes:
 |---|---|---|
 | `PASS` | Every criterion and baseline check passes. | Set `Approved`. |
 | `PASS WITH FIXES` | The reviewer applies and verifies only minor, low-risk fixes. | Set `Approved`. |
-| `FAIL` | One or more ordinary decidable defects, failed required CI checks, security findings, or unmet criteria require rework. | Post the tagged defect list and set `Todo`. |
+| `FAIL` | One or more ordinary decidable defects, failed CI checks, security findings, or unmet criteria require rework. | Post the tagged defect list and set `Todo`. |
 | `NEEDS HUMAN` | A `[SCOPE-CONFLICT]` or other product decision requires Jonathan's verdict. | Assign Jonathan and keep `In Review`; do not move state. |
 
 Every review finding carries exactly one tag: `[AC-N]`, `[DEFECT]`, `[SECURITY]`,
-`[CI]`, or `[SCOPE-CONFLICT]`. `[CI]` means a required GitHub check failed and the
+`[CI]`, or `[SCOPE-CONFLICT]`. `[CI]` means a GitHub check failed and the
 finding names the failing job. `NEEDS HUMAN` is forbidden for ordinary decidable defects:
 decidable defects are `FAIL`; only product decisions park an issue. A parked report
 must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and instruct
@@ -108,13 +108,12 @@ rework tier and are selected before fresh issues; priority
 (`Urgent` > `High` > `Medium` > `Low`) and oldest-first ordering apply within each
 tier.
 
-Before any PASS verdict, review checks the published branch's PR when the repository
-has required GitHub checks: `gh pr checks <n> --required` must be all green. Pending
-or queued checks produce a short `waiting on CI` note and end without a verdict while
-the issue stays `In Review`; a CI outage/queue never becomes a false FAIL. A failed
-required job is a `[CI]` FAIL. With no required checks, review records
-`no required checks — execution-verified only` and proceeds as before; with no GitHub
-remote it records `local-only repo` and keeps the same execution-verified flow.
+Before any PASS verdict, review enumerates every check on the published branch's PR
+with `gh pr checks <n>`: any red check, required or advisory, is a `[CI]` FAIL; any
+pending/queued/outage result gets `waiting on CI` and no verdict; only a PR with no
+checks records `no CI checks present — execution-verified only`. Required-ness affects
+only GitHub's server-side merge enforcement, never the Factory verdict; with no GitHub
+remote or no PR, review records `local-only repo` and keeps the execution-verified flow.
 
 The full procedure for each stage — exactly what to do, in what order, what to check,
 what to write in your report — lives in the canonical skill files. This file gets you

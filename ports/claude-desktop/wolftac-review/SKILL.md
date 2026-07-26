@@ -68,24 +68,27 @@ Codex, or Hermes, and STOP. Never mark an issue Approved based on reading report
    no debug leftovers, input validation on new endpoints/forms, error paths don't
    crash, no unrelated files in the diff.
 
-   **CI-REQUIRED-CHECK-GATE:** Before any PASS verdict, determine whether the repo has
-   a GitHub remote and required checks. No GitHub remote → record `local-only repo`
-   and continue the execution-verified flow. No required checks configured → record
-   `no required checks — execution-verified only` and proceed as today. When required
-   checks exist, resolve the PR for the published branch and run
-   `gh pr checks <n> --required`; all required checks must be green before PASS or
-   PASS WITH FIXES. PENDING/queued → post `waiting on CI` and END WITHOUT A VERDICT,
-   leaving `In Review`. A GitHub/CI outage or indeterminate queue is also waiting and
-   must never become a false FAIL. A FAILED required check produces one `[CI]`
-   finding naming the failing job and verdict FAIL. Rerun this gate after any review
-   fix changes the branch head.
+   **CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repo has a
+   GitHub remote and resolve the PR for the published branch. No GitHub remote or no
+   PR → record `local-only repo` and continue the execution-verified flow. For a PR,
+   enumerate all checks with `gh pr checks <n>`; check presence, not required-ness,
+   controls the Factory verdict. `--required` must NOT be used to decide the verdict.
+   Any FAILED check produces one `[CI]` finding naming the failing job and verdict
+   FAIL; an advisory/non-required red check blocks PASS exactly as a required one
+   does. Any PENDING, queued, or in-progress check → post `waiting on CI` and END
+   WITHOUT A VERDICT, leaving `In Review`. A GitHub/CI outage or indeterminate queue
+   is also waiting and must never become a false FAIL. Only when the PR has NO checks
+   at all → record `no CI checks present — execution-verified only` and proceed as
+   today. When all present checks are green, continue the execution review. A green
+   required check is never approval — the human merge gate is unchanged. Rerun this
+   gate after any review fix changes the branch head.
 
    **REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one tag; never
    stack tags on one finding:
    - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
    - `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
    - `[SECURITY]` — security finding; first-class and greppable.
-   - `[CI]` — a required GitHub check failed; name the failing job.
+   - `[CI]` — a GitHub check failed; name the failing job.
    - `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
      Jonathan can make.
 
@@ -116,7 +119,7 @@ Codex, or Hermes, and STOP. Never mark an issue Approved based on reading report
    - **Agent:** Claude Desktop / <model>
    - **Criteria:** <n>/<total> verified — one line per criterion: ✓/✗ + evidence
    - **Test plan reproduced:** <commands run, results>
-   - **CI:** <all required checks green; no required checks — execution-verified only; local-only repo; or waiting/failure detail>
+   - **CI:** <all checks green; no CI checks present — execution-verified only; local-only repo; or waiting/failure detail>
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Reviewed head:** <remote branch> @ <exact verified SHA>
