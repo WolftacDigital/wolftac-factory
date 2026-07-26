@@ -231,6 +231,33 @@
     ]
   },
   {
+    "id": "needs-human-unpark-clearing",
+    "description": "Every build and review pickup surface states the park-clearing test: a later Jonathan decision comment plus removal of his assignment. Build must carry the identical test to review, or a decision Jonathan comments can un-park review while build skips the issue forever.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" }
+    ]
+  },
+  {
+    "id": "unpark-requires-jonathan-authorship",
+    "description": "Every build surface states that an agent-relayed decision does NOT clear the park — the comment author must be Jonathan. Motivating case: WD-288's un-park comment was authored by the factory bot, so the issue stayed parked.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" }
+    ]
+  },
+  {
     "id": "rework-first-build-ordering",
     "description": "Every build surface selects FAIL rework before fresh Todo work while preserving priority and age inside each tier.",
     "checks": [

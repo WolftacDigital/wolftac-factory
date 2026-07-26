@@ -31,8 +31,12 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    `Factory Queue`. If the user gave a lane filter (e.g. "build the crm lane"), only
    consider issues whose Linear project name or labels contain it (case-insensitive).
    **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
-   `REVIEW REPORT — NEEDS HUMAN`; it is parked awaiting Jonathan. Do not comment or
-   change state.
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+   later Jonathan decision comment. Do not comment or change state. A later decision
+   comment from Jonathan plus removal of his assignment clears the park; the issue is
+   then buildable and that comment is part of its work order. The comment author must
+   be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
+   the park.
    **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
    review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
    rework tier and within the fresh tier, preserve priority order

@@ -24,8 +24,12 @@ Implement exactly one queued issue and publish immutable evidence for review.
 2. List `Todo` + `Factory Queue`, apply the lane, skip blocked dependencies, latest
    `BLOCKED:` comments, and unreachable `Repo:` paths. Skip environment mismatches
    silently. **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review
-   report is `REVIEW REPORT — NEEDS HUMAN`; it is parked awaiting Jonathan. Do not
-   comment or change state. **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues,
+   report is `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or
+   lacks a later Jonathan decision comment. Do not comment or change state. A later
+   decision comment from Jonathan plus removal of his assignment clears the park and
+   becomes part of the work order; the comment author must be Jonathan himself — a
+   decision relayed on his behalf by an agent does NOT clear the park.
+   **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues,
    select issues whose latest review report is `REVIEW REPORT — FAIL` before fresh
    `Todo` issues. Within the rework tier and within the fresh tier, preserve priority
    order (Urgent > High > Medium > Low), oldest first on ties. Exit cleanly when none
