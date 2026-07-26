@@ -55,12 +55,17 @@ default branch — nothing less.
    default Linear MCP/toolset. Missing/invalid/expired token or unsuccessful viewer
    query → fail closed: claim nothing, post nothing, stop. Through the bot-authenticated
    connection, list oldest `Approved` + `Factory Queue`, apply any lane filter, and
-   silently skip unreachable `Repo:` paths. Inspect assignee-held claims first: when
+   silently skip unreachable `Repo:` paths. Inspect delegate-held claims first: when
    latest activity is older than four hours, post
    `SWEPT: stale integrate claim, no activity since <timestamp>`, clear or replace
-   the stale assignee, and keep `Approved`.
-2. Claim by assigning `me` while preserving `Approved`; immediately re-read and back
-   off silently on a race.
+   the stale delegate, and keep `Approved`. A human assignee is NOT a worker claim —
+   never sweep or clear it; worker claims live in `delegate` only.
+2. Claim by setting the issue's **delegate** to the bot viewer (`issueUpdate` with
+   `delegateId`) while preserving `Approved` and leaving `assignee` untouched;
+   immediately re-read, verify `delegate.id` equals your bot viewer id, and back off
+   silently on a race. Never claim via `assigneeId`: Linear silently refuses app users
+   as assignee (returns `success: true`, changes nothing), so that claim can never
+   verify and the stage deadlocks. Team membership does not change this.
 3. Read the spec, all comments, the latest REVIEW REPORT (reviewed SHA), and any
    MERGE PROOF PACK. Three positions: no proof pack → produce one (steps 4–5);
    proof pack but no newer valid approval → stop silently; an approval newer than
