@@ -84,20 +84,37 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 - Skip (silently — no comment, no state change) issues whose spec **Repo:** path is
   unreachable from THIS session's environment; a differently-homed integrate session
   will take them.
-- Before choosing an assignee-held issue, perform a read-first stale-claim sweep: if
+- Before choosing a delegate-held issue, perform a read-first stale-claim sweep: if
   the most recent comment (or claim time when there are none) is OLDER than 4 hours,
   you may post exactly `SWEPT: stale integrate claim, no activity since <timestamp>`,
-  clear or replace the stale assignee, and keep the issue in `Approved`. ANY comment
+  clear or replace the stale delegate, and keep the issue in `Approved`. ANY comment
   younger than 4 hours makes the issue UNTOUCHABLE. This sweep is the only comment
   you post during pickup; during a claim-race back off you post NOTHING.
+- A human **assignee is NOT a worker claim.** Reviewed issues routinely carry one
+  (often the workspace owner), and the NEEDS-HUMAN park assigns one deliberately.
+  Never sweep it, never clear it, and never read it as a competing claim — worker
+  claims live in `delegate` only.
 - **Nothing there → say "Factory queue: nothing awaiting integration" and stop cleanly.**
 
 ### 2. Claim it
-Through the bot-authenticated GraphQL connection, set assignee to the bot viewer while
-keeping state `Approved`. Immediately read the issue again through that connection and
-verify the assignee is still the bot viewer. If another session won the race (different
-assignee with activity in the last 4 hours), back off silently: no comment, no state
-change, stop this tick.
+Through the bot-authenticated GraphQL connection, set the issue's **delegate** to the
+bot viewer (`issueUpdate` with `delegateId`) while keeping state `Approved`. Leave
+`assignee` untouched. Immediately read the issue again through that connection and
+verify `delegate.id` still equals your bot viewer id. If another session won the race
+(a different delegate with activity in the last 4 hours), back off silently: no
+comment, no state change, stop this tick.
+
+**Claim via delegate, never assignee.** The factory bot is a Linear *app user*, and
+Linear silently refuses app users as `assignee`: `issueUpdate { assigneeId: <bot> }`
+returns `success: true` and changes nothing, so an assignee-based claim can never
+verify and this stage would deadlock on its own claim check. Team membership does not
+change this — verified 2026-07-26 by adding the bot to the team, re-testing (still a
+no-op), and removing it again; `delegateId` succeeded both with and without
+membership. `delegate` is Linear's supported mechanism for agent ownership. Do not
+"repair" this back to `assigneeId`.
+
+If `delegateId` is itself rejected (permissions or an API change), fail closed: back
+off silently rather than proceeding on an unverified claim, and report the blocker.
 
 ### 3. Establish the approval position
 Read the full spec, every comment, and especially the latest REVIEW REPORT (for the
