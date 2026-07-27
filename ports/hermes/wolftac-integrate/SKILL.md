@@ -100,13 +100,17 @@ the WSL VM recycles between commands).
    Immediately re-fetch and verify `delegate.id` is still your bot viewer id; on a
    race (a different delegate active within the last 4 hours), back off silently — no
    comment, no state change — and stop this tick. **Claim via delegate, never
-   assignee:** the factory bot is a Linear *app user*, and Linear silently refuses app
-   users as `assignee` (`issueUpdate { assigneeId: <bot> }` returns `success: true`
-   and changes nothing), so an assignee claim can never verify and this stage would
-   deadlock on its own claim check. Team membership does not change this — verified
-   2026-07-26 with and without the bot in the team; `delegateId` succeeded both ways.
-   Do not "repair" this back to `assigneeId`. If `delegateId` is itself rejected, fail
-   closed: back off silently rather than proceed on an unverified claim.
+   assignee:** the factory bot is a Linear *app user*, and Linear never honors an
+   app-user `assigneeId` as the assignee: `issueUpdate { assigneeId: <bot> }`
+   returns `success: true`, leaves the human assignee unchanged, and may instead
+   populate `delegate` with the app user as a side effect. An assignee claim therefore
+   can never verify and this stage would deadlock on its own claim check.
+   Team membership does not change this translation — verified 2026-07-27 via
+   twice-reproduced clean-state runs with and without the bot in the team. Explicit
+   `delegateId` with `delegate.id` read-back verification is the only correct claim
+   mechanism. Do not "repair" this back to `assigneeId`. If `delegateId` is itself
+   rejected, fail closed: back off silently rather than proceed on an unverified
+   claim.
 
 3. **Establish the approval position.** Read the full spec, every comment, the latest
    REVIEW REPORT (for the reviewed SHA), and any prior MERGE PROOF PACK. Three

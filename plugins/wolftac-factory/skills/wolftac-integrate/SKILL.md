@@ -66,11 +66,16 @@ default branch — nothing less.
    immediately re-read, verify `delegate.id` equals your bot viewer id, and back off
    silently on a race (a different delegate active within 4 hours → no comment, no
    state change, stop this tick). Never claim via `assigneeId`: the factory bot is a
-   Linear *app user*, and Linear silently refuses app users as assignee — it returns
-   `success: true` and changes nothing — so an assignee claim can never verify and this
-   stage would deadlock on its own claim check. Team membership does not change this —
-   verified 2026-07-26 with and without the bot in the team; `delegateId` succeeded
-   both ways. Do not "repair" this back to `assigneeId`.
+   Linear *app user*, and Linear never honors an app-user `assigneeId` as the
+   assignee: it returns `success: true`, leaves the human assignee unchanged, and may
+   instead populate `delegate` with the app user as a side effect. An assignee claim
+   therefore can never verify and this stage would deadlock on its own claim check.
+   Team membership does not change this translation — verified 2026-07-27 via
+   twice-reproduced clean-state runs with and without the bot in the team. Explicit
+   `delegateId` with `delegate.id` read-back verification is the only correct claim
+   mechanism. Do not "repair" this back to `assigneeId`. If `delegateId` is itself
+   rejected, fail closed: back off silently rather than proceed on an unverified
+   claim, and report the blocker.
 3. Read the spec, all comments, the latest REVIEW REPORT (reviewed SHA), and any
    MERGE PROOF PACK. Three positions: no proof pack → produce one (steps 4–5);
    proof pack but no newer valid approval → stop silently; an approval newer than

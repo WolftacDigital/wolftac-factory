@@ -105,13 +105,14 @@ verify `delegate.id` still equals your bot viewer id. If another session won the
 comment, no state change, stop this tick.
 
 **Claim via delegate, never assignee.** The factory bot is a Linear *app user*, and
-Linear silently refuses app users as `assignee`: `issueUpdate { assigneeId: <bot> }`
-returns `success: true` and changes nothing, so an assignee-based claim can never
-verify and this stage would deadlock on its own claim check. Team membership does not
-change this — verified 2026-07-26 by adding the bot to the team, re-testing (still a
-no-op), and removing it again; `delegateId` succeeded both with and without
-membership. `delegate` is Linear's supported mechanism for agent ownership. Do not
-"repair" this back to `assigneeId`.
+Linear never honors an app-user `assigneeId` as the assignee: `issueUpdate {
+assigneeId: <bot> }` returns `success: true`, leaves the human assignee unchanged,
+and may instead populate `delegate` with the app user as a side effect. An
+assignee-based claim therefore can never verify and this stage would deadlock on its
+own claim check. Team membership does not change this translation — verified
+2026-07-27 via twice-reproduced clean-state runs with and without the bot in the
+team. Explicit `delegateId` with `delegate.id` read-back verification is the only
+correct claim mechanism. Do not "repair" this back to `assigneeId`.
 
 If `delegateId` is itself rejected (permissions or an API change), fail closed: back
 off silently rather than proceeding on an unverified claim, and report the blocker.
