@@ -46,6 +46,7 @@ Use this when `/wolftac-review` is running on Windows/Git Bash and the Linear sp
 
 5. Re-run proof commands:
    - Full spec command, e.g. `npm run test:crm`.
+   - On Windows, `npm run` executes scripts through `cmd.exe`. A package script such as `./node_modules/.bin/tsx ...` or `./node_modules/.bin/tsc ...` can therefore fail with `'.' is not recognized` even though the tool and code are healthy. Reproduce the canonical command and record that portability failure, then run the exact binary directly from Git Bash (`./node_modules/.bin/tsx ...`, `./node_modules/.bin/tsc ...`) to obtain real feature/typecheck proof. Treat the npm-script portability bug separately from the code verdict; recommend scripts use bare `tsx`/`tsc` for cross-platform execution.
    - If full suite exits nonzero from apparently unrelated collection/tooling failures, create a clean `origin/main` detached worktree and run the same command there. If the identical failure reproduces on main, record it as pre-existing and continue with changed-scope verification.
    - When creating a baseline/main worktree, run install/test commands with the shell `workdir` set to that baseline worktree. Do not chain `git worktree add` and `npm ci` from the original repo directory; that installs/tests the wrong project and can produce misleading missing-script or locked-file errors.
    - Run targeted changed-scope tests, lint, typecheck, and build when available.
