@@ -309,5 +309,14 @@
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
       { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" }
     ]
+  },
+  {
+    "id": "integrate-delegate-claim",
+    "description": "Every integrate surface claims via delegateId and verifies delegate.id, states that a human assignee is not a worker claim, and warns against reverting to assigneeId (Linear silently no-ops app-user assignees, with or without team membership).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" }
+    ]
   }
 ]

@@ -84,16 +84,33 @@ the WSL VM recycles between commands).
    `Factory Queue`, oldest first. If invoked with an argument, treat it as a lane
    filter (match Linear project name or labels, case-insensitive). Skip — SILENTLY,
    no comment or state change — issues whose spec **Repo:** path is unreachable from
-   this environment. Before choosing an assignee-held issue, perform a read-first
+   this environment. Before choosing a delegate-held issue, perform a read-first
    stale-claim sweep: if the most recent comment (or claim time when there are none)
    is OLDER than 4 hours, post exactly
    `SWEPT: stale integrate claim, no activity since <timestamp>`, clear or replace
-   the stale assignee, and keep the issue in `Approved`. ANY comment younger than
+   the stale delegate, and keep the issue in `Approved`. ANY comment younger than
    4 hours makes the issue UNTOUCHABLE. During a claim-race back off you post NOTHING.
+   A human **assignee is NOT a worker claim** — reviewed issues routinely carry one,
+   and the NEEDS-HUMAN park assigns one deliberately; never sweep it, never clear it,
+   and never read it as a competing claim. Worker claims live in `delegate` only.
    Nothing → "Factory queue: nothing awaiting integration", stop cleanly.
 
-2. **Claim it.** Set assignee `me`, keeping state `Approved`. Immediately re-fetch and
-   verify the assignee is still you; on a race, back off silently and stop this tick.
+2. **Claim it.** Set the issue's **delegate** to the bot viewer (`issueUpdate` with
+   `delegateId`), keeping state `Approved` and leaving `assignee` untouched.
+   Immediately re-fetch and verify `delegate.id` is still your bot viewer id; on a
+   race (a different delegate active within the last 4 hours), back off silently — no
+   comment, no state change — and stop this tick. **Claim via delegate, never
+   assignee:** the factory bot is a Linear *app user*, and Linear never honors an
+   app-user `assigneeId` as the assignee: `issueUpdate { assigneeId: <bot> }`
+   returns `success: true`, leaves the human assignee unchanged, and may instead
+   populate `delegate` with the app user as a side effect. An assignee claim therefore
+   can never verify and this stage would deadlock on its own claim check.
+   Team membership does not change this translation — verified 2026-07-27 via
+   twice-reproduced clean-state runs with and without the bot in the team. Explicit
+   `delegateId` with `delegate.id` read-back verification is the only correct claim
+   mechanism. Do not "repair" this back to `assigneeId`. If `delegateId` is itself
+   rejected, fail closed: back off silently rather than proceed on an unverified
+   claim.
 
 3. **Establish the approval position.** Read the full spec, every comment, the latest
    REVIEW REPORT (for the reviewed SHA), and any prior MERGE PROOF PACK. Three
