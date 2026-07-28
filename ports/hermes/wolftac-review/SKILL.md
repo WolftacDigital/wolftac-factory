@@ -67,9 +67,11 @@ For reviews whose acceptance criteria require proving a Supabase production sche
 
 ## Windows detached worktree review pattern
 
-When reviewing a Windows-hosted repo from Git Bash, create detached review worktrees with native `C:/...` paths in `git worktree add`, then access them through MSYS `/c/...` paths for shell commands. Avoid passing `/c/Users/...` to `git worktree add`; Git for Windows can interpret it as `C:/c/Users/...`, creating confusing ghost/stale worktree entries. See `references/windows-linear-factory-review-proof.md` for the pattern.
+When reviewing a Windows-hosted repo from Git Bash, create detached review worktrees under `D:\Wolftac\.build-worktrees\`, one directory per review named `review-<ISSUE>-<short-SHA>`. Pass the native form to `git worktree add` (`D:/Wolftac/.build-worktrees/review-WD-291-ff1ae93`) and use the MSYS form for shell commands (`/d/Wolftac/.build-worktrees/review-WD-291-ff1ae93`). Create the root if it does not exist. Avoid passing `/c/Users/...` or `/d/...` to `git worktree add`; Git for Windows can interpret those as `C:/c/Users/...`, creating confusing ghost/stale worktree entries. See `references/windows-linear-factory-review-proof.md` for the pattern.
 
-If the detached worktree has no dependencies, prefer the repo lockfile install command. If the source repo already has a valid `node_modules` and the cron budget is tight, a temporary link/copy is acceptable only for verification, and the report should state what was done. Before removing a worktree after build/test runs, delete generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`) inside the worktree first; these can block `git worktree remove` on Windows.
+Never put a worktree in `C:\tmp`, `C:/tmp`, or `/tmp`. Those are cleared by reboots and cleanup tools, and a worktree that disappears out from under git strands a `.git/worktrees/` entry in the *target* repo for its owner to clean up — 29 such entries accumulated in `wolftac-crm` between WD-185 and WD-300 before this rule existed.
+
+If the detached worktree has no dependencies, prefer the repo lockfile install command. If the source repo already has a valid `node_modules` and the cron budget is tight, a temporary link/copy is acceptable only for verification, and the report should state what was done. **For Next.js/Turbopack builds on Windows, prefer a real local copy:** a junction/symlink whose target sits outside the worktree can make Turbopack abort with `Symlink [project]/node_modules is invalid, it points out of the filesystem root`. A link may still be used for tests/typecheck/lint, but if build hits that error, replace it with a local copy and rerun the build before judging the branch. Before removing a worktree after build/test runs, delete generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`) inside the worktree first; these can block `git worktree remove` on Windows.
 
 ## Remote-ref maintenance review pattern
 
@@ -114,7 +116,10 @@ When the full test command fails due unrelated suite collection/tooling failures
    REPORT. Fetch the remote, verify its published branch resolves to the exact reported
    SHA, then create a detached review worktree at that SHA. Never switch the active
    user checkout. Read `git log` and `git diff <remote-default>...<reported-SHA>`.
-   A missing remote branch or SHA mismatch is a FAIL.
+   A missing remote branch or SHA mismatch is a FAIL. Put the worktree in the durable
+   scratch root — `D:\Wolftac\.build-worktrees\` on Windows, a directory under the
+   agent's home on WSL/Linux — never `C:\tmp` or `/tmp`; see "Windows detached worktree
+   review pattern" below.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with
@@ -244,6 +249,13 @@ When the full test command fails due unrelated suite collection/tooling failures
    editorial layout, and use focused secret/debug patterns to avoid false positives from
    public-token documentation.
 
+   **Content-drift reconciliation checks:** when an issue reconciles live/deployed
+   skills, runbooks, or generated documentation back into a repository, follow
+   `references/content-drift-reconciliation-review.md`. Freeze the authoritative drift
+   input and reviewed SHA, normalize line endings before content comparison, account
+   for every deleted live-side line, compare imported support files, verify every linked
+   reference exists, and mutate only the acceptance-criteria checkbox block in Linear.
+
    **REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one tag; never
    stack tags on one finding:
    - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
@@ -309,5 +321,12 @@ When the full test command fails due unrelated suite collection/tooling failures
    perform best-effort temp worktree cleanup, and final-report the backoff/verified state rather
    than posting another Linear comment.
 
-7. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
-   the code during a PASS.
+7. **Stop.** Tear the worktree down first, from the target repo: delete generated heavy
+   artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`), then
+   `git worktree remove <path>` and `git worktree prune`. Confirm with
+   `git worktree prune --dry-run -v 2>&1` — silent output means clean (`-v` writes to
+   stderr, so a bare pipe sees nothing and looks falsely clean). If prune reports
+   `Permission denied` — common when the target repo lives under OneDrive, where git's
+   own recursive delete fails but the shell's does not — `rm -rf` each
+   `.git/worktrees/<name>` directory prune names, then re-confirm. Then: one issue per
+   invocation. Improvement ideas go in Suggestions, never into the code during a PASS.
