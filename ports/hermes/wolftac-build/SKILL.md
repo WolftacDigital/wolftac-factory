@@ -142,6 +142,15 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    separate clean issue worktree from the fetched remote default branch: leave the dirty
    checkout untouched, do not switch it, and verify the new worktree starts clean.
 
+   Put the worktree in the durable scratch root: `D:\Wolftac\.build-worktrees\` on
+   Windows (native `D:/...` form for `git worktree add`, MSYS `/d/...` for shell
+   commands), `~/.build-worktrees/` under WSL. One directory per issue, named
+   `build-<ISSUE>`; create the root if missing. Never `C:\tmp`, `C:/tmp`, or `/tmp` —
+   those are cleared by reboots, cleanup tools, and between separate `wsl.exe`
+   invocations. A build worktree is reused across ticks, so losing it mid-issue drops
+   uncommitted work and strands a `.git/worktrees/` entry in the target repo for its
+   owner to clean up. `/wolftac-review` shares the root with a `review-` prefix.
+
    If the Linear-generated branch already contains approved implementation commits but
    predates current `origin/main`, inspect its branch-only history before changing it.
    Without explicit history-rewrite approval, preserve those commits and merge
@@ -210,4 +219,13 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
 
    Then state `In Review`.
 
-9. **Stop.** One issue per invocation.
+9. **Stop.** Once the branch is pushed and the remote head verified, remove the
+   worktree — review rebuilds its own from the published SHA. Delete generated heavy
+   artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`), then
+   `git worktree remove <path>` and `git worktree prune`. Confirm with
+   `git worktree prune --dry-run -v 2>&1` — silent means clean (`-v` writes to stderr,
+   so a bare pipe looks falsely clean). On `Permission denied` — common under OneDrive,
+   where git's recursive delete fails but the shell's does not — `rm -rf` each
+   `.git/worktrees/<name>` prune names and re-confirm. Keep the worktree only when
+   handing the issue back unfinished, and say so in the report. Then: one issue per
+   invocation.
