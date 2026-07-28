@@ -12,17 +12,19 @@ Use this when `/wolftac-review` is running on Windows/Git Bash and the Linear sp
 
 1. Resolve paths deliberately:
    - Repo for Git commands: use the spec's native `C:/...` path with `git -C`.
-   - Temporary worktree: use a native path in `git worktree add`, e.g. `C:/tmp/wolftac-review-WD-185`.
-   - Shell `workdir`: use MSYS form for the same worktree, e.g. `/c/tmp/wolftac-review-WD-185`.
-   - Do **not** pass `/c/Users/...` to `git worktree add`; Git for Windows may create/register `C:/c/Users/...` instead.
+   - Worktree root: **always `D:\Wolftac\.build-worktrees\`**, one directory per review named `review-<ISSUE>-<short-SHA>`. Never `C:/tmp` or `/tmp` — a worktree that gets cleared out from under git strands a `.git/worktrees/` entry in the target repo (see step 8).
+   - Worktree path in `git worktree add`: native form, e.g. `D:/Wolftac/.build-worktrees/review-WD-185-77fe7c9`.
+   - Shell `workdir`: MSYS form for the same worktree, e.g. `/d/Wolftac/.build-worktrees/review-WD-185-77fe7c9`.
+   - Do **not** pass `/c/Users/...` or `/d/...` to `git worktree add`; Git for Windows may create/register `C:/c/Users/...` instead.
 
 2. Create the detached worktree:
 
    ```sh
    repo='C:/Users/logan_vwagmmf/OneDrive/Wolftac Digital/Codex/wolftac-crm'
    branch='jonathan/wd-185-build-crm-conversations-unified-inbox-email-with-approval'
-   wt='C:/tmp/wolftac-review-WD-185'
+   wt='D:/Wolftac/.build-worktrees/review-WD-185-77fe7c9'
 
+   mkdir -p /d/Wolftac/.build-worktrees
    git -C "$repo" fetch origin "$branch"
    git -C "$repo" worktree add --detach "$wt" "origin/$branch"
    git -C "$wt" status --short --branch
@@ -74,15 +76,28 @@ Use this when `/wolftac-review` is running on Windows/Git Bash and the Linear sp
    - Remove generated heavy artifacts inside the worktree before `git worktree remove`, especially on Windows:
 
    ```sh
-   rm -rf /c/tmp/wolftac-review-WD-185/node_modules \
-          /c/tmp/wolftac-review-WD-185/.next \
-          /c/tmp/wolftac-review-WD-185/tsconfig.tsbuildinfo \
-          /c/tmp/wolftac-review-WD-185/next-env.d.ts
+   msys_wt='/d/Wolftac/.build-worktrees/review-WD-185-77fe7c9'
+
+   rm -rf "$msys_wt/node_modules" \
+          "$msys_wt/.next" \
+          "$msys_wt/tsconfig.tsbuildinfo" \
+          "$msys_wt/next-env.d.ts"
    git -C "$repo" worktree remove --force "$wt" || true
    git -C "$repo" worktree prune
+   git -C "$repo" worktree prune --dry-run -v 2>&1   # silent == clean
    ```
 
-   - Treat cleanup as best-effort only after proof and Linear write verification are complete. If `git worktree remove --force` deregisters the worktree but Windows refuses to delete an empty temp directory (`Permission denied`), verify `git -C "$repo" worktree list` no longer contains it, verify the scratch server port is closed, and make sure heavy artifacts were removed. If `git worktree prune` also emits `Permission denied` for unrelated stale `.git/worktrees/*` entries, do not treat that stale prune noise as a blocker for the current review; confirm the target worktree is absent from `git worktree list` and that the target temp directory is empty or contains no heavy artifacts. Report leftover empty temp directories/stale prune noise as cleanup residue, not as review blockers.
+   - `prune -v` writes to **stderr**. Without `2>&1` a pipe or `$(...)` capture sees nothing and the repo looks clean when it is not.
+   - `git worktree prune` can fail with `Permission denied` on every entry when the target repo lives under OneDrive — git's own recursive delete chokes there, while the shell's does not. Recover by removing exactly the directories prune names, then re-confirming:
+
+   ```sh
+   git -C "$repo" worktree prune --dry-run -v 2>&1 \
+     | sed -n 's|^Removing worktrees/\(.*\): gitdir file does not exist$|\1|p' \
+     | while IFS= read -r d; do rm -rf "$repo/.git/worktrees/$d"; done
+   git -C "$repo" worktree prune --dry-run -v 2>&1   # must now be silent
+   ```
+
+   - Cleanup runs after proof and Linear write verification are complete, but it is **not** optional. Finish with `git worktree prune --dry-run -v 2>&1` silent and your worktree absent from `git worktree list`. Stale `.git/worktrees/*` entries left in the target repo are review debt owed to that repo's owner, not acceptable residue — 29 accumulated in `wolftac-crm` between WD-185 and WD-300 under the older best-effort wording. If stale entries predate your review, still clear them: the command above is safe, since prune only names worktrees whose working directory is already gone.
 
 ## Reporting nuance
 

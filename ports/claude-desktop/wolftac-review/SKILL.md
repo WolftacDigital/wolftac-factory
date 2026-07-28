@@ -60,7 +60,11 @@ Codex, or Hermes, and STOP. Never mark an issue Approved based on reading report
    REPORT. Fetch the remote, verify its published branch resolves to the exact reported
    SHA, then create a detached review worktree at that SHA. Never switch the active
    user checkout. Read `git log` and `git diff <remote-default>...<reported-SHA>`.
-   A missing remote branch or SHA mismatch is a FAIL.
+   A missing remote branch or SHA mismatch is a FAIL. Put the worktree in the durable
+   scratch root — `D:\Wolftac\.build-worktrees\` on Windows, a directory under the
+   agent's home on WSL/Linux — one directory per review, named
+   `review-<ISSUE>-<short-SHA>`. Never `C:\tmp` or `/tmp`: those get cleared, and a
+   worktree that vanishes strands a `.git/worktrees/` entry in the target repo.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with
@@ -129,5 +133,10 @@ Codex, or Hermes, and STOP. Never mark an issue Approved based on reading report
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
-6. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
-   the code during a PASS.
+6. **Stop.** Tear the worktree down first: delete generated heavy artifacts
+   (`node_modules`, `.next`, `tsconfig.tsbuildinfo`), then `git worktree remove <path>`
+   and `git worktree prune`. Confirm with `git worktree prune --dry-run -v 2>&1` —
+   silent means clean (`-v` writes to stderr, so a bare pipe looks falsely clean). If
+   prune reports `Permission denied`, `rm -rf` each `.git/worktrees/<name>` it names and
+   re-confirm. Then: one issue per invocation. Improvement ideas go in Suggestions,
+   never into the code during a PASS.

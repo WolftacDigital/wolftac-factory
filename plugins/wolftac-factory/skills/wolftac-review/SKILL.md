@@ -33,7 +33,10 @@ Independently verify exactly one published build. Treat the build report as a cl
 3. Read the full spec, all comments, and latest BUILD REPORT. Fetch the remote and
    verify its branch resolves to the exact published SHA. Create a detached review
    worktree at that SHA; never switch the active user checkout. A missing branch or
-   SHA mismatch is a FAIL.
+   SHA mismatch is a FAIL. Put the worktree in the durable scratch root —
+   `D:\Wolftac\.build-worktrees\` on Windows, under the agent's home on WSL/Linux —
+   named `review-<ISSUE>-<short-SHA>`. Never `C:\tmp` or `/tmp`: those get cleared, and
+   a worktree that vanishes strands a `.git/worktrees/` entry in the target repo.
 4. Inspect `git diff <remote-default>...<reported-SHA>` and rerun the complete test plan
    from scratch. Walk every criterion with observed evidence. Always check for new
    hardcoded secrets, debug leftovers, missing input validation, crashing error paths,
@@ -96,4 +99,8 @@ Independently verify exactly one published build. Treat the build report as a cl
 7. On PASS, tick criteria and set `Approved` — `$wolftac-integrate` lands it after
    human approval. On FAIL, set `Todo`; the defect list becomes the next build order.
    On NEEDS HUMAN, assign Jonathan and preserve `In Review`.
-   Read back the state, report, and checkboxes. Clean up the detached worktree and stop.
+   Read back the state, report, and checkboxes. Then clean up: delete heavy artifacts
+   (`node_modules`, `.next`), `git worktree remove <path>`, `git worktree prune`, and
+   confirm with `git worktree prune --dry-run -v 2>&1` (silent == clean; `-v` writes to
+   stderr). On `Permission denied`, `rm -rf` each `.git/worktrees/<name>` prune names
+   and re-confirm. Then stop.

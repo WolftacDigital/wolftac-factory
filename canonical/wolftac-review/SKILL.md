@@ -66,6 +66,15 @@ Never switch the active user checkout. Read `git log` and
 `git diff <remote-default-branch>...<reported-SHA>` in the isolated worktree. A missing
 remote branch or SHA mismatch is a FAIL because the reviewed artifact is not immutable.
 
+**Put the worktree in the durable scratch root — never a system temp dir.** On Windows
+use `D:\Wolftac\.build-worktrees\` (native `D:/Wolftac/.build-worktrees/...` for
+`git worktree add`, MSYS `/d/Wolftac/.build-worktrees/...` for shell commands); on
+WSL/Linux use a directory under the agent's home. One directory per review, named
+`review-<ISSUE>-<short-SHA>`. Never `C:\tmp`, `C:/tmp`, or `/tmp`: those are cleared by
+reboots and cleanup tools, and every worktree that vanishes out from under git strands
+a `.git/worktrees/` entry in the *target* repo, which the target repo's owner then has
+to clean up. Create the root if it does not exist.
+
 ### 4. Verify by execution, not inspection
 **CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repository has
 a GitHub remote and resolve the PR for the published branch. With no GitHub remote or
@@ -155,5 +164,15 @@ Review report format (comment on the issue):
 ```
 
 ### 6. Stop
+Tear the worktree down before you finish, run from the target repo. Delete generated
+heavy artifacts first (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`)
+— on Windows they block removal — then `git worktree remove <path>` and
+`git worktree prune`. Confirm with `git worktree prune --dry-run -v 2>&1`; silent output
+means clean (`-v` writes to stderr, so a bare pipe sees nothing and looks falsely clean).
+If prune reports `Permission denied` — common when the target repo lives under OneDrive,
+where git's own recursive delete fails but the shell's does not — `rm -rf` each
+`.git/worktrees/<name>` directory prune names, then re-confirm. Leaving stale metadata in
+someone else's repo is not done.
+
 One issue per invocation. Scope discipline applies to you too: improvement ideas go in
 **Suggestions**, never into the code during a PASS.
