@@ -17,9 +17,12 @@ Use this when a Factory Queue issue's **Repo:** header names a WSL path while He
    with `status --short --branch`, `diff --stat`, `diff --cached --stat`, and
    `status --short`. A dirty target is operator-attention work: do not claim or edit it.
 3. If no worktree owns the branch, create a deterministic dedicated path without nested
-   variables or command substitutions:
+   variables or command substitutions. Use `~/.build-worktrees/build-<ISSUE>` — **never
+   `/tmp`**, which Windows/WSL hosts clear between separate `wsl.exe` invocations. A
+   build worktree is reused across ticks, so a cleared `/tmp` drops uncommitted work
+   mid-issue and strands a `.git/worktrees/` entry in the repo:
    ```bash
-   MSYS2_ARG_CONV_EXCL='*' wsl.exe -d Ubuntu -- bash -lc 'test ! -e /tmp/wolftac-build-WD-123 && git -C /home/logan_wolftac/repo worktree add /tmp/wolftac-build-WD-123 jonathan/wd-123-branch'
+   MSYS2_ARG_CONV_EXCL='*' wsl.exe -d Ubuntu -- bash -lc 'mkdir -p /home/logan_wolftac/.build-worktrees && test ! -e /home/logan_wolftac/.build-worktrees/build-WD-123 && git -C /home/logan_wolftac/repo worktree add /home/logan_wolftac/.build-worktrees/build-WD-123 jonathan/wd-123-branch'
    ```
 4. Run `npm ci` in the worktree before Node tests if dependencies are absent.
 5. Execute the spec tests literally, then add a runtime/API smoke when route behavior was changed.

@@ -79,6 +79,17 @@ remote default branch. Never switch branches in a checkout that has user changes
 never commit directly to main/master. If an existing worktree is dirty and clearly
 belongs to another process or human, fail closed without modifying it.
 
+**Put the worktree in the durable scratch root — never a system temp dir.** On Windows
+use `D:\Wolftac\.build-worktrees\` (native `D:/Wolftac/.build-worktrees/...` for
+`git worktree add`, MSYS `/d/Wolftac/.build-worktrees/...` for shell commands); on
+WSL/Linux use `~/.build-worktrees/`. One directory per issue, named `build-<ISSUE>`.
+Create the root if it does not exist. Never `C:\tmp`, `C:/tmp`, or `/tmp`: those are
+cleared by reboots, cleanup tools, and — under WSL — between separate `wsl.exe`
+invocations. A build worktree is *reused across ticks*, so losing it mid-issue drops
+uncommitted work and strands a `.git/worktrees/` entry in the target repo that its
+owner then has to clean up. `/wolftac-review` uses the same root with a `review-`
+prefix; the two never collide.
+
 ### 5. Implement — with guardrails
 - **Before editing anything**, when the spec uses `AC-N`/`NG-N` IDs, compare every
   `AC-N` against every `NG-N`. Non-goals are binding. An acceptance criterion that
@@ -149,4 +160,15 @@ Then `save_issue`: state `In Review`. **Do not mark anything Done — that is /w
 exclusive right.**
 
 ### 9. Stop
+Once the branch is pushed and the remote head verified, the worktree has served its
+purpose — `/wolftac-review` builds its own from the published SHA. Remove it: delete
+generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`,
+`next-env.d.ts`) — on Windows they block removal — then `git worktree remove <path>` and
+`git worktree prune`. Confirm with `git worktree prune --dry-run -v 2>&1`; silent output
+means clean (`-v` writes to stderr, so a bare pipe sees nothing and looks falsely clean).
+If prune reports `Permission denied` — common when the target repo lives under OneDrive,
+where git's own recursive delete fails but the shell's does not — `rm -rf` each
+`.git/worktrees/<name>` directory prune names, then re-confirm. Keep the worktree only
+if you are handing the issue back unfinished; then say so in the report.
+
 One issue per invocation. Do not pick up a second issue; the loop handles cadence.
