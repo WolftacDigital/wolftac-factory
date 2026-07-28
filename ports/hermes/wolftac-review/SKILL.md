@@ -249,6 +249,13 @@ When the full test command fails due unrelated suite collection/tooling failures
    editorial layout, and use focused secret/debug patterns to avoid false positives from
    public-token documentation.
 
+   **Content-drift reconciliation checks:** when an issue reconciles live/deployed
+   skills, runbooks, or generated documentation back into a repository, follow
+   `references/content-drift-reconciliation-review.md`. Freeze the authoritative drift
+   input and reviewed SHA, normalize line endings before content comparison, account
+   for every deleted live-side line, compare imported support files, verify every linked
+   reference exists, and mutate only the acceptance-criteria checkbox block in Linear.
+
    **REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one tag; never
    stack tags on one finding:
    - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
