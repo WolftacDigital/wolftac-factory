@@ -137,9 +137,9 @@ Do not mix the two.
 
 ## Which one are you? Install yourself.
 
-Pick your platform below. Every path ends the same way: the three skills present
-where your platform looks for them, Linear reachable, and a restart if you're a
-long-running session.
+Pick your platform below. Every path ends the same way: all four stage skills
+present where your platform looks for them, Linear reachable, and a restart if
+you're a long-running session.
 
 ### Claude Code (CLI or IDE)
 
@@ -173,7 +173,8 @@ long-running session.
    ```
 3. Start a new session (or restart). The first Linear-touching call will trigger an
    OAuth browser login — or run `codex mcp login linear` explicitly.
-4. Verify: `$wolftac-spec`, `$wolftac-build`, and `$wolftac-review` appear as skills
+4. Verify: `$wolftac-spec`, `$wolftac-build`, `$wolftac-review`, and
+   `$wolftac-integrate` appear as skills
    in CLI/IDE or the desktop Skills UI; then run one read-only Linear dry run (for example,
    list your Linear teams or list Factory Queue issues) and confirm it reaches
    Linear without error.
@@ -214,16 +215,17 @@ than pretending the model team ran.
 
 ### Claude Desktop
 
-1. Each of `ports/claude-desktop/wolftac-spec/`, `wolftac-build/`, `wolftac-review/`
-   is a skill folder — zip each one and upload it in Settings → Capabilities →
-   Skills. (If you were handed a package that already includes
-   `wolftac-{spec,build,review}.zip`, use those directly.)
+1. Each of `ports/claude-desktop/wolftac-spec/`, `wolftac-build/`, `wolftac-review/`,
+   `wolftac-integrate/` is a skill folder — zip each one and upload it in
+   Settings → Capabilities → Skills. (If you were handed a package that already
+   includes `wolftac-{spec,build,review,integrate}.zip`, use those directly.)
 2. Enable the Linear connector for the chat (tools menu).
-3. **Know your limits:** the build and review stages need filesystem + terminal
-   access to the target repo (an MCP server like desktop-commander) to actually do
-   anything. Without it, they'll report what's in the queue and tell the human to run
-   that stage from a coding agent instead — they will never fake a build or claim
-   completion they can't verify.
+3. **Know your limits:** the build, review, and integrate stages need filesystem +
+   terminal access to the target repo (an MCP server like desktop-commander) to
+   actually do anything — and integrate additionally needs the factory bot
+   credentials in that environment. Without them, they'll report what's in the queue
+   and tell the human to run that stage from a coding agent instead — they will
+   never fake a build, claim completion they can't verify, or merge anything.
 
 ## Operating rules (apply regardless of platform)
 
@@ -331,8 +333,8 @@ a suggestion.
 
 ### Claude Desktop
 
-No unattended mode. Desktop is an interactive surface; its build/review skills
-already refuse work they can't execute (see the reality check above).
+No unattended mode. Desktop is an interactive surface; its build/review/integrate
+skills already refuse work they can't execute (see the reality check above).
 
 ## Troubleshooting
 
