@@ -110,7 +110,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*(OLDER|older) than the newest proof pack)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" }
     ]
   },
   {
@@ -119,7 +121,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" }
     ]
   },
   {
@@ -128,7 +132,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" }
     ]
   },
   {
@@ -137,7 +143,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently[\\s\\S]{0,200}unreachable)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*unreachable)(?=[\\s\\S]*SILENTLY)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently skip)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently skip)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*SILENTLY)(?=[\\s\\S]*unreachable)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*SILENTLY)(?=[\\s\\S]*(unreachable|cannot\\s+reach))(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" }
     ]
   },
   {
@@ -168,6 +176,8 @@
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
       { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
       { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
       { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*slack_channel_id)(?=[\\s\\S]*approver_slack_user_id)" }
     ]
@@ -179,6 +189,8 @@
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
       { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
       { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
       { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*claude-code)(?=[\\s\\S]*claude-desktop)(?=[\\s\\S]*codex)(?=[\\s\\S]*hermes@AI-MSI)(?=[\\s\\S]*hermes@jon-omen)(?=[\\s\\S]*fallback_identity)" }
     ]
@@ -190,6 +202,8 @@
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
       { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
       { "file": "AGENTS.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" }
     ]
   },
@@ -307,7 +321,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" }
     ]
   },
   {
@@ -316,7 +332,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT\\s+a worker claim)(?=[\\s\\S]*worker claims live in)(?=[\\s\\S]*Team membership does not change this)(?=[\\s\\S]*Do not \"repair\" this back to)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT\\s+a worker claim)(?=[\\s\\S]*worker claims live in)(?=[\\s\\S]*Team membership does not change this)(?=[\\s\\S]*Do not \"repair\" this back to)" }
     ]
   }
 ]
