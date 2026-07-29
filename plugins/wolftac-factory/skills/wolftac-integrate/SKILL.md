@@ -82,6 +82,17 @@ default branch — nothing less.
    the latest proof pack whose author id differs from your own Linear viewer id →
    merge (step 6). **Staleness guard:** an approval older than the
    newest proof pack is void — never merge on it. A same-identity approval is void.
+   **(d) Branchless deliverable (by-design):** before applying the three
+   positions, check the latest review report. If — and only if — it is a PASS
+   review whose `Reviewed head` line explicitly attests
+   `no branch exists for this issue by design`, the issue has no git artifact to
+   merge BY DESIGN: apply the same positions with the branchless variants in the
+   "Branchless landing" section below, reading LANDING PROOF PACK wherever the
+   positions say MERGE PROOF PACK — steps 4-alt–5-alt replace 4–5 and step 6-alt
+   replaces 6. Detection is strict: a PASS review without that explicit
+   attestation, or a branch that is merely missing, deleted, or SHA-mismatched,
+   is NEVER branchless — those fall through unchanged to the existing behavior
+   and failure paths.
 4. Fetch the remote and verify the branch still resolves to the reviewed SHA (a
    mismatch or missing branch → defect report, `Todo`, push nothing). Create a
    detached integrate worktree at the current remote default; never touch the user
@@ -161,3 +172,64 @@ default branch — nothing less.
 
 7. Clean up the detached worktree and stop. One issue per invocation. Secrets never
    appear in proof packs or reports.
+
+## Branchless landing (by-design deliverables)
+
+4-alt. **Verify the live deliverable.** There is no branch, no rebase, and no
+   integrate worktree on this path — the deliverable the review attested lives
+   outside git (deployed configuration, installed skills, provisioned services).
+   Re-run the spec's **Test plan** against that live deliverable exactly as
+   written; secret values never appear in output. If any verification step
+   fails: post a numbered defect report (wrong → repro → expected vs actual),
+   set state `Todo` through the bot connection, land NOTHING, stop — identical
+   to the gate-failure path.
+
+5-alt. **Post the LANDING PROOF PACK and notify.** Post the Slack approval
+   message exactly as in step 5 — same `deploy/approval-policy.json` channel,
+   same `SLACK_FACTORY_BOT_TOKEN` + `chat.postMessage`, same policy-selected
+   sender identity, same outage-disclosure rule. Include the issue ID, the
+   by-design attestation line (in place of a reviewed SHA), risk, one-line
+   verification summary, and Linear link; the pack records the Slack message
+   link and the message carries the pack's deliverable line — the same
+   cross-binding, so a re-verified pack (new message) structurally invalidates
+   prior reactions. Then post the pack and stop, keeping `Approved`:
+
+   ```text
+   **LANDING PROOF PACK**
+   - **Agent:** Codex / <actual model>
+   - **Reviewed head:** n/a — no branch exists for this issue by design (per the latest PASS review)
+   - **Deliverable:** <what exists where — the live artifact the review attested>
+   - **Verification re-run:** <each Test-plan step and its result against the live deliverable>
+   - **Risk:** <low/moderate/high + why>
+   - **Landing action (on approval):** record the human approval and set Done — nothing is pushed, merged, or deployed
+   - **Slack approval message:** <link; or "Slack lane unavailable this pack — typed-comment gate only">
+   - **Approval:** tap `:rocket:` on the Slack approval message (configured
+     approver only), or reply `APPROVE MERGE` (also accepts `APPROVED MERGE`,
+     case-insensitively) on this issue. No merge occurs without one.
+   ```
+
+6-alt. **Land (approval path).** Re-read the approval artifact immediately
+   before acting exactly as in step 6: for a Slack 🚀, `reactions.get` on the
+   NEWEST approval message with `SLACK_FACTORY_BOT_TOKEN` and an exact
+   `approver_slack_user_id` match; for a typed comment, the case-insensitive
+   `APPROVE MERGE` / `APPROVED MERGE` prefix plus the viewer-identity check.
+   Back off if another session posted an INTEGRATION REPORT. An approval OLDER
+   than the newest LANDING PROOF PACK is void — post a fresh pack instead of
+   landing on it. Re-run the spec's **Test plan** against the live deliverable
+   again on this pass — never land on a prior session's verification; if it now
+   fails: numbered defect report, state `Todo`, land NOTHING. A branchless
+   landing never pushes, merges, or deploys anything new — it verifies existing
+   deliverable state and records the human approval; no approval → no Done.
+   Post the report below, set state `Done`, read the issue back confirming the
+   report exists and the state is actually Done, and close the Slack loop
+   exactly as in step 6 (🚀-prefixed thread reply + Linear back-reference
+   comment recording the approval author, Slack message link, and approval
+   timestamp).
+
+   ```text
+   **INTEGRATION REPORT — LANDED (BRANCHLESS)**
+   - **Agent:** Codex / <actual model>
+   - **Deliverable verified:** <evidence — each verification command/check and its result against the live deliverable>
+   - **Approved by:** Jonathan, <approval comment timestamp>
+   - **Gates at landing:** <reference the landing proof pack, plus anything re-run>
+   ```

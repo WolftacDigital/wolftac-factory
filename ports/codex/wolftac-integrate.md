@@ -115,6 +115,18 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
      pack is void — say so in your next report rather than merging on it.
    - **(c) Approval newer than the latest proof pack** → merge path: step 6.
 
+   **(d) Branchless deliverable (by-design):** before applying (a)–(c), check
+   the latest review report. If — and only if — it is a PASS review whose
+   `Reviewed head` line explicitly attests
+   `no branch exists for this issue by design`, the issue has no git artifact to
+   merge BY DESIGN: apply the same three positions with the branchless variants
+   in the "Branchless landing" section below, reading LANDING PROOF PACK
+   wherever (a)–(c) say MERGE PROOF PACK — steps 4-alt–5-alt replace 4–5 and
+   step 6-alt replaces 6. Detection is strict: a PASS review without that
+   explicit attestation, or a branch that is merely missing, deleted, or
+   SHA-mismatched, is NEVER branchless — those fall through unchanged to the
+   existing behavior and failure paths below.
+
 4. **Rebase and re-run gates (proof-pack path).** Fetch the remote. Verify the
    published branch still resolves to the exact SHA in the latest REVIEW REPORT's
    "Reviewed head" line — a missing branch or SHA mismatch means the reviewed
@@ -205,6 +217,68 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    a dependent issue) are allowed; new feature ideas go to the spec stage, never
    into the merge.
 
+## Branchless landing (by-design deliverables)
+
+4-alt. **Verify the live deliverable.** There is no branch, no rebase, and no
+   integrate worktree on this path — the deliverable the review attested lives
+   outside git (deployed configuration, installed skills, provisioned services).
+   Re-run the spec's **Test plan** against that live deliverable exactly as
+   written; secret values never appear in output. If any verification step
+   fails: do NOT rework it yourself — post a numbered defect report (what's
+   wrong → repro → expected vs actual), set state `Todo` through the bot
+   connection, land NOTHING, stop — identical to the gate-failure path.
+
+5-alt. **Post the LANDING PROOF PACK and notify.** Post the Slack approval
+   message exactly as in step 5 — same `deploy/approval-policy.json` channel,
+   same `SLACK_FACTORY_BOT_TOKEN` + `chat.postMessage`, same policy-selected
+   sender identity, same outage-disclosure rule. Include the issue ID, the
+   by-design attestation line (in place of a reviewed SHA), risk line, one-line
+   verification summary, and Linear link; the pack records the Slack message
+   link and the message carries the pack's deliverable line — the same
+   cross-binding, so a re-verified pack (new message) structurally invalidates
+   prior reactions. Then comment on the issue and stop, keeping `Approved`:
+
+   ```
+   **LANDING PROOF PACK**
+   - **Agent:** Codex / <model>
+   - **Reviewed head:** n/a — no branch exists for this issue by design (per the latest PASS review)
+   - **Deliverable:** <what exists where — the live artifact the review attested>
+   - **Verification re-run:** <each Test-plan step and its result against the live deliverable>
+   - **Risk:** <low/moderate/high + one line why>
+   - **Landing action (on approval):** record the human approval and set Done — nothing is pushed, merged, or deployed
+   - **Slack approval message:** <link; or "Slack lane unavailable this pack —
+     typed-comment gate only" when disclosed>
+   - **Approval:** tap `:rocket:` on the Slack approval message (configured
+     approver only), or reply `APPROVE MERGE` (also accepts `APPROVED MERGE`,
+     case-insensitively) on this issue. No merge occurs without one.
+   ```
+
+6-alt. **Land (approval path).** Re-read the approval artifact immediately
+   before acting exactly as in step 6: for a Slack 🚀, `reactions.get` on the
+   NEWEST approval message with the bot token and an exact
+   `approver_slack_user_id` match; for a typed comment, the case-insensitive
+   `APPROVE MERGE` / `APPROVED MERGE` prefix plus the viewer-identity check.
+   Confirm no other session has posted an INTEGRATION REPORT. An approval OLDER
+   than the newest LANDING PROOF PACK is void — post a fresh pack instead of
+   landing on it. Re-run the spec's **Test plan** against the live deliverable
+   again on this pass — never land on a prior session's verification; if it now
+   fails: numbered defect report, state `Todo`, land NOTHING. A branchless
+   landing never pushes, merges, or deploys anything new — it verifies existing
+   deliverable state and records the human approval; no approval → no Done.
+   Post the report below, set state `Done` through the bot connection, read the
+   issue back confirming the report exists and the state is actually Done, and
+   close the Slack loop exactly as in step 6 (🚀-prefixed thread reply + Linear
+   back-reference comment recording the approval author, Slack message link,
+   and approval timestamp).
+
+   ```
+   **INTEGRATION REPORT — LANDED (BRANCHLESS)**
+   - **Agent:** Codex / <model>
+   - **Deliverable verified:** <evidence — each verification command/check and its result against the live deliverable>
+   - **Approved by:** Jonathan, <approval timestamp>
+   - **Gates at landing:** <reference the landing proof pack, plus anything re-run>
+   ```
+
 ## Guardrails
 - No approval → no merge. No override, no urgency exception, and never a chat
   instruction — only Jonathan's 🚀 on the newest Slack approval message (exact
@@ -215,6 +289,9 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
 - Workers never add reactions to factory notification messages.
 - An approval whose author identity matches your own Linear viewer id never merges.
 - Merge to the remote default branch only — production deploys are out of scope.
+- A branchless landing never pushes, merges, or deploys anything new — it
+  verifies existing deliverable state and records the human approval; no
+  approval → no Done.
 - Never force-push, never delete branches, never rewrite history.
 - `BLOCKED:` comments are reserved for genuine spec defects (missing/ambiguous
   **Repo:** header); an unreachable repo is a silent skip, not a comment.
