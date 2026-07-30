@@ -116,6 +116,16 @@
     ]
   },
   {
+    "id": "integrate-linear-helper",
+    "description": "Every shell-capable integrate surface routes Linear traffic through scripts/linear_bot.py and forbids hand-rolled GraphQL or a token on the command line. Motivating case: inline token-export heredocs tripped the credential-keyword heuristic and prompted for confirmation on every Linear round-trip, making looped runs unusable.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" }
+    ]
+  },
+  {
     "id": "integrate-ancestry-and-safety",
     "description": "Integrate verifies merge ancestry and never force-pushes.",
     "checks": [

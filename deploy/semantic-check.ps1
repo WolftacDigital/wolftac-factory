@@ -100,6 +100,39 @@ foreach ($file in $integrateFiles) {
     }
 }
 
+# Every shell-capable integrate surface ships its own reachable copy of the Linear
+# helper, byte-identical to the canonical one, and never hand-rolls a credentialed
+# GraphQL call. Regex parity can assert the prose; only this can assert the files.
+$canonicalHelper = "canonical/wolftac-integrate/scripts/linear_bot.py"
+$helperCopies = @{
+    "ports/hermes/wolftac-integrate/SKILL.md"                     = "ports/hermes/wolftac-integrate/scripts/linear_bot.py"
+    "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md"   = "plugins/wolftac-factory/skills/wolftac-integrate/scripts/linear_bot.py"
+    "ports/codex/wolftac-integrate.md"                            = "ports/codex/wolftac-integrate-scripts/linear_bot.py"
+}
+$canonicalHelperText = (Read-RepoFile $canonicalHelper) -replace "`r`n", "`n"
+foreach ($surface in $helperCopies.Keys) {
+    $copy = $helperCopies[$surface]
+    $copyText = (Read-RepoFile $copy) -replace "`r`n", "`n"
+    if ($copyText -and $canonicalHelperText -and $copyText -ne $canonicalHelperText) {
+        $errors.Add("$copy - drifted from $canonicalHelper; the helper must stay identical across integrate surfaces")
+    }
+}
+
+# A credentialed GraphQL call hand-rolled into a fenced command block is the exact
+# pattern the helper replaced: it puts the token on a command line, trips the
+# credential-keyword heuristic, and re-prompts on every Linear round-trip. Prose
+# that names the forbidden form (inline backticks) is fine; a runnable block is not.
+foreach ($surface in @($canonicalHelper) + @($helperCopies.Keys) + @("canonical/wolftac-integrate/SKILL.md")) {
+    if ($surface -like "*.py") { continue }
+    $content = Read-RepoFile $surface
+    if (-not $content) { continue }
+    foreach ($block in [regex]::Matches($content, '(?ms)^```.*?^```')) {
+        if ([regex]::IsMatch($block.Value, "LINEAR_FACTORY_BOT_TOKEN")) {
+            $errors.Add("$surface - a fenced command block hand-rolls LINEAR_FACTORY_BOT_TOKEN; route Linear through scripts/linear_bot.py instead")
+        }
+    }
+}
+
 $pluginManifest = "plugins/wolftac-factory/.codex-plugin/plugin.json"
 try {
     $manifest = Read-RepoFile $pluginManifest | ConvertFrom-Json

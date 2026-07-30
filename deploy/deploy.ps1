@@ -27,6 +27,9 @@ $Pairs = @(
     @{ Src = "ports\codex\wolftac-build.md";            Dst = "$env:USERPROFILE\.codex\prompts\wolftac-build.md" }
     @{ Src = "ports\codex\wolftac-review.md";           Dst = "$env:USERPROFILE\.codex\prompts\wolftac-review.md" }
     @{ Src = "ports\codex\wolftac-integrate.md";        Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate.md" }
+    # Codex prompts are flat .md files, so the integrate helper ships in a sibling
+    # directory whose name cannot collide with a prompt file.
+    @{ Src = "ports\codex\wolftac-integrate-scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\linear_bot.py" }
 )
 
 # Tree-backed ports must stay complete as their skills gain references and UI metadata.

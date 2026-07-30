@@ -48,32 +48,87 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
   from your own Linear viewer id. Same identity → do NOT merge; report that the
   identity split is not in place and stop.
 - **Worker Linear identity is the bot, enforced at the connection.** Every Linear
-  read and write this stage performs uses `LINEAR_FACTORY_BOT_TOKEN` from the
-  environment via the Linear GraphQL API. Do not load or use the session's default
-  Linear MCP server or toolset — it may be authenticated as the human. If the bot
-  token is absent, invalid, or expired, fail closed: claim nothing, post nothing,
-  report the missing precondition, and stop.
+  read and write this stage performs uses `LINEAR_FACTORY_BOT_TOKEN` via the Linear
+  GraphQL API. Do not load or use the session's default Linear MCP server or
+  toolset — it may be authenticated as the human. If the bot token is absent,
+  invalid, or expired, fail closed: claim nothing, post nothing, report the missing
+  precondition, and stop.
+- **Reach Linear only through `linear_bot.py`** (see *Bot Linear access* below).
+  Never hand-roll a GraphQL call, and never put the token on a command line — no
+  token export out of the environment file, no inline heredoc client. The helper
+  loads the credential internally and exits non-zero on a missing/invalid/expired
+  token, so fail-closed is automatic. Hand-rolled variants also re-trigger a
+  security-review confirmation on every call, which is what makes looped runs
+  unusable.
 - **Notification lanes are notify-only.** No relay, bridge, or automation may post
   the approval comment on the human's behalf — a relayed approval is authored by the
   relay's identity and is void under the viewer-identity check.
 - Reports open with `**Agent:** <platform / model>` (e.g. `Codex / <model>`).
 
+## Bot Linear access
+
+All Linear traffic goes through the helper that ships with this prompt, which reads
+`LINEAR_FACTORY_BOT_TOKEN` from the process env or the Hermes `.env` itself, prints
+JSON on stdout, and exits non-zero on any failure (missing token, expired token,
+GraphQL error, failed read-back verification):
+
+Always invoke it with the literal path below — never via a shell variable you
+define, an alias, or a `cd` into the directory. The stable prefix is what lets a
+single permission rule cover every call; a variable form re-prompts on each one.
+
+```bash
+python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py viewer
+python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py queue --state Approved [--lane crm]
+python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py issue WD-123
+python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py comment WD-123 --body-file -
+python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py claim WD-123
+python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py unclaim WD-123
+python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py state WD-123 Done [--dry-run]
+```
+
+- `viewer` — the bot's own identity (the id every approval author is checked against)
+- `queue` — Factory Queue in a state, oldest updated first, optional lane filter
+- `issue` — spec description + all comments + delegate/assignee/labels/project
+- `comment` — body on stdin via `--body-file -`, never on the command line
+- `claim` — delegate := bot, with read-back; **exit 2 = lost claim race**
+- `unclaim` — clear the delegate
+- `state` — transition with read-back verification; `--dry-run` resolves only
+
+When running as the native `$wolftac-integrate` skill instead of this prompt, the
+helper ships inside the skill: `python ~/.agents/skills/wolftac-integrate/scripts/linear_bot.py …`.
+Shells without `~` expansion (PowerShell) use
+`python "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\linear_bot.py" …`.
+
+Notes that carry factory semantics:
+- `queue` and `issue` include the bot `viewer` in their output — that is the id
+  the viewer-identity check compares approval authors against; no separate call
+  needed.
+- Comment authors appear as `user` (humans) or `botActor` (app users). An
+  approval whose author id equals the returned viewer id is void.
+- `claim` exits **2** with `"claimed": false` when the delegate read-back does not
+  match — that is the lost-claim-race signal: back off silently, post nothing.
+- `--body-file -` keeps proof packs off the command line; write the pack to a
+  scratch file or pipe it in.
+
 ## Procedure
 
-1. **Pick up work.** Require `LINEAR_FACTORY_BOT_TOKEN` and query `viewer` through
-   the Linear GraphQL API with that credential before reading the queue; a
-   missing/invalid token or failed viewer query → fail closed: claim nothing, post
-   nothing, stop. List issues: team `Wolftac Digital`, state `Approved`, label
-   `Factory Queue`, oldest updated first, through that bot connection. If an
-   argument was given, treat it as a lane filter: only consider issues whose Linear
-   project name or labels contain it (case-insensitive). Skip — SILENTLY, no comment
+1. **Pick up work.** Run `linear_bot.py viewer` before reading the queue; a non-zero
+   exit (missing/invalid/expired token, failed viewer query) → fail closed: claim
+   nothing, post nothing, stop. List issues with
+   `linear_bot.py queue --state Approved` — team `Wolftac Digital`, label
+   `Factory Queue`, oldest updated first (the helper applies all three). If an
+   argument was given, pass it as `--lane <arg>`; the helper matches it
+   case-insensitively against the issue's Linear project name and labels. Skip —
+   SILENTLY, no comment
    or state change — issues whose spec **Repo:** path is unreachable from this
    session's environment; a differently-homed integrate session will take them.
    Before choosing a delegate-held issue, perform a read-first stale-claim sweep: if
    the most recent comment (or claim time when there are none) is OLDER than 4
    hours, you may post exactly
-   `SWEPT: stale integrate claim, no activity since <timestamp>`, clear or replace
-   the stale delegate, and keep the issue in `Approved`. ANY comment younger than 4
+   `SWEPT: stale integrate claim, no activity since <timestamp>` (via
+   `linear_bot.py comment`), clear the stale delegate with `linear_bot.py unclaim`
+   or replace it with your own `linear_bot.py claim`, and keep the issue in
+   `Approved`. ANY comment younger than 4
    hours makes the issue UNTOUCHABLE. This sweep is the only comment you post during
    pickup; during a claim-race back off you post NOTHING. A human **assignee is NOT
    a worker claim** — reviewed issues routinely carry one (often the workspace
@@ -82,12 +137,12 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    only. Nothing there → say "Factory queue: nothing awaiting integration" and stop
    cleanly.
 
-2. **Claim it.** Through the bot-authenticated GraphQL connection, set the issue's
-   **delegate** to the bot viewer (`issueUpdate` with `delegateId`) while keeping
-   state `Approved`. Leave `assignee` untouched. Immediately read the issue again
-   and verify `delegate.id` still equals your bot viewer id. If another session won
-   the race (a different delegate with activity in the last 4 hours), back off
-   silently: no comment, no state change, stop this tick.
+2. **Claim it.** Run `linear_bot.py claim <ID>`. It sets the issue's **delegate** to
+   the bot viewer (`issueUpdate` with `delegateId`) while keeping state `Approved`
+   and leaving `assignee` untouched, then reads the issue again and verifies
+   `delegate.id` still equals your bot viewer id. Exit 2 (`"claimed": false`) means
+   another session won the race — back off silently: no comment, no state change,
+   stop this tick.
    **Claim via delegate, never assignee.** The factory bot is a Linear *app user*,
    and Linear never honors an app-user `assigneeId`: the update returns
    `success: true`, leaves the human assignee unchanged, and may instead populate
@@ -99,8 +154,9 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    off silently rather than proceeding on an unverified claim, and report the
    blocker.
 
-3. **Establish the approval position.** Read the full spec, every comment, the
-   latest REVIEW REPORT (for the reviewed SHA), and any prior MERGE PROOF PACK.
+3. **Establish the approval position.** From `linear_bot.py issue <ID>` read the
+   full spec, every comment, the latest REVIEW REPORT (for the reviewed SHA), and
+   any prior MERGE PROOF PACK.
    Locate the newest proof pack and the newest approval — EITHER a `:rocket:`
    reaction on the NEWEST Slack approval message whose reactor id equals the policy
    file's `approver_slack_user_id` (verify with `reactions.get`; other reactors are
@@ -136,9 +192,9 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    the reviewed branch onto the current default in that worktree and re-run the
    spec's **Test plan** gates on the rebased tree. Secret values never appear in
    output. **If the rebase conflicts or any gate fails:** do NOT rework it yourself.
-   Post a numbered defect report (what's wrong → repro → expected vs actual), set
-   state `Todo` through the bot connection, push NOTHING, clean up the worktree,
-   stop.
+   Post a numbered defect report (what's wrong → repro → expected vs actual) with
+   `linear_bot.py comment <ID> --body-file -`, run `linear_bot.py state <ID> Todo`,
+   push NOTHING, clean up the worktree, stop.
 
 5. **Post the MERGE PROOF PACK and notify.** Post a Slack approval message to the
    policy file's `slack_channel_id` using `SLACK_FACTORY_BOT_TOKEN` and
@@ -150,7 +206,9 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    Before writing the merge command, apply the **PR-MERGE-TRANSITION-RULE:** query
    for an existing PR whose head is the reviewed branch; if one exists record
    `gh pr merge <n> --merge`, otherwise this is a pre-PR-era in-flight issue and
-   record the existing direct fast-forward push command. Then comment on the issue:
+   record the existing direct fast-forward push command. Then comment on the issue
+   with `linear_bot.py comment <ID> --body-file -` (write the pack to a scratch file
+   or pipe it in — never inline it as a shell argument):
 
    ```
    **MERGE PROOF PACK**
@@ -186,7 +244,8 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    worker's local object store. Rebuild it: fresh detached integrate worktree at the
    current remote default, re-verify the reviewed SHA, re-run the rebase and the
    gates on the head you just built; if they now fail, take the failure path
-   (numbered defect report, state `Todo`, push NOTHING). Apply the
+   (numbered defect report via `linear_bot.py comment`, then
+   `linear_bot.py state <ID> Todo`, push NOTHING). Apply the
    **PR-MERGE-TRANSITION-RULE:** if a PR exists for the reviewed branch, merge it
    with `gh pr merge <n> --merge`; if none exists (pre-PR-era), use the direct
    fast-forward push of the head you just rebuilt. Never auto-merge: Jonathan's
@@ -195,8 +254,11 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    `git merge-base --is-ancestor <reviewed-SHA> origin/<default>` AND
    `git merge-base --is-ancestor <branch-head> origin/<default>` must succeed —
    otherwise do not set Done; report what you observed and stop. Post the
-   INTEGRATION REPORT, set state `Done` through the bot connection, and read the
-   issue back confirming the report exists and the state is actually Done. Close
+   INTEGRATION REPORT (`linear_bot.py comment <ID> --body-file -`), then run
+   `linear_bot.py state <ID> Done` — it verifies the transition by read-back and
+   exits non-zero if the state did not stick — and re-read with
+   `linear_bot.py issue <ID>` confirming the report exists and the state is
+   actually Done. Close
    the Slack loop: reply in the approval message's thread with the report summary
    prefixed 🚀 (`chat.postMessage`, bot token, policy identity — a message, not a
    reaction), and post a back-reference comment on the issue recording the approval
@@ -225,8 +287,9 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    Re-run the spec's **Test plan** against that live deliverable exactly as
    written; secret values never appear in output. If any verification step
    fails: do NOT rework it yourself — post a numbered defect report (what's
-   wrong → repro → expected vs actual), set state `Todo` through the bot
-   connection, land NOTHING, stop — identical to the gate-failure path.
+   wrong → repro → expected vs actual) with `linear_bot.py comment`, run
+   `linear_bot.py state <ID> Todo`, land NOTHING, stop — identical to the
+   gate-failure path.
 
 5-alt. **Post the LANDING PROOF PACK and notify.** Post the Slack approval
    message exactly as in step 5 — same `deploy/approval-policy.json` channel,
@@ -236,7 +299,8 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    verification summary, and Linear link; the pack records the Slack message
    link and the message carries the pack's deliverable line — the same
    cross-binding, so a re-verified pack (new message) structurally invalidates
-   prior reactions. Then comment on the issue and stop, keeping `Approved`:
+   prior reactions. Then comment on the issue with
+   `linear_bot.py comment <ID> --body-file -` and stop, keeping `Approved`:
 
    ```
    **LANDING PROOF PACK**
@@ -262,11 +326,13 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
    than the newest LANDING PROOF PACK is void — post a fresh pack instead of
    landing on it. Re-run the spec's **Test plan** against the live deliverable
    again on this pass — never land on a prior session's verification; if it now
-   fails: numbered defect report, state `Todo`, land NOTHING. A branchless
-   landing never pushes, merges, or deploys anything new — it verifies existing
-   deliverable state and records the human approval; no approval → no Done.
-   Post the report below, set state `Done` through the bot connection, read the
-   issue back confirming the report exists and the state is actually Done, and
+   fails: numbered defect report, `linear_bot.py state <ID> Todo`, land NOTHING.
+   A branchless landing never pushes, merges, or deploys anything new — it
+   verifies existing deliverable state and records the human approval; no
+   approval → no Done. Post the report below
+   (`linear_bot.py comment <ID> --body-file -`), run `linear_bot.py state <ID> Done`,
+   re-read with `linear_bot.py issue <ID>` confirming the report exists and the
+   state is actually Done, and
    close the Slack loop exactly as in step 6 (🚀-prefixed thread reply + Linear
    back-reference comment recording the approval author, Slack message link,
    and approval timestamp).
