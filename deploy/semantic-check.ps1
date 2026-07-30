@@ -108,6 +108,9 @@ $helperCopies = @{
     "ports/hermes/wolftac-integrate/SKILL.md"                     = "ports/hermes/wolftac-integrate/scripts/linear_bot.py"
     "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md"   = "plugins/wolftac-factory/skills/wolftac-integrate/scripts/linear_bot.py"
     "ports/codex/wolftac-integrate.md"                            = "ports/codex/wolftac-integrate-scripts/linear_bot.py"
+    # The Desktop bundle ships the helper for portability, but Desktop invokes the
+    # copy on the terminal server's filesystem — the uploaded bundle is not on it.
+    "ports/claude-desktop/wolftac-integrate/SKILL.md"             = "ports/claude-desktop/wolftac-integrate/scripts/linear_bot.py"
 }
 $canonicalHelperText = (Read-RepoFile $canonicalHelper) -replace "`r`n", "`n"
 foreach ($surface in $helperCopies.Keys) {
@@ -122,8 +125,7 @@ foreach ($surface in $helperCopies.Keys) {
 # pattern the helper replaced: it puts the token on a command line, trips the
 # credential-keyword heuristic, and re-prompts on every Linear round-trip. Prose
 # that names the forbidden form (inline backticks) is fine; a runnable block is not.
-foreach ($surface in @($canonicalHelper) + @($helperCopies.Keys) + @("canonical/wolftac-integrate/SKILL.md")) {
-    if ($surface -like "*.py") { continue }
+foreach ($surface in @($helperCopies.Keys) + @("canonical/wolftac-integrate/SKILL.md")) {
     $content = Read-RepoFile $surface
     if (-not $content) { continue }
     foreach ($block in [regex]::Matches($content, '(?ms)^```.*?^```')) {

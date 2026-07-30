@@ -122,7 +122,8 @@
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
       { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" }
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" }
     ]
   },
   {

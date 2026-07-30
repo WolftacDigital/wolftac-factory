@@ -130,6 +130,10 @@ if ($Deploy) {
     }
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
+    # Desktop skills are hand-uploaded, so they get no $Pairs entry; Compress-Archive
+    # recurses, which is how wolftac-integrate\scripts\linear_bot.py reaches the bundle.
+    # Desktop still RUNS the helper from the Claude Code target above, because its MCP
+    # terminal server sees the local filesystem, not the uploaded bundle.
     foreach ($s in @("wolftac-spec", "wolftac-build", "wolftac-review", "wolftac-integrate")) {
         Compress-Archive -Path (Join-Path $Repo "ports\claude-desktop\$s") -DestinationPath (Join-Path $zipOut "$s.zip") -Force
         Write-Output "zipped   $s.zip -> $zipOut"
