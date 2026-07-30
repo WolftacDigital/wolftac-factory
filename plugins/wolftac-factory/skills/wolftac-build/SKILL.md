@@ -43,6 +43,10 @@ Implement exactly one queued issue and publish immutable evidence for review.
 5. Fetch the remote. Create a dedicated issue worktree for the Linear branch from the
    current remote default branch. Never switch a checkout with user changes, never
    overwrite another process's dirty worktree, and never commit to main/master.
+   Put it in the durable scratch root — `D:\Wolftac\.build-worktrees\` on Windows,
+   `~/.build-worktrees/` under WSL — named `build-<ISSUE>`. Never `C:\tmp` or `/tmp`:
+   those get cleared, dropping uncommitted work and stranding a `.git/worktrees/`
+   entry in the target repo.
 6. Read the repo's CLAUDE.md/AGENTS.md first; match its conventions. Implement only
    the technical approach and acceptance criteria. Put tangential ideas in the report
    as `suggest $wolftac-spec`.
@@ -76,8 +80,11 @@ Implement exactly one queued issue and publish immutable evidence for review.
    - **Notes for review:** <highest-risk areas first>
    ```
 
-11. Set `In Review`, verify the persisted state/comment, clean up the worktree when
-    safe, and stop.
+11. Set `In Review` and verify the persisted state/comment. Then clean up: delete heavy
+    artifacts (`node_modules`, `.next`), `git worktree remove <path>`,
+    `git worktree prune`, and confirm with `git worktree prune --dry-run -v 2>&1`
+    (silent == clean; `-v` writes to stderr). On `Permission denied`, `rm -rf` each
+    `.git/worktrees/<name>` prune names and re-confirm. Then stop.
 
 ## Guardrails
 

@@ -73,6 +73,10 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    issue's Linear-generated branch from the current remote default branch. Never switch
    branches in a checkout with user changes and never commit directly to main/master.
    A dirty worktree owned by another process or human is a fail-closed condition.
+   Put the worktree in the durable scratch root — `D:\Wolftac\.build-worktrees\` on
+   Windows, `~/.build-worktrees/` under WSL — one directory per issue, named
+   `build-<ISSUE>`. Never `C:\tmp` or `/tmp`: those get cleared, which drops
+   uncommitted work and strands a `.git/worktrees/` entry in the target repo.
 
 5. **Implement — guardrails.** **Before editing anything**, when the spec uses
    `AC-N`/`NG-N` IDs, compare every `AC-N` against every `NG-N`. Non-goals are
@@ -121,4 +125,10 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 
    Then `save_issue`: state `In Review`.
 
-9. **Stop.** One issue per invocation.
+9. **Stop.** Once the branch is pushed and the remote head verified, remove the
+   worktree — review rebuilds its own from the published SHA. Delete generated heavy
+   artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`), then
+   `git worktree remove <path>` and `git worktree prune`. Confirm with
+   `git worktree prune --dry-run -v 2>&1` — silent means clean (`-v` writes to stderr,
+   so a bare pipe looks falsely clean). On `Permission denied`, `rm -rf` each
+   `.git/worktrees/<name>` it names and re-confirm. Then: one issue per invocation.
