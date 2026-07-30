@@ -55,10 +55,17 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
   do NOT merge — report that the identity split is not yet in place and stop.
 - **Worker Linear identity is the bot, enforced at the connection.** Every Linear
   read and write this stage performs uses the factory bot credentials
-  (`LINEAR_FACTORY_BOT_TOKEN` from the environment, via the Linear GraphQL API) —
-  never the session's default Linear connection, which may be authenticated as the
-  human. If the bot token is absent, invalid, or expired, fail closed: claim
-  nothing, post nothing, report the missing precondition, and stop.
+  (`LINEAR_FACTORY_BOT_TOKEN`, via the Linear GraphQL API) — never the session's
+  default Linear connection, which may be authenticated as the human. If the bot
+  token is absent, invalid, or expired, fail closed: claim nothing, post nothing,
+  report the missing precondition, and stop.
+- **Reach Linear only through `scripts/linear_bot.py`** (see *Bot Linear access*
+  below). Never hand-roll a GraphQL call, and never put the token on a command
+  line — no `export LINEAR_FACTORY_BOT_TOKEN=$(grep ... .env)`, no inline
+  heredoc client. The helper loads the credential internally and exits non-zero
+  on a missing/invalid/expired token, so fail-closed is automatic. Hand-rolled
+  variants also re-trigger a security-review confirmation on every call, which
+  is what makes looped runs unusable.
 - **Notification lanes are notify-only.** No relay, bridge, or automation may post
   the approval comment on the human's behalf — a relayed approval is authored by
   the relay's identity and is void under the viewer-identity check. The human
@@ -68,19 +75,66 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
   conventions above are the shared contract; any agent may integrate what any agent reviewed.
 
+## Bot Linear access
+
+All Linear traffic goes through the helper, which reads
+`LINEAR_FACTORY_BOT_TOKEN` from the process env or the Hermes `.env` itself,
+prints JSON on stdout, and exits non-zero on any failure (missing token,
+expired token, GraphQL error, failed read-back verification):
+
+Always invoke it with the literal path below — never via a shell variable,
+alias, or `cd` into the directory. The stable prefix is what lets a single
+permission rule cover every call; a variable form re-prompts on each one.
+
+```bash
+python ~/.claude/skills/wolftac-integrate/scripts/linear_bot.py viewer
+python ~/.claude/skills/wolftac-integrate/scripts/linear_bot.py queue --state Approved [--lane crm]
+python ~/.claude/skills/wolftac-integrate/scripts/linear_bot.py issue WD-123
+python ~/.claude/skills/wolftac-integrate/scripts/linear_bot.py comment WD-123 --body-file -
+python ~/.claude/skills/wolftac-integrate/scripts/linear_bot.py claim WD-123
+python ~/.claude/skills/wolftac-integrate/scripts/linear_bot.py unclaim WD-123
+python ~/.claude/skills/wolftac-integrate/scripts/linear_bot.py state WD-123 Done [--dry-run]
+```
+
+- `viewer` — the bot's own identity (the id every approval author is checked against)
+- `queue` — Factory Queue in a state, oldest updated first, optional lane filter
+- `issue` — spec description + all comments + delegate/assignee/labels/project
+- `comment` — body on stdin via `--body-file -`, never on the command line
+- `claim` — delegate := bot, with read-back; **exit 2 = lost claim race**
+- `unclaim` — clear the delegate
+- `state` — transition with read-back verification; `--dry-run` resolves only
+
+Agents without `~` expansion (Hermes/PowerShell) use:
+`python "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" …`
+
+Notes that carry factory semantics:
+- `queue` and `issue` include the bot `viewer` in their output — that is the id
+  the viewer-identity check compares approval authors against; no separate call
+  needed.
+- **Never use the author FIELD to tell humans from bots.** Verified 2026-07-30:
+  a comment posted by the factory bot comes back under `user` with the bot's id
+  and a `botActor` of `null` — identical in shape to a human comment. The only
+  valid discriminator is comparing the author id against the `viewer` id
+  returned alongside the data: equal ⇒ self-authored ⇒ the approval is void.
+- `claim` exits **2** with `"claimed": false` when the delegate read-back does not
+  match — that is the lost-claim-race signal: back off silently, post nothing.
+- `--body-file -` keeps proof packs off the command line; write the pack to a
+  scratch file or pipe it in.
+
 ## Procedure
 
 ### 1. Pick up work
-- Before reading the queue, require `LINEAR_FACTORY_BOT_TOKEN` and query `viewer`
-  through the Linear GraphQL API with that credential. Missing/invalid/expired token
-  or an unsuccessful viewer query → fail closed: claim nothing, post nothing, stop.
+- Before reading the queue, run `linear_bot.py viewer`. A non-zero exit (absent,
+  invalid, or expired token; failed viewer query) → fail closed: claim nothing,
+  post nothing, stop.
 - Do not load or use the session's default Linear MCP/toolset. Every queue read,
-  issue/comment read, claim, report, and state transition below is performed through
-  the bot-authenticated Linear GraphQL connection.
-- List issues: team `Wolftac Digital`, state `Approved`, label `Factory Queue`, oldest
-  updated first.
+  issue/comment read, claim, report, and state transition below goes through
+  `linear_bot.py`.
+- List issues: `linear_bot.py queue --state Approved` — team `Wolftac Digital`,
+  label `Factory Queue`, oldest updated first (the helper applies all three).
 - Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-integrate crm`),
-  only consider issues whose Linear project name or labels contain it (case-insensitive).
+  pass it as `--lane crm` — the helper matches it case-insensitively against the
+  issue's Linear project name and labels.
 - Skip (silently — no comment, no state change) issues whose spec **Repo:** path is
   unreachable from THIS session's environment; a differently-homed integrate session
   will take them.
@@ -97,12 +151,11 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 - **Nothing there → say "Factory queue: nothing awaiting integration" and stop cleanly.**
 
 ### 2. Claim it
-Through the bot-authenticated GraphQL connection, set the issue's **delegate** to the
-bot viewer (`issueUpdate` with `delegateId`) while keeping state `Approved`. Leave
-`assignee` untouched. Immediately read the issue again through that connection and
-verify `delegate.id` still equals your bot viewer id. If another session won the race
-(a different delegate with activity in the last 4 hours), back off silently: no
-comment, no state change, stop this tick.
+Run `linear_bot.py claim <ID>`. It sets the issue's **delegate** to the bot viewer
+(`issueUpdate` with `delegateId`), leaves `assignee` and state `Approved`
+untouched, and re-reads the issue to verify `delegate.id` still equals your bot
+viewer id. Exit 2 (`"claimed": false`) means another session won the race — back
+off silently: no comment, no state change, stop this tick.
 
 **Claim via delegate, never assignee.** The factory bot is a Linear *app user*, and
 Linear never honors an app-user `assigneeId` as the assignee: `issueUpdate {
@@ -162,8 +215,8 @@ those fall through unchanged to the existing behavior and failure paths below.
   appear in your output — report gate results, never raw env content.
 - **If the rebase conflicts or any gate fails:** do NOT attempt the rework yourself.
   Post a numbered defect report (what's wrong → how to reproduce → expected vs
-  actual), update the issue to state `Todo` through the bot-authenticated GraphQL
-  connection, push NOTHING, clean up the worktree, stop.
+  actual), run `linear_bot.py state <ID> Todo`, push NOTHING, clean up the
+  worktree, stop.
 
 ### 5. Post the MERGE PROOF PACK and notify
 Post a **Slack approval message** to the `slack_channel_id` from
@@ -179,7 +232,9 @@ Slack post and DISCLOSE that in the pack — the case-insensitive typed-comment
 gate (`APPROVE MERGE` or `APPROVED MERGE`) covers the outage (fail-graceful,
 never fail-open).
 
-Then comment on the issue:
+Then comment on the issue with `linear_bot.py comment <ID> --body-file -`
+(write the pack to a scratch file or pipe it in — never inline it as a shell
+argument).
 
 Before writing the merge command, apply the **PR-MERGE-TRANSITION-RULE:** query for
 an existing PR whose head is the reviewed branch. If one exists, record
@@ -244,9 +299,10 @@ comment). Keep state `Approved`. Stop.
   `git merge-base --is-ancestor <branch-head> origin/<default>` must succeed. If
   either does not, something is wrong — do not set Done; report what you observed
   and stop.
-- Post the INTEGRATION REPORT, then update the issue to state `Done` through the
-  bot-authenticated GraphQL connection. Read the issue back through that connection
-  and confirm the report exists and the state is actually Done.
+- Post the INTEGRATION REPORT (`linear_bot.py comment <ID> --body-file -`), then
+  run `linear_bot.py state <ID> Done` — it verifies the transition by read-back
+  and exits non-zero if the state did not stick. Re-read with
+  `linear_bot.py issue <ID>` and confirm the report is present.
 - Close the Slack loop: reply in the approval message's thread with the
   INTEGRATION REPORT summary prefixed 🚀 using `chat.postMessage`,
   `SLACK_FACTORY_BOT_TOKEN`, and the same policy-selected sender identity (a
@@ -276,8 +332,8 @@ comment). Keep state `Approved`. Stop.
   appear in your output — report verification results, never raw env content.
 - **If any verification step fails:** do NOT attempt the rework yourself. Post a
   numbered defect report (what's wrong → how to reproduce → expected vs actual),
-  update the issue to state `Todo` through the bot-authenticated GraphQL
-  connection, land NOTHING, stop — identical to the gate-failure path.
+  run `linear_bot.py state <ID> Todo`, land NOTHING, stop — identical to the
+  gate-failure path.
 
 ### 5-alt. Post the LANDING PROOF PACK and notify
 Post the Slack approval message exactly as in step 5 — same
@@ -322,9 +378,9 @@ Keep state `Approved`. Stop.
 - A branchless landing never pushes, merges, or deploys anything new — it
   verifies existing deliverable state and records the human approval; no
   approval → no Done.
-- Post the report below, then set state `Done` through the bot-authenticated
-  GraphQL connection; read the issue back and confirm the report exists and the
-  state is actually Done. Close the Slack loop exactly as in step 6
+- Post the report below (`linear_bot.py comment <ID> --body-file -`), then run
+  `linear_bot.py state <ID> Done`; re-read with `linear_bot.py issue <ID>` and
+  confirm the report exists and the state is actually Done. Close the Slack loop exactly as in step 6
   (🚀-prefixed thread reply via `chat.postMessage` + Linear back-reference
   comment recording the approval author, Slack message link, and approval
   timestamp).

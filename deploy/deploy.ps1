@@ -22,6 +22,7 @@ $Pairs = @(
     @{ Src = "canonical\wolftac-build\SKILL.md";        Dst = "$env:USERPROFILE\.claude\skills\wolftac-build\SKILL.md" }
     @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$env:USERPROFILE\.claude\skills\wolftac-review\SKILL.md" }
     @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\SKILL.md" }
+    @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" }
     @{ Src = "ports\codex\wolftac-spec.md";             Dst = "$env:USERPROFILE\.codex\prompts\wolftac-spec.md" }
     @{ Src = "ports\codex\wolftac-build.md";            Dst = "$env:USERPROFILE\.codex\prompts\wolftac-build.md" }
     @{ Src = "ports\codex\wolftac-review.md";           Dst = "$env:USERPROFILE\.codex\prompts\wolftac-review.md" }
@@ -62,6 +63,7 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
     $Pairs += @{ Src = "canonical\wolftac-build\SKILL.md";        Dst = "$wslSkills\wolftac-build\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$wslSkills\wolftac-review\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$wslSkills\wolftac-integrate\SKILL.md" }
+    $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$wslSkills\wolftac-integrate\scripts\linear_bot.py" }
 }
 
 # Read a file and return its content with LF line endings (no trailing-CR).
