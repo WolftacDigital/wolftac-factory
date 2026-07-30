@@ -27,6 +27,9 @@ $Pairs = @(
     @{ Src = "ports\codex\wolftac-build.md";            Dst = "$env:USERPROFILE\.codex\prompts\wolftac-build.md" }
     @{ Src = "ports\codex\wolftac-review.md";           Dst = "$env:USERPROFILE\.codex\prompts\wolftac-review.md" }
     @{ Src = "ports\codex\wolftac-integrate.md";        Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate.md" }
+    # Codex prompts are flat .md files, so the integrate helper ships in a sibling
+    # directory whose name cannot collide with a prompt file.
+    @{ Src = "ports\codex\wolftac-integrate-scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\linear_bot.py" }
 )
 
 # Tree-backed ports must stay complete as their skills gain references and UI metadata.
@@ -127,6 +130,10 @@ if ($Deploy) {
     }
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
+    # Desktop skills are hand-uploaded, so they get no $Pairs entry; Compress-Archive
+    # recurses, which is how wolftac-integrate\scripts\linear_bot.py reaches the bundle.
+    # Desktop still RUNS the helper from the Claude Code target above, because its MCP
+    # terminal server sees the local filesystem, not the uploaded bundle.
     foreach ($s in @("wolftac-spec", "wolftac-build", "wolftac-review", "wolftac-integrate")) {
         Compress-Archive -Path (Join-Path $Repo "ports\claude-desktop\$s") -DestinationPath (Join-Path $zipOut "$s.zip") -Force
         Write-Output "zipped   $s.zip -> $zipOut"
