@@ -8,11 +8,15 @@ assertion fails; the worker must then stop without claiming anything.
 
 Assertions:
   1. Bot credentials present in the profile env (token, or app id+secret to mint).
-  2. No Linear-capable transport wired anywhere in the profile: EVERY *.yaml/*.yml
+  2. The executing runtime IS this profile: HERMES_HOME must be the scanned
+     profile root. This is a positive attestation, not a credential blacklist —
+     an agent session reaching Linear over MCP holds no Linear env var at all,
+     so only "you are the isolated profile" is a gate it cannot pass.
+  3. No Linear-capable transport wired anywhere in the profile: EVERY *.yaml/*.yml
      directly under the profile root is scanned, and ANY occurrence of the tokens
      `linear` or `composio` (quoted, inline, block, or commented — fail-closed by
      design) is a violation. Composio counts because it can proxy Linear tools.
-  3. The bot token authenticates and `viewer` resolves to the pinned factory bot
+  4. The bot token authenticates and `viewer` resolves to the pinned factory bot
      id. Re-mint via client_credentials happens only when needed, and a freshly
      minted token is VERIFIED to be the factory bot BEFORE it is persisted.
 
@@ -20,8 +24,13 @@ The expected bot id is pinned in this file and is deliberately NOT overridable
 by flag or environment — a caller that could supply its own id could defeat the
 gate. Rotating the bot identity is a reviewed change to this constant.
 
-Exit codes: 0 ok · 2 missing/unmintable credentials · 3 Linear-capable transport
-wired in the profile · 4 viewer identity mismatch · 5 profile root/env unreadable.
+Exit codes: 0 ok · 2 missing/unmintable credentials · 3 not the isolated runtime,
+or a Linear-capable transport wired in the profile · 4 viewer identity mismatch ·
+5 profile root/env unreadable.
+
+Because assertion 2 is strict, running this by hand from an operator shell or an
+agent session correctly exits 3 — that IS the gate working. The green path is
+observed in the worker's own cron output, not from a human terminal.
 
 Credential VALUES are never printed. Output is paths, ids, names, and counts only.
 
@@ -67,6 +76,59 @@ def scan_profile_configs(root):
             sys.exit(3)
     print(f"capability check: scanned profile root {root} — {len(files)} yaml file(s) "
           f"({', '.join(os.path.basename(f) for f in files) or 'none'}); no Linear-capable transport tokens — OK")
+
+def _samepath(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.normcase(os.path.realpath(a).rstrip("\\/")) == \
+               os.path.normcase(os.path.realpath(b).rstrip("\\/"))
+
+
+def check_executing_runtime(root):
+    """Assert the process running this preflight IS the isolated profile.
+
+    Enumerating every way a human Linear path could exist is impossible: the
+    original check inspected only LINEAR_API_KEY / LINEAR_OAUTH_TOKEN /
+    COMPOSIO_API_KEY, so an agent session reaching Linear over MCP — which
+    holds no such env var — passed a gate it should have failed (test-plan
+    step 3). A blacklist cannot cover transports it has never heard of.
+
+    So attest positively instead: HERMES_HOME must BE this profile's root.
+    Cron is per-profile by design (hermes cron/scheduler.py::_get_hermes_home —
+    "a profile's jobs are stored AND executed under that profile's home"), so
+    the integrate worker satisfies this, while an operator shell or an agent
+    session under the default profile does not, whatever credentials it holds.
+    HERMES_HOME is one of Hermes' explicitly global env vars
+    (agent/secret_scope.py::_GLOBAL_ENV_EXACT), so it is meaningful in
+    os.environ even in a multiplex gateway, unlike per-profile secrets.
+
+    The credential blacklist is kept as defense in depth: it catches a
+    mis-provisioned profile whose .env forgot the blank overrides.
+    """
+    home = os.environ.get("HERMES_HOME", "").strip()
+    if not home:
+        print("PREFLIGHT FAIL (3): the executing process has no HERMES_HOME, so it was not launched "
+              "under the isolated Hermes profile (operator shell, agent session, or bare process). "
+              "This runtime may hold a human Linear toolset this check cannot see; claim nothing. "
+              "Run the integrate worker under the factory-integrate profile — see deploy/bot-runtime.md")
+        sys.exit(3)
+    if not _samepath(home, root):
+        print(f"PREFLIGHT FAIL (3): the executing runtime's HERMES_HOME is {home}, not the isolated "
+              f"profile root {root}. A runtime scoped to a different profile can hold that profile's "
+              "Linear-capable transports (MCP included, which carry no env credential and are "
+              "invisible to a credential scan); claim nothing")
+        sys.exit(3)
+    for var in ("LINEAR_API_KEY", "LINEAR_OAUTH_TOKEN", "COMPOSIO_API_KEY"):
+        if os.environ.get(var, "").strip():
+            print(f"PREFLIGHT FAIL (3): the executing process environment carries a non-empty {var} — "
+                  "the runtime that launched this preflight retains a human/default Linear-capable "
+                  "credential and is NOT capability-isolated; claim nothing. (The isolated profile's "
+                  ".env must blank-override inherited credentials; see deploy/bot-runtime.md.)")
+            sys.exit(3)
+    print(f"executing-runtime check: HERMES_HOME is the isolated profile root ({home}); no "
+          "human/default Linear-capable credentials in the process environment — OK")
+
 
 def viewer(token):
     q = json.dumps({"query": "{ viewer { id name } }"}).encode()
@@ -131,17 +193,7 @@ def main():
 
     scan_profile_configs(root)
 
-    # Executing-runtime check: the preflight inherits the worker process's
-    # environment, so a non-empty human/default Linear-capable credential HERE
-    # means the runtime that launched us retains a human write path.
-    for var in ("LINEAR_API_KEY", "LINEAR_OAUTH_TOKEN", "COMPOSIO_API_KEY"):
-        if os.environ.get(var, "").strip():
-            print(f"PREFLIGHT FAIL (3): the executing process environment carries a non-empty {var} — "
-                  "the runtime that launched this preflight retains a human/default Linear-capable "
-                  "credential and is NOT capability-isolated; claim nothing. (The isolated profile's "
-                  ".env must blank-override inherited credentials; see deploy/bot-runtime.md.)")
-            sys.exit(3)
-    print("executing-runtime check: no human/default Linear-capable credentials in the process environment — OK")
+    check_executing_runtime(root)
 
     v = viewer(token) if token else None
     if v is None:
