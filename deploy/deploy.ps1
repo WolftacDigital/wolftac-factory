@@ -5,6 +5,11 @@ Wolftac Factory deploy/drift/package tool.
   pwsh deploy\deploy.ps1 -Deploy          # copy repo -> agent locations (LF-normalized), rebuild Desktop zips;
                                           #   drifted (live-edited) targets are SKIPPED with a warning, exit 1
   pwsh deploy\deploy.ps1 -Deploy -Force   # overwrite drifted targets too
+  pwsh deploy\deploy.ps1 -Deploy -Force -Only factory-integrate
+                                          # ...but scoped to targets whose path matches -Only.
+                                          #   -Force is otherwise all-or-nothing: shipping ONE fixed file
+                                          #   would clobber every unrelated live-edited skill in the same
+                                          #   run. Scope the blast radius instead of widening it.
   pwsh deploy\deploy.ps1 -Package  # zip the whole repo (minus git/temp/package artifacts) for handoff as plain files
 
 The repo is the source of truth. Files are written with LF line endings — CRLF in a
@@ -13,7 +18,7 @@ If -Check reports drift and the DEPLOYED copy is the improvement (e.g. Hermes /l
 edited a skill in place), copy it back into the repo and commit; otherwise -Deploy
 overwrites the target with the repo version.
 #>
-param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force)
+param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force, [string]$Only)
 
 $Repo = Split-Path $PSScriptRoot -Parent
 $Pairs = @(
@@ -54,6 +59,12 @@ foreach ($tree in $trees) {
     }
 }
 
+# The preflight and the isolated profile's integrate skill are already shipped above.
+# bot-runtime.md is not, and the preflight's own failure messages tell the operator to
+# read it ("see deploy/bot-runtime.md") — from a profile where it does not exist. Ship
+# the recipe beside the script it documents.
+$Pairs += @{ Src = "deploy\bot-runtime.md"; Dst = "$env:LOCALAPPDATA\hermes\profiles\factory-integrate\deploy\bot-runtime.md" }
+
 # Claude Code inside WSL reads the LINUX home (~/.claude/skills), not the Windows one.
 # When WSL is present, add the canonical skills as targets there too (dynamic home
 # detection so this ports to other machines, e.g. jon-omen, unchanged).
@@ -73,6 +84,20 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
 function Get-LfText($Path) {
     $raw = [IO.File]::ReadAllText($Path)
     return ($raw -replace "`r`n", "`n") -replace "`r", "`n"
+}
+
+# -Only scopes BOTH -Check and -Deploy to targets whose destination path contains the
+# given substring (case-insensitive). Its real purpose is safety: -Force applies to every
+# pair in one sweep, so without scoping, force-shipping a single corrected file also
+# clobbers every unrelated drifted target in the same run.
+if ($Only) {
+    $before = $Pairs.Count
+    $Pairs = @($Pairs | Where-Object { $_.Dst -like "*$Only*" })
+    if ($Pairs.Count -eq 0) {
+        Write-Output "No deploy targets match -Only '$Only' (of $before). Nothing to do."
+        exit 1
+    }
+    Write-Output "-Only '$Only': $($Pairs.Count) of $before target(s) in scope."
 }
 
 function Get-LfHash($Path) {
@@ -127,6 +152,13 @@ if ($Deploy) {
             Write-Output "deployed $($p.Src)"
         }
         [IO.File]::WriteAllText($p.Dst, (Get-LfText (Join-Path $Repo $p.Src)), $enc)
+    }
+    # A scoped run rebuilds only what it was scoped to; the handoff zips are a
+    # whole-repo artifact and would silently widen it.
+    if ($Only) {
+        Write-Output "-Only in effect: skipping Desktop/Codex zip rebuild."
+        if ($skipped -gt 0) { exit 1 }
+        exit 0
     }
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
