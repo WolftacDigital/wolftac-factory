@@ -53,14 +53,16 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# `pwsh -File` passes arguments as literal strings and never binds a comma-separated
-# list to a [string[]] parameter — the quotes and commas arrive verbatim and the first
-# Join-Path fails with "cannot find drive". Since Task Scheduler invokes us through
-# -File, accept a ';'-delimited string too and split it here. Passing a real array
-# still works when the script is called from a PowerShell session.
+# `pwsh -File` passes list-like arguments as literal strings instead of binding them
+# to a [string[]] parameter; without normalization, the first Join-Path treats the
+# combined text as one bogus directory. Since Task Scheduler invokes us through -File,
+# accept a ';'- or ','-delimited string and split it here. A comma cannot
+# appear in a valid Windows path, and accepting it prevents a natural operator typo
+# from turning two real cron directories into one bogus path and a false outage page.
+# Passing a real array still works when the script is called from a PowerShell session.
 $CronDir = @(
     $CronDir |
-        ForEach-Object { $_ -split ';' } |
+        ForEach-Object { $_ -split '[;,]' } |
         ForEach-Object { $_.Trim().Trim('"').Trim("'") } |
         Where-Object { $_ }
 )
@@ -218,7 +220,11 @@ function Get-StatePath([string]$Dir) { Join-Path $Dir "watchdog-state.json" }
 function Send-SlackAlert([string]$Text, $Policy) {
     $token = Get-SlackToken
     if (-not $token) {
-        Write-Output "SLACK: no SLACK_FACTORY_BOT_TOKEN available (checked env and $EnvFile) - cannot deliver"
+        # Write-Host keeps diagnostics visible without adding them to the function's
+        # success-output pipeline. The caller must receive exactly one Boolean;
+        # otherwise PowerShell returns [diagnostic, Boolean], a truthy array that
+        # falsely records failed delivery as success and suppresses retries for 12h.
+        Write-Host "SLACK: no SLACK_FACTORY_BOT_TOKEN available (checked env and $EnvFile) - cannot deliver"
         return $false
     }
     $identity = $Policy.fallback_identity   # watchdog alerts are never a worker's face
@@ -233,15 +239,15 @@ function Send-SlackAlert([string]$Text, $Policy) {
             -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json; charset=utf-8" } `
             -Body ([Text.Encoding]::UTF8.GetBytes($body))
     } catch {
-        Write-Output "SLACK: delivery failed - $($_.Exception.Message)"
+        Write-Host "SLACK: delivery failed - $($_.Exception.Message)"
         return $false
     }
     if (-not $resp.ok) {
         # $resp.error is a Slack error code (e.g. channel_not_found), never a credential.
-        Write-Output "SLACK: API returned not-ok - $($resp.error)"
+        Write-Host "SLACK: API returned not-ok - $($resp.error)"
         return $false
     }
-    Write-Output "SLACK: posted as '$($identity.username)' to $($Policy.slack_channel_id) (ts $($resp.ts))"
+    Write-Host "SLACK: posted as '$($identity.username)' to $($Policy.slack_channel_id) (ts $($resp.ts))"
     return $true
 }
 

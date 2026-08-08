@@ -91,11 +91,12 @@ Two mechanics that will bite if you change this command:
 
 * **Use the full path to `pwsh.exe`.** A bare `pwsh.exe` fails with Last Result
   `-2147024894` (`0x80070002`, file not found) — the task's PATH is not your shell's.
-* **Cron directories are `;`-delimited inside ONE quoted argument.** `pwsh -File`
-  passes arguments as literal strings and will not bind a comma-separated list to an
-  array parameter; the quotes and commas arrive verbatim and the run dies on
-  "cannot find drive". The script splits on `;` itself. Passing a real PowerShell
-  array still works when you call the script from a session rather than via `-File`.
+* **Cron directories may be `;`- or `,`-delimited inside ONE quoted argument.**
+  `pwsh -File` passes arguments as literal strings rather than binding a list to an
+  array parameter, so the script splits either delimiter itself. Accepting commas
+  also prevents a natural operator typo from turning two valid paths into one bogus
+  directory and an unmarked false outage page. Passing a real PowerShell array still
+  works when you call the script from a session rather than via `-File`.
 
 The default watches only `%LOCALAPPDATA%\hermes\cron`. The **integrate worker runs in
 its own Hermes profile** with a separate cron directory, so the command above lists
