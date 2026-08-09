@@ -51,20 +51,61 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
-   `Factory Queue`. If invoked with an argument (e.g. "build agentic"), treat it as a
+   `Factory Queue`. Exhaust pagination before concluding the queue or stale-claim set is
+   empty. If the listing omits project names, first filter to active `Factory Queue`
+   issues, then enrich those candidates before applying a lane filter; do not infer a
+   project lane from the issue title. If invoked with an argument (e.g. "build agentic"), treat it as a
    lane filter: only consider issues whose Linear project name or labels contain it
-   (case-insensitive). Highest priority first, oldest on ties. Skip issues whose latest
-   comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
+   (case-insensitive).
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+   later Jonathan decision comment. Do not comment or change state. A later decision
+   comment from Jonathan plus removal of his assignment clears the park; the issue is
+   then buildable and that comment is part of its work order. The comment author must
+   be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
+   the park.
+   **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+   review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+   rework tier and within the fresh tier, preserve priority order
+   (Urgent > High > Medium > Low), oldest first on ties.
+   Skip issues whose latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
    SILENTLY, no comment or state change — issues whose spec **Repo:** path is
    unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
    Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
    `In Progress` issues with label `Factory Queue` (and the lane filter, if any).
-   If the most recent comment, or `startedAt`/claim time when there are no comments,
+   Before resetting one, resolve its Linear-generated branch against `git worktree
+   list --porcelain` and inspect any owning issue worktree. A dirty issue worktree is
+   preserved operator-attention work, not proof of abandonment: do not sweep, reset,
+   claim, edit, commit, or discard it, even when Linear activity is older than four
+   hours. Report the worktree path and diff stat in the cron result and follow
+   `references/stale-claim-dirty-worktree-safety.md`. If no dirty issue worktree exists
+   and the most recent comment, or `startedAt`/claim time when there are no comments,
    is OLDER than 4 hours, you may post exactly
    `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
    If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
    sweep it. This sweep is the ONLY time build posts a comment during pickup; during
    a claim-race back off you post NOTHING.
+
+   Before claiming each selected `Todo` candidate, resolve its Linear-generated branch
+   against `git worktree list --porcelain` and inspect any owning/reused issue worktree.
+   For WSL repos, make this a repository-identity-verified, explicit-path probe: pass the
+   literal spec repo path and branch ref to WSL (do not rely on nested shell variables),
+   and confirm `git rev-parse --show-toplevel` plus `git remote get-url origin` identify
+   the intended repo before trusting the worktree list. If output resolves to the host
+   current checkout or any unexpected repo, treat the probe as invalid and rerun it
+   before any Linear claim mutation. The claim is permitted only after this explicit
+   probe and the target worktree dirty check complete successfully.
+   A dirty dedicated worktree is operator-attention work even while Linear says `Todo`:
+   do not claim, edit, commit, reset, discard, comment, or change state. Report its path
+   and complete dirty summary, then consider the next lane-eligible candidate in normal
+   priority order. Use `git diff --stat` for unstaged changes, `git diff --cached --stat`
+   for staged changes, and `git status --short` for untracked paths; a branch-range diff
+   such as `git diff --stat origin/main...HEAD` does **not** include uncommitted work.
+   Follow `references/stale-claim-dirty-worktree-safety.md` for both stale `In Progress`
+   claims and dirty reused worktrees on `Todo` candidates. In scheduled runs, this is an
+   actionable operator-attention result, not a generic empty queue, so normal
+   nothing-buildable suppression does not hide it.
+
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
 2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Immediately
@@ -101,6 +142,15 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    separate clean issue worktree from the fetched remote default branch: leave the dirty
    checkout untouched, do not switch it, and verify the new worktree starts clean.
 
+   Put the worktree in the durable scratch root: `D:\Wolftac\.build-worktrees\` on
+   Windows (native `D:/...` form for `git worktree add`, MSYS `/d/...` for shell
+   commands), `~/.build-worktrees/` under WSL. One directory per issue, named
+   `build-<ISSUE>`; create the root if missing. Never `C:\tmp`, `C:/tmp`, or `/tmp` —
+   those are cleared by reboots, cleanup tools, and between separate `wsl.exe`
+   invocations. A build worktree is reused across ticks, so losing it mid-issue drops
+   uncommitted work and strands a `.git/worktrees/` entry in the target repo for its
+   owner to clean up. `/wolftac-review` shares the root with a `review-` prefix.
+
    If the Linear-generated branch already contains approved implementation commits but
    predates current `origin/main`, inspect its branch-only history before changing it.
    Without explicit history-rewrite approval, preserve those commits and merge
@@ -114,11 +164,17 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    `references/wsl-webgl-build-pitfalls.md` for line endings, React state/fallback
    design, build verification, and honest browser-proof boundaries.
 
-5. **Implement — guardrails.** Read the repo's CLAUDE.md/AGENTS.md first; match
-   conventions. Build exactly to the spec's Technical approach and Acceptance criteria.
-   NO scope creep — tangents go in the report as "suggest /wolftac-spec". Secrets in .env,
-   never hardcoded. Blocking ambiguity → `BLOCKED: <questions>` comment, state `Todo`,
-   stop. Don't guess on load-bearing decisions.
+5. **Implement — guardrails.** **Before editing anything**, when the spec uses
+   `AC-N`/`NG-N` IDs, compare every `AC-N` against every `NG-N`. Non-goals are
+   binding. An acceptance criterion that requires a non-goal is a spec defect:
+   comment `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and
+   stop. Old-format (unnumbered) specs proceed under the existing rules.
+   If it is not in the Linear issue, it does not exist — no side-channel instructions.
+   Read the repo's CLAUDE.md/AGENTS.md first; match conventions. Build exactly to the
+   spec's Technical approach and Acceptance criteria. NO scope creep — tangents go in
+   the report as "suggest /wolftac-spec". Secrets in .env, never hardcoded. Blocking
+   ambiguity → `BLOCKED: <questions>` comment, state `Todo`, stop. Don't guess on
+   load-bearing decisions.
 
 6. **Verify.** Execute the spec's Test plan literally. Every criterion needs evidence
    from running code — "looks right" is not verification. Classify proof precisely:
@@ -135,6 +191,18 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    `git push -u origin <branch>` and verify the remote head equals local `HEAD`. If no
    writable remote exists, do not advance the issue to `In Review`.
 
+   **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
+   non-draft PR per issue for a GitHub remote. Run `gh pr view <branch>` first
+   and reuse the existing PR URL when present; never open a second PR for the branch.
+   Otherwise run
+   `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
+   blank line, `Closes WD-NNN`, another blank line, and
+   `Linear: <issue URL>" --base main --head <branch>`. Retry a `gh` rate-limit or
+   transient failure once; if it fails again, record the PR-creation blocker without
+   failing a build whose branch published successfully. With no GitHub remote, skip
+   PR steps and record `local-only repo — no PR`; execution verification is
+   unchanged.
+
 8. **Hand off.** Comment:
 
    ```
@@ -143,11 +211,21 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    - **Implemented:** <what was built, per spec section>
    - **Verified:** <exact commands run and results, per criterion>
    - **Branch / commits:** <branch> @ <SHAs>
-   - **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
+   - **Published head:** <remote branch> @ <exact remote SHA>
+   - **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
    - **Deviations from spec:** <none, or what and why>
    - **Notes for review:** <what the reviewer should check first>
    ```
 
    Then state `In Review`.
 
-9. **Stop.** One issue per invocation.
+9. **Stop.** Once the branch is pushed and the remote head verified, remove the
+   worktree — review rebuilds its own from the published SHA. Delete generated heavy
+   artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`), then
+   `git worktree remove <path>` and `git worktree prune`. Confirm with
+   `git worktree prune --dry-run -v 2>&1` — silent means clean (`-v` writes to stderr,
+   so a bare pipe looks falsely clean). On `Permission denied` — common under OneDrive,
+   where git's recursive delete fails but the shell's does not — `rm -rf` each
+   `.git/worktrees/<name>` prune names and re-confirm. Keep the worktree only when
+   handing the issue back unfinished, and say so in the report. Then: one issue per
+   invocation.

@@ -38,6 +38,7 @@ Feature idea (raw, from the user): $ARGUMENTS
    ## Problem
    ## Goals
    ## Non-goals
+   - NG-1: <out-of-scope item>
    ## User flow
    ## Technical approach
    - **Entry points / affected files:** (real paths, verified)
@@ -46,7 +47,8 @@ Feature idea (raw, from the user): $ARGUMENTS
    - **Key decisions:**
    - **Dependencies:**
    ## Acceptance criteria
-   - [ ] (each independently testable by a reviewer who didn't build it; include ≥1 failure/edge case)
+   - [ ] AC-1: <independently testable criterion; prefer "user can X and sees Y" over "code does Z">
+   - [ ] AC-2: <failure/edge case criterion>
    ## Quality gates
    - Accessibility:
    - Security / privacy:
@@ -57,7 +59,7 @@ Feature idea (raw, from the user): $ARGUMENTS
    ## Evidence map
    | Criterion | Test-plan step | Expected observable result |
    |---|---|---|
-   | <one row per acceptance criterion> | <matching test-plan step> | <observable pass result> |
+   | AC-1 | <matching test-plan step> | <observable pass result> |
    ## Test plan
    (exact commands + expected results; how build proves it and review re-proves it)
    ## Build notes
@@ -69,7 +71,11 @@ Feature idea (raw, from the user): $ARGUMENTS
    is invalid. The Evidence map must include one row per acceptance criterion; a
    criterion with no row is a template violation. While filling it, check criteria for
    mutual contradiction and resolve conflicts before filing (WD-211 AC3/AC4 is the
-   motivating example).
+   motivating example). Assign stable `AC-N` IDs to acceptance criteria and stable
+   `NG-N` IDs to non-goals. IDs are stable once filed — never renumber; deletions
+   leave gaps. Before filing, compare every `AC-N` against every `NG-N`. No acceptance
+   criterion may require a non-goal; resolve any conflict with the user before filing.
+   The Non-goals section protects /wolftac-build from scope creep — be generous.
 
 3. **One approval pass.** Show the draft, ask a single go/no-go, accept edits, then file.
 

@@ -18,7 +18,10 @@ testable plan and files it as a Linear issue; **build** picks up specced issues,
 implements them on a branch, and *proves* they work by running the code; **review**
 re-verifies independently and marks passing work Approved; **integrate** rebases the
 approved branch onto the default branch, re-runs the gates, and — only after the
-human's explicit `APPROVE MERGE` — merges it and marks it Done. Done means merged:
+human's explicit approval (a 🚀 reaction by the configured approver on the newest
+Slack approval message, or the case-insensitive typed `APPROVE MERGE` /
+`APPROVED MERGE` fallback) — merges it and
+marks it Done. Done means merged:
 the only stage allowed to set it is integrate, and only after ancestry is verified.
 Any agent on any platform can run any stage — the Linear issue itself carries all
 the context, so a Codex session can build what a Fable session specced, and a Hermes
@@ -33,15 +36,31 @@ session can review what Codex built.
 - **States, in order:** `Todo` (specced, ready to build) → `In Progress` (a build
   session has claimed it) → `In Review` (built, awaiting QA) → `Approved` (review
   passed, awaiting merge) → `Done` (merged to the remote default branch — **only the
-  integrate stage may set this, and only after the human's `APPROVE MERGE`**). A
+  integrate stage may set this, and only after the human's approval: Jonathan's
+  `:rocket:` reaction on the newest Slack approval message (reactor id must equal
+  `approver_slack_user_id` in `deploy/approval-policy.json`, verified by API read;
+  any other reactor is ignored) or his typed comment starting `APPROVE MERGE` or
+  `APPROVED MERGE`, case-insensitively, as the fallback**). Workers never add
+  reactions to factory notification messages. Every factory Slack post uses
+  `SLACK_FACTORY_BOT_TOKEN` with `chat.postMessage`, selecting `username` and
+  `icon_emoji` from `deploy/approval-policy.json`'s platform/hostname-keyed
+  `sender_identities`, or `fallback_identity` when unmapped; `reactions.get`
+  uses the same bot token, never a human Slack session. A
   failed review — or a failed rebase/gate at integration — sends the issue back to
   `Todo` with a numbered defect list, which becomes the next build's work order.
 - **Spec template:** every spec follows `canonical/wolftac-spec/spec-template.md`.
   The **`Repo:`** header line at the top of every spec is mandatory — it's the
   working directory for that issue, and build/review refuse to guess at it.
+- **Issue is the instruction boundary:** If it is not in the Linear issue, it does
+  not exist — no side-channel instructions.
+- **One PR per published issue branch:** after build pushes and verifies the remote
+  SHA, it creates one non-draft GitHub PR and records the URL in the BUILD REPORT.
+  Reuse an existing PR for the branch; never create a duplicate. A local-only repo
+  records `local-only repo — no PR` and keeps the execution-verified flow.
 - **Linear identities are split:** factory workers connect to Linear through the
   dedicated factory bot identity; humans comment and approve from their own
-  accounts. The integrate stage refuses any `APPROVE MERGE` authored by the same
+  accounts. The integrate stage refuses any typed approval comment
+  (`APPROVE MERGE` or `APPROVED MERGE`, case-insensitively) authored by the same
   identity it writes with — until the split exists in a workspace, integrate can
   prepare proof packs but will never merge. Integrate performs ALL of its Linear
   I/O with the bot credentials (`LINEAR_FACTORY_BOT_TOKEN`), failing closed when
@@ -61,6 +80,50 @@ session can review what Codex built.
   agentic`, `/wolftac-review crm` — only work issues whose Linear project name or
   labels contain that word (case-insensitive). No argument = work the whole queue.
 
+### Review verdicts and parked work
+
+Review has exactly four outcomes:
+
+| Verdict | Meaning | Conveyor action |
+|---|---|---|
+| `PASS` | Every criterion and baseline check passes. | Set `Approved`. |
+| `PASS WITH FIXES` | The reviewer applies and verifies only minor, low-risk fixes. | Set `Approved`. |
+| `FAIL` | One or more ordinary decidable defects, failed CI checks, security findings, or unmet criteria require rework. | Post the tagged defect list and set `Todo`. |
+| `NEEDS HUMAN` | A `[SCOPE-CONFLICT]` or other product decision requires Jonathan's verdict. | Assign Jonathan and keep `In Review`; do not move state. |
+
+Every review finding carries exactly one tag: `[AC-N]`, `[DEFECT]`, `[SECURITY]`,
+`[CI]`, or `[SCOPE-CONFLICT]`. `[CI]` means a GitHub check failed and the
+finding names the failing job. `NEEDS HUMAN` is forbidden for ordinary decidable defects:
+decidable defects are `FAIL`; only product decisions park an issue. A parked report
+must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and instruct
+Jonathan to comment his decision, then remove his assignment. Once unassigned, the
+issue re-enters the review queue with his decision comment as part of the work order.
+
+Review pickup silently skips an issue whose latest review report is `NEEDS HUMAN`
+while it remains assigned to Jonathan or lacks his later decision comment. Build
+pickup applies the identical test to `Todo` issues. Neither stage comments or changes
+state while skipping parked work.
+
+**Clearing a park is a two-part action, and both parts are required:** Jonathan
+comments his decision *from his own Linear account*, and his assignment is removed.
+Only then does the issue become pickable again, with that comment as part of the work
+order. A decision relayed on Jonathan's behalf by an agent does **not** clear the park
+— the comment author must be Jonathan himself, for the same identity reason integrate
+refuses a bot-authored approval. Relaying a chat decision into Linear as an agent
+records the intent but leaves the issue parked; say so plainly rather than implying
+the issue is unblocked.
+For buildable `Todo` work, issues whose latest review report is `FAIL` form the
+rework tier and are selected before fresh issues; priority
+(`Urgent` > `High` > `Medium` > `Low`) and oldest-first ordering apply within each
+tier.
+
+Before any PASS verdict, review enumerates every check on the published branch's PR
+with `gh pr checks <n>`: any red check, required or advisory, is a `[CI]` FAIL; any
+pending/queued/outage result gets `waiting on CI` and no verdict; only a PR with no
+checks records `no CI checks present — execution-verified only`. Required-ness affects
+only GitHub's server-side merge enforcement, never the Factory verdict; with no GitHub
+remote or no PR, review records `local-only repo` and keeps the execution-verified flow.
+
 The full procedure for each stage — exactly what to do, in what order, what to check,
 what to write in your report — lives in the canonical skill files. This file gets you
 installed and oriented; **`canonical/wolftac-{spec,build,review,integrate}/SKILL.md`
@@ -74,9 +137,9 @@ Do not mix the two.
 
 ## Which one are you? Install yourself.
 
-Pick your platform below. Every path ends the same way: the three skills present
-where your platform looks for them, Linear reachable, and a restart if you're a
-long-running session.
+Pick your platform below. Every path ends the same way: all four stage skills
+present where your platform looks for them, Linear reachable, and a restart if
+you're a long-running session.
 
 ### Claude Code (CLI or IDE)
 
@@ -110,7 +173,8 @@ long-running session.
    ```
 3. Start a new session (or restart). The first Linear-touching call will trigger an
    OAuth browser login — or run `codex mcp login linear` explicitly.
-4. Verify: `$wolftac-spec`, `$wolftac-build`, and `$wolftac-review` appear as skills
+4. Verify: `$wolftac-spec`, `$wolftac-build`, `$wolftac-review`, and
+   `$wolftac-integrate` appear as skills
    in CLI/IDE or the desktop Skills UI; then run one read-only Linear dry run (for example,
    list your Linear teams or list Factory Queue issues) and confirm it reaches
    Linear without error.
@@ -151,16 +215,17 @@ than pretending the model team ran.
 
 ### Claude Desktop
 
-1. Each of `ports/claude-desktop/wolftac-spec/`, `wolftac-build/`, `wolftac-review/`
-   is a skill folder — zip each one and upload it in Settings → Capabilities →
-   Skills. (If you were handed a package that already includes
-   `wolftac-{spec,build,review}.zip`, use those directly.)
+1. Each of `ports/claude-desktop/wolftac-spec/`, `wolftac-build/`, `wolftac-review/`,
+   `wolftac-integrate/` is a skill folder — zip each one and upload it in
+   Settings → Capabilities → Skills. (If you were handed a package that already
+   includes `wolftac-{spec,build,review,integrate}.zip`, use those directly.)
 2. Enable the Linear connector for the chat (tools menu).
-3. **Know your limits:** the build and review stages need filesystem + terminal
-   access to the target repo (an MCP server like desktop-commander) to actually do
-   anything. Without it, they'll report what's in the queue and tell the human to run
-   that stage from a coding agent instead — they will never fake a build or claim
-   completion they can't verify.
+3. **Know your limits:** the build, review, and integrate stages need filesystem +
+   terminal access to the target repo (an MCP server like desktop-commander) to
+   actually do anything — and integrate additionally needs the factory bot
+   credentials in that environment. Without them, they'll report what's in the queue
+   and tell the human to run that stage from a coding agent instead — they will
+   never fake a build, claim completion they can't verify, or merge anything.
 
 ## Operating rules (apply regardless of platform)
 
@@ -174,9 +239,14 @@ than pretending the model team ran.
 - **No scope creep.** Build exactly what the spec's Technical Approach and Acceptance
   Criteria describe. Ideas for more get noted as "suggest /wolftac-spec," not built.
 - **Only the integrate stage sets `Done`, and only after the human's explicit
-  `APPROVE MERGE`.** Build ends at `In Review`; review's passing verdict is
+  approval artifact.** Build ends at `In Review`; review's passing verdict is
   `Approved`. If you think something is finished, hand it forward — never mark it
   Done yourself from build or review.
+- **Integrate uses the issue PR when one exists.** After the unchanged human approval
+  gate and rebuilt-head gates, run `gh pr merge <n> --merge` for the branch's PR.
+  Never auto-merge. If no PR exists for a pre-PR-era in-flight issue, use the existing
+  direct fast-forward path. After either path, verify the reviewed SHA is an ancestor
+  of the remote default branch before setting `Done`.
 - **If a spec is genuinely wrong or ambiguous**, don't guess on load-bearing
   decisions — post `BLOCKED: <specific question>` and return the issue to `Todo`.
 
@@ -208,7 +278,7 @@ before relying on it; never schedule aspirational syntax.
 ```
 /loop 5m /wolftac-build [lane]     # build line, session in/reaching the target repo
 /loop 5m /wolftac-review           # review line
-/loop 10m /wolftac-integrate       # integrate line — merges only on APPROVE MERGE
+/loop 10m /wolftac-integrate       # integrate line — merges only on a valid approval artifact
 ```
 
 Permission precondition: an unattended loop stalls at the first tool call that
@@ -263,8 +333,8 @@ a suggestion.
 
 ### Claude Desktop
 
-No unattended mode. Desktop is an interactive surface; its build/review skills
-already refuse work they can't execute (see the reality check above).
+No unattended mode. Desktop is an interactive surface; its build/review/integrate
+skills already refuse work they can't execute (see the reality check above).
 
 ## Troubleshooting
 

@@ -109,6 +109,57 @@ A later operator amendment can legitimately move runtime capability isolation, a
 
 If the contradiction is limited to agent instructions and validation rules, requires no design change, and can be fixed quickly in the detached review worktree, it is eligible for PASS WITH FIXES. Commit and push the repair to the reviewed branch, verify the remote head equals the new SHA, rerun the full parity/semantic/EOL/diff checks, and cite the fix SHA. Runtime isolation remains a blocker only for the successor issue or before production enablement, not for the amended contract-only issue.
 
+## 8. Audit Hermes capability-isolation preflights and cron binding
+
+When a delivery claims that a Hermes profile is bot-only, do not accept a green `viewer` probe or bot-authored audit trail as proof of isolation. Those prove which transport was used, not which other transports remained available.
+
+### Bind the proof to the actual runtime
+
+- Resolve the active profile and its real `HERMES_HOME`; inspect the profile-local config/tool inventory actually used by the scheduled worker. A preflight must not certify an arbitrary caller-supplied `--config` or `--profile-root` while the executing process retains human-authenticated tools.
+- List every existing profile and inspect the intended worker profile specifically. If no named isolated profile/runtime exists when the approved scope requires one, a recipe and synthetic YAML fixture are not delivery.
+- Run a negative probe from a deliberately dual-capable runtime. Pointing the preflight at a no-MCP fixture or hard-coded bot-profile directory must not turn that same process green. Also set `HERMES_HOME` explicitly to the human/default profile and run the preflight with no path override; if it still scans the bot profile and exits 0, it is certifying a directory rather than the current runtime.
+- Check inherited process credentials by printing key-presence booleans only (never values) for human-capable variables such as `LINEAR_API_KEY` and relevant proxy credentials. Hermes profile `.env` loading can override keys present in the profile file without clearing unrelated keys inherited by the process; therefore a bot-only profile `.env` does not by itself prove a clean process environment. Require a sanitized launch environment or executable rejection of forbidden inherited credentials.
+- A profile-local `mcp list` showing no servers is necessary but not sufficient. Correlate it with the actual process environment, built-in/plugin tool inventory, and a worker invocation launched under that profile; otherwise a terminal/plugin path can retain the human capability while the profile YAML looks clean.
+
+### Probe subprocess inheritance from the exact profile
+
+Hermes' profile secret scope and `get_secret()` isolation do not automatically prove that terminal or code-execution children are clean: those children may be built from process-global `os.environ`, and a profile `.env` load can leave unrelated inherited keys intact. Reproduce the boundary without exposing values:
+
+1. Launch a read-only one-shot under the exact worker profile, not from the reviewer's default profile.
+2. In one terminal call, print only `KEY:True|False` for every forbidden human-capable credential (for example `LINEAR_API_KEY` and relevant proxy credentials). Never print, hash, or encode the values.
+3. Run the submitted preflight in that same profile/runtime and record its exit code.
+4. If a forbidden key is visible to the child while preflight exits 0, the runtime is dual-capable and both the green-path isolation claim and the human-path rejection criterion fail.
+5. When necessary, inspect the current subprocess sanitization registry/blocklist by key name only. Do not infer that a credential is stripped merely because provider secrets or MCP config are profile-scoped; verify membership or execute the boolean probe.
+
+Use a disposable fixture to test fail-closed ordering: monkeypatch network helpers to raise if called, run with missing credentials, and require the credential error exit before any helper is reached. For token rotation, copy only into a temporary profile, verify the fresh token's immutable viewer before persistence, scan output for raw and URL-encoded forms, and confirm the real profile file is unchanged.
+
+### Enumerate every human-capable Linear transport
+
+Probe more than a server literally named `linear`. Include direct Linear MCP, Composio Linear, generic/delegating MCPs that expose Linear tools, plugins, inherited toolsets, and any other configured write transport. Query the immutable viewer ID through each available path. A single path resolving to the human approver makes the runtime dual-capable.
+
+If config inspection is part of the gate:
+
+- parse YAML structurally rather than with a regex;
+- test quoted keys, inline maps, alternate valid nesting, disabled entries, and generic providers such as Composio;
+- add semantic negative tests that reject every known human-capable transport, not only positive checks for a bot token or a `linear:` key.
+
+### Keep the trusted identity immutable and side effects ordered
+
+The expected factory-bot ID is a security constant. Do not allow a normal env var or CLI flag to redefine it in production; otherwise a human token plus a matching override can satisfy the gate. After token re-mint, query `viewer` and verify the immutable bot ID before persisting the token. Persist atomically and preserve the old token if identity validation or the write fails. This is required when the contract promises zero side effects on failed preflight paths.
+
+### Verify the scheduled command end to end
+
+Cross-check both current Hermes documentation and live CLI help, then verify the exact operator recipe without creating the spend-gated job:
+
+1. The cron command explicitly targets the isolated profile (named profile alias or the current supported profile-selection mechanism); plain `hermes cron create` is insufficient when the default profile is human-capable.
+2. The preflight path is absolute or deployed inside the configured cron workdir. A skill saying “run from the factory repo” does not make `deploy/preflight.py` reachable from a different workdir.
+3. Provider/model pinning uses a supported profile-local control plane and is read back after creation; do not rely on hand-editing `cron/jobs.json` when the current docs warn that direct edits can fail silently. When the current Hermes API exposes `cronjob(action="update", job_id=..., provider=..., model=...)`, use that supported update path (or the current documented equivalent), then list/read the persisted job and verify profile, provider, model, snapshots, skill, workdir, and schedule before enabling the worker.
+4. The scheduled session itself reports the bot viewer and the absence of every human transport before queue access.
+5. Read the persisted job back after any claimed repair. Verify the current prompt—not a prior build report—uses a stable path that exists, the approved workdir, and the expected skill/provider/model. Then inspect the newest saved run output to prove that exact persisted prompt passed preflight. A successful one-shot `chat` invocation does not prove the scheduled job is operable.
+6. Correlate timestamps: the end-to-end fixture must postdate creation/configuration of the isolated runtime and appear in that runtime's session inventory. Correct bot/human comment authors from an earlier ad hoc fixture prove transport choice, not that the delivered scheduler/profile executed the flow.
+
+A fixture whose comments are all bot-authored is useful audit evidence, but it passes the isolation criterion only when the fixture ran in that actual scheduled/profile runtime and the negative transport inventory was also proven.
+
 ## Review verdict guidance
 
 These are major defects, not PASS WITH FIXES:

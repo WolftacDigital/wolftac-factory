@@ -38,7 +38,9 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
-- You consume state `In Review`; you produce `Approved` (pass → wolftac-integrate merges after human approval) or `Todo` (fail → rework).
+- You consume state `In Review`; you produce `Approved` (pass → wolftac-integrate
+  merges after human approval), `Todo` (fail → rework), or parked `In Review`
+  assigned to Jonathan (needs product decision).
 - Reports open with `**Agent:** <platform / model>`. Prefer reviewing work built by a
   DIFFERENT agent/model than yourself when possible — the build report's Agent line
   tells you who built it.
@@ -65,9 +67,11 @@ For reviews whose acceptance criteria require proving a Supabase production sche
 
 ## Windows detached worktree review pattern
 
-When reviewing a Windows-hosted repo from Git Bash, create detached review worktrees with native `C:/...` paths in `git worktree add`, then access them through MSYS `/c/...` paths for shell commands. Avoid passing `/c/Users/...` to `git worktree add`; Git for Windows can interpret it as `C:/c/Users/...`, creating confusing ghost/stale worktree entries. See `references/windows-linear-factory-review-proof.md` for the pattern.
+When reviewing a Windows-hosted repo from Git Bash, create detached review worktrees under `D:\Wolftac\.build-worktrees\`, one directory per review named `review-<ISSUE>-<short-SHA>`. Pass the native form to `git worktree add` (`D:/Wolftac/.build-worktrees/review-WD-291-ff1ae93`) and use the MSYS form for shell commands (`/d/Wolftac/.build-worktrees/review-WD-291-ff1ae93`). Create the root if it does not exist. Avoid passing `/c/Users/...` or `/d/...` to `git worktree add`; Git for Windows can interpret those as `C:/c/Users/...`, creating confusing ghost/stale worktree entries. See `references/windows-linear-factory-review-proof.md` for the pattern.
 
-If the detached worktree has no dependencies, prefer the repo lockfile install command. If the source repo already has a valid `node_modules` and the cron budget is tight, a temporary link/copy is acceptable only for verification, and the report should state what was done. Before removing a worktree after build/test runs, delete generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`) inside the worktree first; these can block `git worktree remove` on Windows.
+Never put a worktree in `C:\tmp`, `C:/tmp`, or `/tmp`. Those are cleared by reboots and cleanup tools, and a worktree that disappears out from under git strands a `.git/worktrees/` entry in the *target* repo for its owner to clean up — 29 such entries accumulated in `wolftac-crm` between WD-185 and WD-300 before this rule existed.
+
+If the detached worktree has no dependencies, prefer the repo lockfile install command. If the source repo already has a valid `node_modules` and the cron budget is tight, a temporary link/copy is acceptable only for verification, and the report should state what was done. **For Next.js/Turbopack builds on Windows, prefer a real local copy:** a junction/symlink whose target sits outside the worktree can make Turbopack abort with `Symlink [project]/node_modules is invalid, it points out of the filesystem root`. A link may still be used for tests/typecheck/lint, but if build hits that error, replace it with a local copy and rerun the build before judging the branch. Before removing a worktree after build/test runs, delete generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`) inside the worktree first; these can block `git worktree remove` on Windows.
 
 ## Remote-ref maintenance review pattern
 
@@ -86,6 +90,10 @@ When the full test command fails due unrelated suite collection/tooling failures
    filter (match Linear project name or labels, case-insensitive). Skip — SILENTLY,
    no comment or state change — issues whose spec **Repo:** path is unreachable from
    this environment.
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip an issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+   later Jonathan decision comment. Do not comment or change state. Jonathan's later
+   decision comment plus removal of his assignment clears the park.
    Before choosing an unclaimed review, perform a read-first stale-claim sweep:
    inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
    filter, if any). If the most recent comment, or `startedAt`/claim time when there
@@ -108,13 +116,32 @@ When the full test command fails due unrelated suite collection/tooling failures
    REPORT. Fetch the remote, verify its published branch resolves to the exact reported
    SHA, then create a detached review worktree at that SHA. Never switch the active
    user checkout. Read `git log` and `git diff <remote-default>...<reported-SHA>`.
-   A missing remote branch or SHA mismatch is a FAIL.
+   A missing remote branch or SHA mismatch is a FAIL. Put the worktree in the durable
+   scratch root — `D:\Wolftac\.build-worktrees\` on Windows, a directory under the
+   agent's home on WSL/Linux — never `C:\tmp` or `/tmp`; see "Windows detached worktree
+   review pattern" below.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with
    observed evidence. Baseline checks regardless of spec: no hardcoded secrets/tokens,
    no debug leftovers, input validation on new endpoints/forms, error paths don't
    crash, no unrelated files in the diff.
+
+   **CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repo has a
+   GitHub remote and resolve the PR for the published branch. No GitHub remote or no
+   PR → record `local-only repo` and continue the execution-verified flow. For a PR,
+   enumerate all checks with `gh pr checks <n>`; check presence, not required-ness,
+   controls the Factory verdict. `--required` must NOT be used to decide the verdict.
+   Any FAILED check produces one `[CI]` finding naming the failing job and verdict
+   FAIL; an advisory/non-required red check blocks PASS exactly as a required one
+   does. Any PENDING, queued, or in-progress check → post a short `waiting on CI`
+   note and END WITHOUT A VERDICT, leaving `In Review`. A GitHub/CI outage or
+   indeterminate queue result is also waiting and must never become a false FAIL.
+   Only when the PR has NO checks at all → record
+   `no CI checks present — execution-verified only` and proceed as today. When all
+   present checks are green, continue the execution review. A green required check
+   is never approval — the human merge gate is unchanged. After any review fix
+   changes the head, rerun the gate and wait for the new checks.
 
    **Fail-open config check:** when an acceptance criterion says a safety/compliance artifact
    must always be present (unsubscribe links, auth checks, audit writes, tenant scoping,
@@ -155,9 +182,15 @@ When the full test command fails due unrelated suite collection/tooling failures
    cannot enforce “default has not moved” from ahead/behind counts or an unpublished rebased SHA.
    For Telegram/Slack/webhook relays, verify immutable source-event provenance that the merge
    worker cannot mint rather than assuming a relayed Linear comment is human-authored.
-   Follow `references/human-approval-and-rebased-artifact-review.md` and treat self-approvable
-   gates, an unexercised positive identity path, missing default-head proof, or fresh-clone-missing
-   approved artifacts as blocking defects.
+   Follow `references/human-approval-and-rebased-artifact-review.md`. Its Hermes-specific
+   section covers binding preflight proof to the real `HERMES_HOME`, enumerating direct
+   Linear/Composio/delegated transports, immutable bot IDs, profile-scoped cron paths,
+   subprocess credential-inheritance probes, and persisted-job/session timeline checks.
+   A clean profile YAML or successful one-shot chat is not scheduled-runtime proof: read
+   the current job prompt and newest run output, and require the end-to-end fixture to
+   postdate runtime creation in that profile's session inventory.
+   Treat self-approvable gates, an unexercised positive identity path, missing default-head
+   proof, fresh-clone-missing approved artifacts, or fixture-only isolation as blocking defects.
 
    **Automation bypass / URL secret masking checks:** when reviewing tooling that passes a
    secret through query params (for example Vercel `x-vercel-protection-bypass`), do not
@@ -216,7 +249,23 @@ When the full test command fails due unrelated suite collection/tooling failures
    editorial layout, and use focused secret/debug patterns to avoid false positives from
    public-token documentation.
 
-5. **Verdict — three outcomes.**
+   **Content-drift reconciliation checks:** when an issue reconciles live/deployed
+   skills, runbooks, or generated documentation back into a repository, follow
+   `references/content-drift-reconciliation-review.md`. Freeze the authoritative drift
+   input and reviewed SHA, normalize line endings before content comparison, account
+   for every deleted live-side line, compare imported support files, verify every linked
+   reference exists, and mutate only the acceptance-criteria checkbox block in Linear.
+
+   **REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one tag; never
+   stack tags on one finding:
+   - `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
+   - `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
+   - `[SECURITY]` — security finding; first-class and greppable.
+   - `[CI]` — a GitHub check failed; name the failing job.
+   - `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
+     Jonathan can make.
+
+5. **Verdict — four outcomes.**
    - **PASS** — tick the acceptance checkboxes in the description, post the report,
      state `Approved` (wolftac-integrate takes it from here).
    - **PASS WITH FIXES** — only minor defects (low-risk, no design change, ~15 min
@@ -224,26 +273,42 @@ When the full test command fails due unrelated suite collection/tooling failures
      re-verify, list fixes with SHAs, tick checkboxes, state `Approved`.
    - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
      unreproducible verification): do NOT rework it yourself. Post a numbered defect
-     list (what's wrong → repro → expected vs actual), state `Todo`.
+     list; every finding gets exactly one tag plus what's wrong → repro → expected vs
+     actual. Set state `Todo`.
+   - **NEEDS HUMAN** — any `[SCOPE-CONFLICT]` finding or finding requiring a product
+     decision. Post `REVIEW REPORT — NEEDS HUMAN`, name the exact decision in one
+     tagged `[SCOPE-CONFLICT]` line, assign the issue to Jonathan, and keep state
+     `In Review`; do NOT move it. The report must instruct: Jonathan comments his
+     decision, then removes his assignment; the issue re-enters the review queue with
+     his decision as part of the work order.
+
+   **NEEDS HUMAN is FORBIDDEN for ordinary decidable defects — decidable defects
+   require FAIL; only product decisions may park an issue.**
 
    Report format (comment on the issue):
 
    ```
-   **REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL>**
+   **REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL | NEEDS HUMAN>**
    - **Agent:** Hermes / <model>
    - **Criteria:** <n>/<total> verified — one line per criterion: ✓/✗ + evidence
    - **Test plan reproduced:** <commands run, results>
+   - **CI:** <all checks green; no CI checks present — execution-verified only; local-only repo; or waiting/failure detail>
    - **Baseline checks:** <clean or findings>
    - **Fixes applied:** <none, or list with SHAs>
    - **Reviewed head:** <remote branch> @ <exact verified SHA>
-   - **Defects:** <none, or numbered list>
+   - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [CI], [SCOPE-CONFLICT]>
+   - **Human decision:** <none, or [SCOPE-CONFLICT] Decide <the exact product decision needed>>
+   - **Park / un-park:** <not parked, or assign to Jonathan; keep In Review; Jonathan comments his decision, removes his assignment, and the issue re-enters the review queue with that decision as work order>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 
 6. **Verify Linear side effects.** After posting the review report and moving the issue,
    read the issue back (and the latest comments when available) to confirm the report exists,
-   acceptance boxes were updated when applicable, and the final state is actually `Approved` or
-   `Todo`. Do not claim completion from the write call alone.
+   acceptance boxes were updated when applicable, and the final state is actually `Approved`,
+   `Todo`, or parked `In Review` assigned to Jonathan. When verifying Markdown checkboxes,
+   accept Linear's normalized uppercase `- [X]`
+   form as checked; GraphQL writes using `- [x]` may read back as `- [X]`. Do not claim
+   completion from the write call alone.
 
    **Concurrent-review race check:** after long installs/tests/builds or branch-fix pushes,
    re-fetch the issue status and latest comments immediately before any Linear write. Linear
@@ -256,5 +321,12 @@ When the full test command fails due unrelated suite collection/tooling failures
    perform best-effort temp worktree cleanup, and final-report the backoff/verified state rather
    than posting another Linear comment.
 
-7. **Stop.** One issue per invocation. Improvement ideas go in Suggestions, never into
-   the code during a PASS.
+7. **Stop.** Tear the worktree down first, from the target repo: delete generated heavy
+   artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`), then
+   `git worktree remove <path>` and `git worktree prune`. Confirm with
+   `git worktree prune --dry-run -v 2>&1` — silent output means clean (`-v` writes to
+   stderr, so a bare pipe sees nothing and looks falsely clean). If prune reports
+   `Permission denied` — common when the target repo lives under OneDrive, where git's
+   own recursive delete fails but the shell's does not — `rm -rf` each
+   `.git/worktrees/<name>` directory prune names, then re-confirm. Then: one issue per
+   invocation. Improvement ideas go in Suggestions, never into the code during a PASS.

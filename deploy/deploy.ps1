@@ -27,6 +27,7 @@ $Pairs = @(
     @{ Src = "canonical\wolftac-build\SKILL.md";        Dst = "$env:USERPROFILE\.claude\skills\wolftac-build\SKILL.md" }
     @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$env:USERPROFILE\.claude\skills\wolftac-review\SKILL.md" }
     @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\SKILL.md" }
+    @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" }
     @{ Src = "ports\codex\wolftac-spec.md";             Dst = "$env:USERPROFILE\.codex\prompts\wolftac-spec.md" }
     @{ Src = "ports\codex\wolftac-build.md";            Dst = "$env:USERPROFILE\.codex\prompts\wolftac-build.md" }
     @{ Src = "ports\codex\wolftac-review.md";           Dst = "$env:USERPROFILE\.codex\prompts\wolftac-review.md" }
@@ -35,6 +36,10 @@ $Pairs = @(
     # worktrees, branch deletion, and merges (the round-4 defect was a cron job
     # wired to a deleted worktree copy of this script).
     @{ Src = "deploy\integrate-preflight.py";           Dst = "$env:LOCALAPPDATA\hermes\profiles\factory-integrate\deploy\integrate-preflight.py" }
+    @{ Src = "ports\codex\wolftac-integrate.md";        Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate.md" }
+    # Codex prompts are flat .md files, so the integrate helper ships in a sibling
+    # directory whose name cannot collide with a prompt file.
+    @{ Src = "ports\codex\wolftac-integrate-scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\linear_bot.py" }
 )
 
 # Tree-backed ports must stay complete as their skills gain references and UI metadata.
@@ -78,6 +83,7 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
     $Pairs += @{ Src = "canonical\wolftac-build\SKILL.md";        Dst = "$wslSkills\wolftac-build\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$wslSkills\wolftac-review\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$wslSkills\wolftac-integrate\SKILL.md" }
+    $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$wslSkills\wolftac-integrate\scripts\linear_bot.py" }
 }
 
 # Read a file and return its content with LF line endings (no trailing-CR).
@@ -162,7 +168,11 @@ if ($Deploy) {
     }
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
-    foreach ($s in @("wolftac-spec", "wolftac-build", "wolftac-review")) {
+    # Desktop skills are hand-uploaded, so they get no $Pairs entry; Compress-Archive
+    # recurses, which is how wolftac-integrate\scripts\linear_bot.py reaches the bundle.
+    # Desktop still RUNS the helper from the Claude Code target above, because its MCP
+    # terminal server sees the local filesystem, not the uploaded bundle.
+    foreach ($s in @("wolftac-spec", "wolftac-build", "wolftac-review", "wolftac-integrate")) {
         Compress-Archive -Path (Join-Path $Repo "ports\claude-desktop\$s") -DestinationPath (Join-Path $zipOut "$s.zip") -Force
         Write-Output "zipped   $s.zip -> $zipOut"
     }

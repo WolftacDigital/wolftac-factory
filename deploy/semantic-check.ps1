@@ -22,11 +22,11 @@ function Require-Pattern([string]$RelativePath, [string]$Pattern, [string]$Messa
 }
 
 $specFiles = @(
-    "canonical\wolftac-spec\spec-template.md",
-    "ports\codex\wolftac-spec.md",
-    "ports\claude-desktop\wolftac-spec\SKILL.md",
-    "ports\hermes\wolftac-spec\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-spec\references\spec-template.md"
+    "canonical/wolftac-spec/spec-template.md",
+    "ports/codex/wolftac-spec.md",
+    "ports/claude-desktop/wolftac-spec/SKILL.md",
+    "ports/hermes/wolftac-spec/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md"
 )
 foreach ($file in $specFiles) {
     $content = Read-RepoFile $file
@@ -37,11 +37,11 @@ foreach ($file in $specFiles) {
 }
 
 $buildFiles = @(
-    "canonical\wolftac-build\SKILL.md",
-    "ports\codex\wolftac-build.md",
-    "ports\claude-desktop\wolftac-build\SKILL.md",
-    "ports\hermes\wolftac-build\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-build\SKILL.md"
+    "canonical/wolftac-build/SKILL.md",
+    "ports/codex/wolftac-build.md",
+    "ports/claude-desktop/wolftac-build/SKILL.md",
+    "ports/hermes/wolftac-build/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-build/SKILL.md"
 )
 foreach ($file in $buildFiles) {
     Require-Pattern $file "dedicated (issue )?worktree" "does not require an isolated build worktree"
@@ -50,11 +50,11 @@ foreach ($file in $buildFiles) {
 }
 
 $reviewFiles = @(
-    "canonical\wolftac-review\SKILL.md",
-    "ports\codex\wolftac-review.md",
-    "ports\claude-desktop\wolftac-review\SKILL.md",
-    "ports\hermes\wolftac-review\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-review\SKILL.md"
+    "canonical/wolftac-review/SKILL.md",
+    "ports/codex/wolftac-review.md",
+    "ports/claude-desktop/wolftac-review/SKILL.md",
+    "ports/hermes/wolftac-review/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-review/SKILL.md"
 )
 foreach ($file in $reviewFiles) {
     $content = Read-RepoFile $file
@@ -75,9 +75,9 @@ foreach ($file in $reviewFiles) {
 }
 
 $integrateFiles = @(
-    "canonical\wolftac-integrate\SKILL.md",
-    "ports\hermes\wolftac-integrate\SKILL.md",
-    "plugins\wolftac-factory\skills\wolftac-integrate\SKILL.md"
+    "canonical/wolftac-integrate/SKILL.md",
+    "ports/hermes/wolftac-integrate/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md"
 )
 foreach ($file in $integrateFiles) {
     $content = Read-RepoFile $file
@@ -106,6 +106,11 @@ Require-Pattern "deploy\integrate-preflight.py" "PREFLIGHT FAIL \(3\)" "prefligh
 Require-Pattern "deploy\integrate-preflight.py" "client_credentials" "preflight lost the token re-mint path"
 Require-Pattern "deploy\integrate-preflight.py" "composio" "preflight capability scan lost Composio-proxied transport detection"
 Require-Pattern "deploy\integrate-preflight.py" "executing process environment" "preflight lost the executing-runtime credential check"
+Require-Pattern "deploy\integrate-preflight.py" "state\.db" "preflight lost profile-local cron-session provenance"
+Require-Pattern "deploy\integrate-preflight.py" "HERMES_SESSION_ID" "preflight lost the active session binding"
+Require-Pattern "deploy\integrate-preflight.py" "jobs\.json" "preflight lost persisted integrate-job verification"
+Require-Pattern "deploy\integrate-preflight.py" "script\.parent\.parent" "preflight lost deployed-copy root pinning"
+Require-Pattern "deploy\bot-runtime.md" "not an OS sandbox" "runtime recipe overstates the profile/session gate's trust boundary"
 Require-Pattern "deploy\bot-runtime.md" "blank\s+overrides" "runtime recipe lost the inherited-credential blank-override step"
 Require-Pattern "deploy\integrate-preflight.py" "EXPECTED_BOT_ID\s*=" "preflight lost the pinned (non-overridable) bot id"
 Require-Pattern "deploy\integrate-preflight.py" "(?s)viewer\(fresh\).{0,700}persist_token" "re-mint must viewer-verify a fresh token BEFORE persisting it"
@@ -118,7 +123,42 @@ Require-Pattern "deploy\bot-runtime.md" "cron edit" "bot-runtime recipe lost the
 Require-Pattern "deploy\integrate-preflight.py" "os\.replace" "token persistence lost its atomic write"
 Require-Pattern "deploy\pin-cron-model.py" "(?s)os\.replace.{0,600}readback" "pin tool lost atomic write or readback verification"
 
-$pluginManifest = "plugins\wolftac-factory\.codex-plugin\plugin.json"
+# Every shell-capable integrate surface ships its own reachable copy of the Linear
+# helper, byte-identical to the canonical one, and never hand-rolls a credentialed
+# GraphQL call. Regex parity can assert the prose; only this can assert the files.
+$canonicalHelper = "canonical/wolftac-integrate/scripts/linear_bot.py"
+$helperCopies = @{
+    "ports/hermes/wolftac-integrate/SKILL.md"                     = "ports/hermes/wolftac-integrate/scripts/linear_bot.py"
+    "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md"   = "plugins/wolftac-factory/skills/wolftac-integrate/scripts/linear_bot.py"
+    "ports/codex/wolftac-integrate.md"                            = "ports/codex/wolftac-integrate-scripts/linear_bot.py"
+    # The Desktop bundle ships the helper for portability, but Desktop invokes the
+    # copy on the terminal server's filesystem — the uploaded bundle is not on it.
+    "ports/claude-desktop/wolftac-integrate/SKILL.md"             = "ports/claude-desktop/wolftac-integrate/scripts/linear_bot.py"
+}
+$canonicalHelperText = (Read-RepoFile $canonicalHelper) -replace "`r`n", "`n"
+foreach ($surface in $helperCopies.Keys) {
+    $copy = $helperCopies[$surface]
+    $copyText = (Read-RepoFile $copy) -replace "`r`n", "`n"
+    if ($copyText -and $canonicalHelperText -and $copyText -ne $canonicalHelperText) {
+        $errors.Add("$copy - drifted from $canonicalHelper; the helper must stay identical across integrate surfaces")
+    }
+}
+
+# A credentialed GraphQL call hand-rolled into a fenced command block is the exact
+# pattern the helper replaced: it puts the token on a command line, trips the
+# credential-keyword heuristic, and re-prompts on every Linear round-trip. Prose
+# that names the forbidden form (inline backticks) is fine; a runnable block is not.
+foreach ($surface in @($helperCopies.Keys) + @("canonical/wolftac-integrate/SKILL.md")) {
+    $content = Read-RepoFile $surface
+    if (-not $content) { continue }
+    foreach ($block in [regex]::Matches($content, '(?ms)^```.*?^```')) {
+        if ([regex]::IsMatch($block.Value, "LINEAR_FACTORY_BOT_TOKEN")) {
+            $errors.Add("$surface - a fenced command block hand-rolls LINEAR_FACTORY_BOT_TOKEN; route Linear through scripts/linear_bot.py instead")
+        }
+    }
+}
+
+$pluginManifest = "plugins/wolftac-factory/.codex-plugin/plugin.json"
 try {
     $manifest = Read-RepoFile $pluginManifest | ConvertFrom-Json
     if ($manifest.name -ne "wolftac-factory" -or $manifest.skills -ne "./skills/") {
@@ -143,7 +183,7 @@ foreach ($skill in $skillFiles) {
     }
 }
 
-$scanRoots = @("canonical", "ports", "plugins", "README.md", "AGENTS.md", "deploy\hermes-moa-presets.yaml.example")
+$scanRoots = @("canonical", "ports", "plugins", "README.md", "AGENTS.md", "deploy/hermes-moa-presets.yaml.example")
 $staleModelPattern = "gpt-5" + [regex]::Escape(".5")
 foreach ($root in $scanRoots) {
     $path = Join-Path $RepoRoot $root

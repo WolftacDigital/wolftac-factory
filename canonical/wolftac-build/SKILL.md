@@ -35,7 +35,18 @@ Linear queue, implement it exactly to spec, prove it works, and hand it to revie
   during pickup; during a claim-race back off you post NOTHING.
 - Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-build agentic`), only
   consider issues whose Linear project name or labels contain it (case-insensitive).
-- Pick the highest priority (Urgent > High > Medium > Low), oldest first on ties. Skip:
+- **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+  `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+  later Jonathan decision comment. Do not comment or change state. A later decision
+  comment from Jonathan plus removal of his assignment clears the park; the issue is
+  then buildable and that comment is part of its work order. The comment author must
+  be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
+  the park.
+- **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+  review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+  rework tier and within the fresh tier, preserve priority order
+  (Urgent > High > Medium > Low), oldest first on ties.
+- Skip:
   - issues whose most recent comment is a `BLOCKED:` comment (they need a human/respec),
   - issues with unresolved blocking relations (check with `get_issue`),
   - issues whose spec **Repo:** path is unreachable from THIS session's environment
@@ -68,8 +79,25 @@ remote default branch. Never switch branches in a checkout that has user changes
 never commit directly to main/master. If an existing worktree is dirty and clearly
 belongs to another process or human, fail closed without modifying it.
 
+**Put the worktree in the durable scratch root — never a system temp dir.** On Windows
+use `D:\Wolftac\.build-worktrees\` (native `D:/Wolftac/.build-worktrees/...` for
+`git worktree add`, MSYS `/d/Wolftac/.build-worktrees/...` for shell commands); on
+WSL/Linux use `~/.build-worktrees/`. One directory per issue, named `build-<ISSUE>`.
+Create the root if it does not exist. Never `C:\tmp`, `C:/tmp`, or `/tmp`: those are
+cleared by reboots, cleanup tools, and — under WSL — between separate `wsl.exe`
+invocations. A build worktree is *reused across ticks*, so losing it mid-issue drops
+uncommitted work and strands a `.git/worktrees/` entry in the target repo that its
+owner then has to clean up. `/wolftac-review` uses the same root with a `review-`
+prefix; the two never collide.
+
 ### 5. Implement — with guardrails
-- Read the repo's CLAUDE.md first; match its conventions.
+- **Before editing anything**, when the spec uses `AC-N`/`NG-N` IDs, compare every
+  `AC-N` against every `NG-N`. Non-goals are binding. An acceptance criterion that
+  requires a non-goal is a spec defect: post
+  `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and stop.
+  Old-format (unnumbered) specs proceed under the existing rules.
+- If it is not in the Linear issue, it does not exist — no side-channel instructions.
+- Read the repo's CLAUDE.md/AGENTS.md first; match its conventions.
 - Build exactly what the spec's Technical approach and Acceptance criteria describe.
   **No scope creep**: tangential improvements get noted in your build report as
   "suggest /wolftac-spec", not built.
@@ -94,6 +122,25 @@ Publish the branch with `git push -u origin <branch>` and verify the remote head
 equals the local head SHA. If the repository has no writable remote, do not move the
 issue to `In Review`; report the publication blocker without exposing credentials.
 
+**PR-CREATE-CONTRACT:** After the push and remote-SHA verification, create one
+non-draft PR per issue when the repository has a GitHub remote. First run
+`gh pr view <branch>`; if a PR already exists for that branch, reuse its URL
+and never open a second. Otherwise run:
+
+```text
+gh pr create --title "WD-NNN: <issue title>" --body "<summary>
+
+Closes WD-NNN
+
+Linear: <issue URL>" --base main --head <branch>
+```
+
+If `gh` reports a rate-limit or transient failure, retry once. If the retry fails,
+record the PR-creation blocker in the BUILD REPORT but do not fail a build whose
+branch published successfully. For a local-only repository with no GitHub remote,
+skip PR commands and record `local-only repo — no PR`; execution verification and
+the rest of the handoff are unchanged.
+
 ### 8. Hand off
 Post a comment on the issue:
 
@@ -103,7 +150,8 @@ Post a comment on the issue:
 - **Implemented:** <what was built, per spec section>
 - **Verified:** <exact commands run and their results, per acceptance criterion>
 - **Branch / commits:** <branch> @ <SHAs>
-- **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
+- **Published head:** <remote branch> @ <exact remote SHA>
+- **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
 - **Deviations from spec:** <none, or what and why>
 - **Notes for review:** <anything the reviewer should look at first>
 ```
@@ -112,4 +160,15 @@ Then `save_issue`: state `In Review`. **Do not mark anything Done — that is /w
 exclusive right.**
 
 ### 9. Stop
+Once the branch is pushed and the remote head verified, the worktree has served its
+purpose — `/wolftac-review` builds its own from the published SHA. Remove it: delete
+generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`,
+`next-env.d.ts`) — on Windows they block removal — then `git worktree remove <path>` and
+`git worktree prune`. Confirm with `git worktree prune --dry-run -v 2>&1`; silent output
+means clean (`-v` writes to stderr, so a bare pipe sees nothing and looks falsely clean).
+If prune reports `Permission denied` — common when the target repo lives under OneDrive,
+where git's own recursive delete fails but the shell's does not — `rm -rf` each
+`.git/worktrees/<name>` directory prune names, then re-confirm. Keep the worktree only
+if you are handing the issue back unfinished; then say so in the report.
+
 One issue per invocation. Do not pick up a second issue; the loop handles cadence.

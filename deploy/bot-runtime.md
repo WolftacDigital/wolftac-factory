@@ -3,7 +3,7 @@
 The `/wolftac-integrate` stage must run in a runtime whose ONLY Linear capability
 is the Wolftac Factory Bot GraphQL credential. The runtime is the dedicated
 Hermes profile **`factory-integrate`**; the executable gate is
-`deploy/integrate-preflight.py`, which every integrate invocation runs FIRST and
+the profile-deployed `deploy/integrate-preflight.py`, which every integrate invocation runs FIRST and
 which fails closed (non-zero exit, zero side effects) when the runtime is not
 correctly isolated.
 
@@ -41,11 +41,13 @@ identity is a reviewed change to that constant.
 ## Preflight (REQUIRED first step of every integrate invocation)
 
 ```
-python D:\Wolftac\wolftac-factory\deploy\integrate-preflight.py
+python C:\Users\logan_vwagmmf\AppData\Local\hermes\profiles\factory-integrate\deploy\integrate-preflight.py
 ```
 
-The default `--profile-root` is the `factory-integrate` profile; the scanned
-root and file list are printed so the audit trail records what was checked.
+There is no caller-selectable profile-root flag. The script derives the
+`factory-integrate` root from its own deployed location; a repo/worktree copy is
+not accepted as runtime proof. The scanned root and file list are printed so the
+audit trail records what was checked.
 Exit codes: `0` proceed · `2` credentials missing/unmintable · `3` the executing
 runtime is not this profile, or a Linear-capable transport token was found in
 profile yaml · `4` viewer is not the pinned factory bot · `5` profile root/env
@@ -53,15 +55,26 @@ unreadable.
 
 ### Executing-runtime attestation (the primary gate)
 
-The preflight requires `HERMES_HOME` to **be** the scanned profile root. This is
-a positive attestation, and it replaced an earlier credential blacklist that
+The preflight requires all of the following before any network call:
+
+1. its own path is the profile-deployed copy under
+   `profiles\factory-integrate\deploy`;
+2. `HERMES_HOME` resolves to that same root;
+3. `HERMES_SESSION_ID` names a currently-active, fresh `cron` row in that
+   profile's own `state.db`; and
+4. the session's job id resolves in profile-local `cron\jobs.json` to the enabled
+   `Wolftac Factory Integrate Worker` bound to `wolftac-integrate`.
+
+This is a positive profile/session provenance attestation, and it replaced an earlier credential blacklist that
 checked only `LINEAR_API_KEY` / `LINEAR_OAUTH_TOKEN` / `COMPOSIO_API_KEY`.
 
 That blacklist was unsound: an agent session reaching Linear over **MCP** holds
 no Linear environment variable at all, so it passed the gate while retaining a
 full human write path — the exact defect this issue exists to close. No
-blacklist can cover transports it has never heard of; only "you are the isolated
-profile" is a claim a foreign runtime cannot make.
+blacklist can cover transports it has never heard of. `HERMES_HOME` alone is
+also caller-settable; the profile-local active-session and persisted-job
+readbacks are what stop a foreign runtime from passing by changing that one
+environment variable.
 
 Hermes makes this attestation meaningful: cron is per-profile by design, so a
 profile's jobs are executed under that profile's home
@@ -73,11 +86,13 @@ than a per-profile secret that a multiplex gateway could confuse.
 agent session correctly exits 3. That is the gate working, not a bug — the green
 path is observed in the worker's own cron output, not from a human terminal.
 
-**Residual trust (stated honestly):** this proves the runtime is the isolated
-profile and that the profile's on-disk config wires no Linear-capable transport.
-It cannot prove what an arbitrary process elsewhere on the host could do with
-credentials it finds. The Linear comment audit trail (author ids) remains the
-after-the-fact check on conduct.
+**Residual trust (stated honestly):** this is not an OS sandbox. It proves that
+the invocation carries profile-local provenance for the active scheduled worker
+and that the profile's on-disk config wires no Linear-capable transport. A
+process running as the same Windows account can read or alter the profile's
+state database and deployed files; a deliberately tampering same-user process
+is outside this gate's boundary. The Linear comment audit trail (author ids)
+remains the after-the-fact check on conduct.
 Any non-zero exit → the worker stops without claiming, commenting, or touching
 anything.
 
@@ -147,10 +162,11 @@ hermes -p factory-integrate chat -q "Use the cronjob tool: action='update', job_
 
 ## Honest residual trust
 
-The preflight proves three things: the executing runtime IS the isolated
-profile (`HERMES_HOME` attestation), the profile's on-disk configuration wires
-no Linear-capable transport, and the runtime's credential is the bot. It cannot
-prove what an arbitrary process could do with credentials found elsewhere on
-the host. Isolation is by profile construction; the preflight
+The preflight proves three things: the invocation belongs to the active
+profile-local integrate cron session (deployed path + `HERMES_HOME` + `state.db`
++ `jobs.json` provenance), the profile's on-disk configuration wires no
+Linear-capable transport, and the runtime's credential is the bot. This is not
+an OS security boundary against a deliberately tampering process running as the
+same Windows account. Isolation is by profile construction; the preflight
 verifies that construction on every tick, and the Linear comment audit trail
 (author ids) verifies conduct after the fact.

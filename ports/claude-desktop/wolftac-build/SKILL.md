@@ -30,8 +30,19 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 1. **Pick up work.** `list_issues`: team `Wolftac Digital`, state `Todo`, label
    `Factory Queue`. If the user gave a lane filter (e.g. "build the crm lane"), only
    consider issues whose Linear project name or labels contain it (case-insensitive).
-   Highest priority, oldest on ties. Skip issues whose latest comment starts
-   `BLOCKED:`, issues with unresolved blocking relations, and — SILENTLY, no comment
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+   later Jonathan decision comment. Do not comment or change state. A later decision
+   comment from Jonathan plus removal of his assignment clears the park; the issue is
+   then buildable and that comment is part of its work order. The comment author must
+   be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
+   the park.
+   **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+   review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+   rework tier and within the fresh tier, preserve priority order
+   (Urgent > High > Medium > Low), oldest first on ties.
+   Skip issues whose latest comment starts `BLOCKED:`, issues with unresolved
+   blocking relations, and — SILENTLY, no comment
    or state change — issues whose spec **Repo:** path this chat cannot reach
    (`BLOCKED:` is reserved for genuine spec defects).
    Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
@@ -62,11 +73,21 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    issue's Linear-generated branch from the current remote default branch. Never switch
    branches in a checkout with user changes and never commit directly to main/master.
    A dirty worktree owned by another process or human is a fail-closed condition.
+   Put the worktree in the durable scratch root — `D:\Wolftac\.build-worktrees\` on
+   Windows, `~/.build-worktrees/` under WSL — one directory per issue, named
+   `build-<ISSUE>`. Never `C:\tmp` or `/tmp`: those get cleared, which drops
+   uncommitted work and strands a `.git/worktrees/` entry in the target repo.
 
-5. **Implement — guardrails.** Read the repo's CLAUDE.md first; match conventions.
-   Build exactly to the spec's Technical approach and Acceptance criteria — NO scope
-   creep (tangents go in the report as "suggest /wolftac-spec"). Secrets in .env, never
-   hardcoded. Blocking ambiguity → `BLOCKED: <questions>` comment, state `Todo`, stop.
+5. **Implement — guardrails.** **Before editing anything**, when the spec uses
+   `AC-N`/`NG-N` IDs, compare every `AC-N` against every `NG-N`. Non-goals are
+   binding. An acceptance criterion that requires a non-goal is a spec defect:
+   comment `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and
+   stop. Old-format (unnumbered) specs proceed under the existing rules.
+   If it is not in the Linear issue, it does not exist — no side-channel instructions.
+   Read the repo's CLAUDE.md/AGENTS.md first; match conventions. Build exactly to the spec's
+   Technical approach and Acceptance criteria — NO scope creep (tangents go in the
+   report as "suggest /wolftac-spec"). Secrets in .env, never hardcoded. Blocking
+   ambiguity → `BLOCKED: <questions>` comment, state `Todo`, stop.
 
 6. **Verify.** Execute the spec's Test plan literally. Every criterion needs evidence
    from running code — "the code looks right" is not verification.
@@ -77,6 +98,17 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    `git push -u origin <branch>` and verify the remote head equals local `HEAD`. If no
    writable remote exists, do not advance the issue to `In Review`.
 
+   **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
+   non-draft PR per issue for a GitHub remote. Run `gh pr view <branch>` first
+   and reuse an existing PR URL; never open a second PR for the branch. Otherwise run
+   `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
+   blank line, `Closes WD-NNN`, another blank line, and
+   `Linear: <issue URL>" --base main --head <branch>`. Retry a `gh` rate-limit or
+   transient failure once; after a second failure, record the PR-creation blocker
+   without failing a build whose branch published successfully. With no GitHub
+   remote, skip PR steps and record `local-only repo — no PR`; execution verification
+   is unchanged.
+
 8. **Hand off.** Comment:
 
    ```
@@ -85,11 +117,18 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    - **Implemented:** <what was built, per spec section>
    - **Verified:** <exact commands run and results, per criterion>
    - **Branch / commits:** <branch> @ <SHAs>
-   - **Published head:** <remote branch> @ <exact remote SHA; PR URL when available>
+   - **Published head:** <remote branch> @ <exact remote SHA>
+   - **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
    - **Deviations from spec:** <none, or what and why>
    - **Notes for review:** <what the reviewer should check first>
    ```
 
    Then `save_issue`: state `In Review`.
 
-9. **Stop.** One issue per invocation.
+9. **Stop.** Once the branch is pushed and the remote head verified, remove the
+   worktree — review rebuilds its own from the published SHA. Delete generated heavy
+   artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`), then
+   `git worktree remove <path>` and `git worktree prune`. Confirm with
+   `git worktree prune --dry-run -v 2>&1` — silent means clean (`-v` writes to stderr,
+   so a bare pipe looks falsely clean). On `Permission denied`, `rm -rf` each
+   `.git/worktrees/<name>` it names and re-confirm. Then: one issue per invocation.

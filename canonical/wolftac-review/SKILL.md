@@ -13,7 +13,9 @@ skeptical: the build report is a claim, not a fact, until you reproduce it.
 ## Factory constants
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue**
-- You consume: state **In Review** • You produce: **Approved** (pass → /wolftac-integrate merges after human approval) or **Todo** (fail → rework by /wolftac-build)
+- You consume: state **In Review** • You produce: **Approved** (pass →
+  /wolftac-integrate merges after human approval), **Todo** (fail → rework by
+  /wolftac-build), or parked **In Review** assigned to Jonathan (needs product decision)
 - Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
 - Intended model: Opus.
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
@@ -43,6 +45,10 @@ skeptical: the build report is a claim, not a fact, until you reproduce it.
 - Skip (silently — no comment, no state change) issues whose spec **Repo:** path is
   unreachable from THIS session's environment; a differently-homed review session
   will take them.
+- **PARKED-NEEDS-HUMAN-SKIP:** Silently skip an issue whose latest review report is
+  `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+  later Jonathan decision comment. Do not comment or change state. A later decision
+  comment from Jonathan plus removal of his assignment clears the park.
 - **Nothing there → say "Factory queue: nothing awaiting review" and stop cleanly.**
 
 ### 2. Claim it
@@ -60,7 +66,35 @@ Never switch the active user checkout. Read `git log` and
 `git diff <remote-default-branch>...<reported-SHA>` in the isolated worktree. A missing
 remote branch or SHA mismatch is a FAIL because the reviewed artifact is not immutable.
 
+**Put the worktree in the durable scratch root — never a system temp dir.** On Windows
+use `D:\Wolftac\.build-worktrees\` (native `D:/Wolftac/.build-worktrees/...` for
+`git worktree add`, MSYS `/d/Wolftac/.build-worktrees/...` for shell commands); on
+WSL/Linux use a directory under the agent's home. One directory per review, named
+`review-<ISSUE>-<short-SHA>`. Never `C:\tmp`, `C:/tmp`, or `/tmp`: those are cleared by
+reboots and cleanup tools, and every worktree that vanishes out from under git strands
+a `.git/worktrees/` entry in the *target* repo, which the target repo's owner then has
+to clean up. Create the root if it does not exist.
+
 ### 4. Verify by execution, not inspection
+**CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repository has
+a GitHub remote and resolve the PR for the published branch. With no GitHub remote or
+no PR, record a `local-only repo` line and continue the existing execution-verified
+flow. For a PR, enumerate all checks with `gh pr checks <n>`; check presence, not
+required-ness, controls the Factory verdict. `--required` must NOT be used to decide
+the verdict.
+
+- Any FAILED check → add one `[CI]` finding naming the failing job and use verdict
+  FAIL. An advisory/non-required red check blocks PASS exactly as a required one does.
+- Any PENDING, queued, or in-progress check → post a short `waiting on CI` note and
+  END WITHOUT A VERDICT, leaving the issue in `In Review`.
+- GitHub/CI outage or an indeterminate queue result → treat it as waiting, post the
+  short note, and end without a verdict. A CI outage or queue must never become a
+  false FAIL.
+- Only when the PR has NO checks at all → record
+  `no CI checks present — execution-verified only` and proceed exactly as before.
+- When all present checks are green → continue the execution review. A green required
+  check is never approval — the human merge gate is unchanged.
+
 - Re-run the spec's **Test plan** yourself, from scratch. Do not trust the build
   report's claimed results — reproduce them.
 - Walk EVERY acceptance criterion: pass/fail with observed evidence.
@@ -68,7 +102,16 @@ remote branch or SHA mismatch is a FAIL because the reviewed artifact is not imm
   debug leftovers, input validation on any new endpoint/form, error paths don't crash,
   no unrelated files modified.
 
-### 5. Verdict — three outcomes
+**REVIEW-FINDING-TAXONOMY:** Every review finding carries exactly one of these tags;
+never stack tags on one finding:
+- `[AC-N]` — acceptance criterion with stable ID `N` is unmet.
+- `[DEFECT]` — decidable implementation defect not tied to one acceptance criterion.
+- `[SECURITY]` — security finding; first-class and greppable.
+- `[CI]` — a GitHub check failed; name the failing job.
+- `[SCOPE-CONFLICT]` — criteria/non-goals contradiction or product decision only
+  Jonathan can make.
+
+### 5. Verdict — four outcomes
 
 **PASS** — every criterion verified, baseline clean:
 1. Update the issue description: tick the acceptance-criteria checkboxes.
@@ -78,7 +121,8 @@ remote branch or SHA mismatch is a FAIL because the reviewed artifact is not imm
 **PASS WITH FIXES** — only minor defects (each low-risk, no design change, all fixable
 in ~15 minutes total: typos, small logic slips, missing edge-case guard):
 1. Fix them yourself on the same branch in the isolated worktree, commit, push, verify
-   the remote head, and re-run verification.
+   the remote head, re-run verification, and re-run the CI check-presence gate for the
+   new head; do not PASS while its checks are pending.
 2. Post the review report listing your fixes with commit SHAs.
 3. Tick the checkboxes; `save_issue`: state `Approved`.
 
@@ -86,24 +130,49 @@ in ~15 minutes total: typos, small logic slips, missing edge-case guard):
 issue, verification not reproducible):
 1. Do NOT attempt the rework yourself — that's /wolftac-build's job on a fresh pass.
 2. Post the review report with a numbered defect list: each defect gets
-   *what's wrong → how to reproduce → expected vs actual*.
+   exactly one finding tag plus *what's wrong → how to reproduce → expected vs actual*.
 3. `save_issue`: state `Todo` (back on the conveyor; /wolftac-build treats your defect list
    as its work order).
+
+**NEEDS HUMAN** — any `[SCOPE-CONFLICT]` finding or any finding that requires a
+product decision:
+1. Post `REVIEW REPORT — NEEDS HUMAN` and name the exact decision in one tagged
+   `[SCOPE-CONFLICT]` line.
+2. Assign the issue to Jonathan and keep state `In Review`; do NOT move it.
+3. Include this explicit un-park instruction in the report: Jonathan comments his
+   decision, then removes his assignment. The unassigned issue re-enters the review
+   queue with his decision comment as part of the work order.
+
+**NEEDS HUMAN is FORBIDDEN for ordinary decidable defects — decidable defects require
+FAIL; only product decisions may park an issue.**
 
 Review report format (comment on the issue):
 
 ```
-**REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL>**
+**REVIEW REPORT — <PASS | PASS WITH FIXES | FAIL | NEEDS HUMAN>**
 - **Agent:** Claude Code / <model>
 - **Criteria:** <n>/<total> verified — <one line per criterion: ✓/✗ + evidence>
 - **Test plan reproduced:** <commands run, results>
+- **CI:** <all checks green; no CI checks present — execution-verified only; local-only repo; or waiting/failure detail>
 - **Baseline checks:** <secrets/debug/validation/error-paths — clean or findings>
 - **Fixes applied:** <none, or list with SHAs>
 - **Reviewed head:** <remote branch> @ <exact verified SHA>
-- **Defects:** <none, or numbered list with repro + expected vs actual>
+- **Defects:** <none, or numbered list; every finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [CI], [SCOPE-CONFLICT], then repro + expected vs actual>
+- **Human decision:** <none, or exactly one tagged line: [SCOPE-CONFLICT] Decide <the exact product decision needed>>
+- **Park / un-park:** <not parked, or "Assign to Jonathan; keep In Review. Jonathan comments his decision, then removes his assignment; the issue re-enters the review queue with that decision as part of the work order.">
 - **Suggestions (out of scope):** <ideas for a future /wolftac-spec, if any>
 ```
 
 ### 6. Stop
+Tear the worktree down before you finish, run from the target repo. Delete generated
+heavy artifacts first (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`)
+— on Windows they block removal — then `git worktree remove <path>` and
+`git worktree prune`. Confirm with `git worktree prune --dry-run -v 2>&1`; silent output
+means clean (`-v` writes to stderr, so a bare pipe sees nothing and looks falsely clean).
+If prune reports `Permission denied` — common when the target repo lives under OneDrive,
+where git's own recursive delete fails but the shell's does not — `rm -rf` each
+`.git/worktrees/<name>` directory prune names, then re-confirm. Leaving stale metadata in
+someone else's repo is not done.
+
 One issue per invocation. Scope discipline applies to you too: improvement ideas go in
 **Suggestions**, never into the code during a PASS.

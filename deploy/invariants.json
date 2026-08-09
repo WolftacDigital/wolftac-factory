@@ -110,7 +110,20 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*(OLDER|older) than the newest proof pack)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" }
+    ]
+  },
+  {
+    "id": "integrate-linear-helper",
+    "description": "Every shell-capable integrate surface routes Linear traffic through scripts/linear_bot.py and forbids hand-rolled GraphQL or a token on the command line. Motivating case: inline token-export heredocs tripped the credential-keyword heuristic and prompted for confirmation on every Linear round-trip, making looped runs unusable.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*linear_bot\\.py)(?=[\\s\\S]*hand-roll a GraphQL call)(?=[\\s\\S]*never put the token on a command\\s+line)" }
     ]
   },
   {
@@ -119,7 +132,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*merge-base --is-ancestor)(?=[\\s\\S]*[Nn]ever force-push)" }
     ]
   },
   {
@@ -128,7 +143,9 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*differs\\s+from\\s+your\\s+own\\s+Linear\\s+viewer\\s+id)(?=[\\s\\S]*[Nn]ever trust a SHA from a prior session)(?=[\\s\\S]*Default\\s+head)(?=[\\s\\S]*EQUALITY)(?=[\\s\\S]*LINEAR_FACTORY_BOT_TOKEN)(?=[\\s\\S]*notif(y|ication)-only)(?=[\\s\\S]*[Dd]o not load or use[\\s\\S]{0,100}default\\s+Linear)" }
     ]
   },
   {
@@ -137,7 +154,68 @@
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently[\\s\\S]{0,200}unreachable)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*unreachable)(?=[\\s\\S]*SILENTLY)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently skip)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" }
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*silently skip)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*SILENTLY)(?=[\\s\\S]*unreachable)(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*One issue per invocation)(?=[\\s\\S]*back off)(?=[\\s\\S]*SILENTLY)(?=[\\s\\S]*(unreachable|cannot\\s+reach))(?=[\\s\\S]*\\*\\*Agent:\\*\\*)(?=[\\s\\S]*SWEPT)" }
+    ]
+  },
+  {
+    "id": "binding-ac-ng-cross-check",
+    "description": "Build cross-checks every numbered acceptance criterion against every numbered non-goal before editing.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "compare every\\s+`AC-N` against every `NG-N`" }
+    ]
+  },
+  {
+    "id": "linear-issue-only-instruction-boundary",
+    "description": "Build and factory onboarding reject side-channel instructions outside the Linear issue.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "does\\s+not exist — no side-channel instructions" },
+      { "file": "AGENTS.md", "pattern": "does\\s+not exist — no side-channel instructions" }
+    ]
+  },
+  {
+    "id": "slack-approval-gate",
+    "description": "Integrate's approval gate includes the Slack :rocket: reaction lane bound to deploy/approval-policy.json, with case-insensitive APPROVE MERGE and APPROVED MERGE typed fallbacks retained.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
+      { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*slack_channel_id)(?=[\\s\\S]*approver_slack_user_id)" }
+    ]
+  },
+  {
+    "id": "slack-bot-sender-identity",
+    "description": "All factory Slack posts and reaction reads use the factory bot token, with policy-selected sender identities and a fallback identity.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
+      { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*claude-code)(?=[\\s\\S]*claude-desktop)(?=[\\s\\S]*codex)(?=[\\s\\S]*hermes@AI-MSI)(?=[\\s\\S]*hermes@jon-omen)(?=[\\s\\S]*fallback_identity)" }
+    ]
+  },
+  {
+    "id": "no-worker-reactions",
+    "description": "Workers are forbidden from adding reactions to factory notification messages (read-only on reactions), mirroring the Linear bot-identity rule.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" },
+      { "file": "AGENTS.md", "pattern": "[Ww]orkers\\s+(?:never|may not)\\s+(?:ADD|add)\\s+reactions" }
     ]
   },
   {
@@ -148,6 +226,137 @@
       { "file": "ports/codex/wolftac-build.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" },
       { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" },
       { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "BLOCKED[\\s\\S]{0,160}spec defects|spec defects[\\s\\S]{0,160}BLOCKED" }
+    ]
+  },
+  {
+    "id": "review-finding-taxonomy",
+    "description": "Every review surface documents the five-tag, exactly-one-tag finding taxonomy.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*REVIEW-FINDING-TAXONOMY)(?=[\\s\\S]*\\[AC-N\\])(?=[\\s\\S]*\\[DEFECT\\])(?=[\\s\\S]*\\[SECURITY\\])(?=[\\s\\S]*\\[CI\\])(?=[\\s\\S]*\\[SCOPE-CONFLICT\\])" }
+    ]
+  },
+  {
+    "id": "needs-human-pickup-skip",
+    "description": "Build and review pickup surfaces silently skip parked NEEDS HUMAN work.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" }
+    ]
+  },
+  {
+    "id": "needs-human-unpark-clearing",
+    "description": "Every build and review pickup surface states the park-clearing test: a later Jonathan decision comment plus removal of his assignment. Build must carry the identical test to review, or a decision Jonathan comments can un-park review while build skips the issue forever.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" }
+    ]
+  },
+  {
+    "id": "unpark-requires-jonathan-authorship",
+    "description": "Every build surface states that an agent-relayed decision does NOT clear the park — the comment author must be Jonathan. Motivating case: WD-288's un-park comment was authored by the factory bot, so the issue stayed parked.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" }
+    ]
+  },
+  {
+    "id": "rework-first-build-ordering",
+    "description": "Every build surface selects FAIL rework before fresh Todo work while preserving priority and age inside each tier.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*REWORK-FIRST-ORDERING)(?=[\\s\\S]*latest\\s+review\\s+report\\s+is\\s+`REVIEW REPORT — FAIL`\\s+before\\s+fresh)(?=[\\s\\S]*Urgent\\s*>\\s*High\\s*>\\s*Medium\\s*>\\s*Low)" }
+    ]
+  },
+  {
+    "id": "build-pr-create-contract",
+    "description": "Every build surface creates or reuses one non-draft PR after branch publication and records it separately.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*PR-CREATE-CONTRACT)(?=[\\s\\S]*gh pr create)(?=[\\s\\S]*\\*\\*PR:\\*\\*)" }
+    ]
+  },
+  {
+    "id": "review-required-ci-gate",
+    "description": "Every review surface enumerates present PR checks, waits without verdict on pending/outage, and tags failed jobs CI.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*gh pr checks <n>)(?=[\\s\\S]*waiting on CI)(?=[\\s\\S]*\\[CI\\])" }
+    ]
+  },
+  {
+    "id": "review-ci-red-blocks-pass",
+    "description": "Every review surface states that all present checks govern the verdict and advisory red checks block PASS.",
+    "checks": [
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one does)(?=[\\s\\S]*--required` must NOT be used to decide\\s+the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS[\\s\\S]{0,20}exactly as a required one does)(?=[\\s\\S]*--required` must NOT be used to\\s+decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one\\s+does)(?=[\\s\\S]*--required` must NOT be used to decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one\\s+does)(?=[\\s\\S]*--required` must NOT be used to decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*CI-RED-BLOCKS-PASS)(?=[\\s\\S]*advisory/non-required red check blocks PASS exactly as a required one does)(?=[\\s\\S]*--required` must NOT be used to decide the verdict)(?=[\\s\\S]*no CI checks present — execution-verified only)" }
+    ]
+  },
+  {
+    "id": "integrate-pr-merge-transition",
+    "description": "Every integrate surface uses a merge-commit PR path when a PR exists and retains direct fast-forward only for pre-PR work.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" }
+    ]
+  },
+  {
+    "id": "integrate-delegate-claim",
+    "description": "Every integrate surface claims via delegateId and verifies delegate.id, states that a human assignee is not a worker claim, and warns against reverting to assigneeId (Linear silently no-ops app-user assignees, with or without team membership).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT a worker claim)(?=[\\s\\S]*worker\\s+claims live in)(?=[\\s\\S]*Team membership does not\\s+change this)(?=[\\s\\S]*Do not\\s+\"repair\" this back to)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT\\s+a worker claim)(?=[\\s\\S]*worker claims live in)(?=[\\s\\S]*Team membership does not change this)(?=[\\s\\S]*Do not \"repair\" this back to)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*delegateId)(?=[\\s\\S]*delegate\\.id)(?=[\\s\\S]*assignee is NOT\\s+a worker claim)(?=[\\s\\S]*worker claims live in)(?=[\\s\\S]*Team membership does not change this)(?=[\\s\\S]*Do not \"repair\" this back to)" }
+    ]
+  },
+  {
+    "id": "integrate-branchless-landing",
+    "description": "Every integrate surface defines the branchless-landing path: strict by-design detection from a PASS review's attestation, a LANDING PROOF PACK whose approval block carries the merge pack's gate verbatim, a Landing action replacing the merge command, a LANDED (BRANCHLESS) report with deliverable evidence, and the never-pushes/no-approval-no-Done guardrail.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" }
     ]
   }
 ]

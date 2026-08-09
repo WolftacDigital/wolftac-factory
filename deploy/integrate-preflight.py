@@ -8,15 +8,17 @@ assertion fails; the worker must then stop without claiming anything.
 
 Assertions:
   1. Bot credentials present in the profile env (token, or app id+secret to mint).
-  2. The executing runtime IS this profile: HERMES_HOME must be the scanned
-     profile root. This is a positive attestation, not a credential blacklist —
-     an agent session reaching Linear over MCP holds no Linear env var at all,
-     so only "you are the isolated profile" is a gate it cannot pass.
-  3. No Linear-capable transport wired anywhere in the profile: EVERY *.yaml/*.yml
+  2. The executing runtime IS the deployed profile copy: the script location and
+     HERMES_HOME must resolve to the factory-integrate profile root.
+  3. HERMES_SESSION_ID must name a currently-active cron session recorded in that
+     profile's state.db, with source/profile/job metadata matching the enabled
+     Wolftac Factory Integrate Worker. HERMES_HOME alone is caller-settable and is
+     therefore not accepted as an attestation.
+  4. No Linear-capable transport wired anywhere in the profile: EVERY *.yaml/*.yml
      directly under the profile root is scanned, and ANY occurrence of the tokens
      `linear` or `composio` (quoted, inline, block, or commented — fail-closed by
      design) is a violation. Composio counts because it can proxy Linear tools.
-  4. The bot token authenticates and `viewer` resolves to the pinned factory bot
+  5. The bot token authenticates and `viewer` resolves to the pinned factory bot
      id. Re-mint via client_credentials happens only when needed, and a freshly
      minted token is VERIFIED to be the factory bot BEFORE it is persisted.
 
@@ -28,21 +30,27 @@ Exit codes: 0 ok · 2 missing/unmintable credentials · 3 not the isolated runti
 or a Linear-capable transport wired in the profile · 4 viewer identity mismatch ·
 5 profile root/env unreadable.
 
-Because assertion 2 is strict, running this by hand from an operator shell or an
-agent session correctly exits 3 — that IS the gate working. The green path is
-observed in the worker's own cron output, not from a human terminal.
+Because assertions 2–3 are strict, running this by hand from an operator shell or
+foreign-profile agent session exits 3 even if that caller spoofs HERMES_HOME. The
+green path is observed in the worker's own cron output, not from a human terminal.
 
 Credential VALUES are never printed. Output is paths, ids, names, and counts only.
 
-Honest residual trust: the scan proves the profile's on-disk config wires no
-Linear-capable transport; it cannot prove what an arbitrary process could do
-with credentials found elsewhere on the host. Isolation is by profile
-construction — this preflight verifies that construction on every tick, and the
-Linear comment audit trail (author ids) verifies conduct after the fact.
+Honest residual trust: this is a profile/session provenance gate, not an OS
+sandbox. A process running as the same Windows account can read or modify the
+profile state database and deployed files. The gate prevents ordinary foreign
+Hermes sessions (including human-MCP sessions) from self-certifying by changing
+one environment variable; it does not defend against a same-user process that
+deliberately tampers with the attestation records. The Linear comment audit trail
+(author ids) remains the after-the-fact conduct check.
 """
-import argparse, glob, json, os, re, sys, urllib.request, urllib.parse
+import glob, json, os, pathlib, re, sqlite3, sys, time, urllib.request, urllib.parse
 
 EXPECTED_BOT_ID = "b8fece8e-8ec5-4125-b4b2-d7fa882db137"  # Wolftac Factory Bot — pinned, not overridable
+EXPECTED_PROFILE_NAME = "factory-integrate"
+EXPECTED_JOB_NAME = "Wolftac Factory Integrate Worker"
+EXPECTED_JOB_SKILL = "wolftac-integrate"
+MAX_SESSION_AGE_SECONDS = 2 * 60 * 60
 FORBIDDEN_TOKENS = re.compile(r"\b(linear|composio)\b", re.I)
 
 def lf(t): return t.replace("\r\n", "\n").replace("\r", "\n")
@@ -85,6 +93,83 @@ def _samepath(a, b):
                os.path.normcase(os.path.realpath(b).rstrip("\\/"))
 
 
+def deployed_profile_root(script_path=None):
+    """Resolve the profile from the deployed script location, never a CLI flag."""
+    script = pathlib.Path(script_path or __file__).resolve()
+    root = script.parent.parent
+    if root.name.lower() != EXPECTED_PROFILE_NAME or root.parent.name.lower() != "profiles":
+        print(f"PREFLIGHT FAIL (3): preflight must run from the profile-deployed copy under "
+              f"profiles/{EXPECTED_PROFILE_NAME}/deploy; observed {script}. A repo/worktree copy "
+              "or caller-selected profile root is not a runtime attestation; claim nothing")
+        sys.exit(3)
+    return str(root)
+
+
+def check_session_provenance(root, now=None):
+    """Bind this invocation to the profile's active scheduled integrate session."""
+    session_id = os.environ.get("HERMES_SESSION_ID", "").strip()
+    if not os.environ.get("HERMES_CRON_SESSION", "").strip() or not session_id:
+        print("PREFLIGHT FAIL (3): no Hermes cron-session provenance is present; this is an "
+              "operator shell or foreign agent session, not the isolated scheduled worker; claim nothing")
+        sys.exit(3)
+    match = re.fullmatch(r"cron_([0-9A-Za-z-]+)_\d{8}_\d{6}", session_id)
+    if not match:
+        print(f"PREFLIGHT FAIL (3): HERMES_SESSION_ID {session_id!r} is not a cron session id; claim nothing")
+        sys.exit(3)
+    job_id = match.group(1)
+
+    db_path = pathlib.Path(root) / "state.db"
+    try:
+        conn = sqlite3.connect("file:" + db_path.as_posix() + "?mode=ro", uri=True, timeout=2)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT source, profile_name, started_at, ended_at FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        print(f"PREFLIGHT FAIL (5): cannot verify isolated-profile session provenance in {db_path}: "
+              f"{type(exc).__name__}; claim nothing")
+        sys.exit(5)
+    if row is None:
+        print(f"PREFLIGHT FAIL (3): session {session_id} is not recorded in the isolated profile's "
+              "state.db. HERMES_HOME is caller-settable and cannot substitute for profile-local "
+              "session provenance; claim nothing")
+        sys.exit(3)
+    if row["source"] != "cron" or row["profile_name"] != EXPECTED_PROFILE_NAME:
+        print(f"PREFLIGHT FAIL (3): session provenance is source={row['source']!r}, "
+              f"profile={row['profile_name']!r}; expected cron/{EXPECTED_PROFILE_NAME}; claim nothing")
+        sys.exit(3)
+    current = time.time() if now is None else now
+    age = current - float(row["started_at"])
+    if row["ended_at"] is not None or age < -60 or age > MAX_SESSION_AGE_SECONDS:
+        print(f"PREFLIGHT FAIL (3): session {session_id} is not a currently-active fresh cron session "
+              f"(ended={row['ended_at'] is not None}, age_seconds={age:.0f}); claim nothing")
+        sys.exit(3)
+
+    jobs_path = pathlib.Path(root) / "cron" / "jobs.json"
+    try:
+        jobs = json.loads(jobs_path.read_text(encoding="utf-8"))["jobs"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        print(f"PREFLIGHT FAIL (5): cannot verify scheduled job metadata in {jobs_path}: "
+              f"{type(exc).__name__}; claim nothing")
+        sys.exit(5)
+    job = next((item for item in jobs if str(item.get("id")) == job_id), None)
+    skills = set(job.get("skills") or []) if job else set()
+    if (not job or job.get("name") != EXPECTED_JOB_NAME or job.get("enabled") is not True
+            or job.get("state") == "paused"
+            or (job.get("skill") != EXPECTED_JOB_SKILL and EXPECTED_JOB_SKILL not in skills)):
+        observed = "missing" if job is None else (
+            f"name={job.get('name')!r}, enabled={job.get('enabled')!r}, "
+            f"state={job.get('state')!r}, skill={job.get('skill')!r}"
+        )
+        print(f"PREFLIGHT FAIL (3): cron session maps to job {job_id}, but the persisted isolated-worker "
+              f"contract is invalid ({observed}); claim nothing")
+        sys.exit(3)
+    print(f"session-provenance check: active {EXPECTED_PROFILE_NAME} cron session {session_id}; "
+          f"job {job_id} is enabled and bound to {EXPECTED_JOB_SKILL} — OK")
+
+
 def check_executing_runtime(root):
     """Assert the process running this preflight IS the isolated profile.
 
@@ -94,11 +179,14 @@ def check_executing_runtime(root):
     holds no such env var — passed a gate it should have failed (test-plan
     step 3). A blacklist cannot cover transports it has never heard of.
 
-    So attest positively instead: HERMES_HOME must BE this profile's root.
+    So attest positively instead: HERMES_HOME must BE this profile's root and
+    HERMES_SESSION_ID must resolve to the active integrate-worker cron row in
+    this profile's own state.db. The second check prevents a foreign runtime
+    from passing merely by setting HERMES_HOME.
     Cron is per-profile by design (hermes cron/scheduler.py::_get_hermes_home —
     "a profile's jobs are stored AND executed under that profile's home"), so
-    the integrate worker satisfies this, while an operator shell or an agent
-    session under the default profile does not, whatever credentials it holds.
+    the integrate worker satisfies this. HERMES_HOME by itself remains a
+    caller-controlled value and is not described as an isolation boundary.
     HERMES_HOME is one of Hermes' explicitly global env vars
     (agent/secret_scope.py::_GLOBAL_ENV_EXACT), so it is meaningful in
     os.environ even in a multiplex gateway, unlike per-profile secrets.
@@ -126,7 +214,7 @@ def check_executing_runtime(root):
                   "credential and is NOT capability-isolated; claim nothing. (The isolated profile's "
                   ".env must blank-override inherited credentials; see deploy/bot-runtime.md.)")
             sys.exit(3)
-    print(f"executing-runtime check: HERMES_HOME is the isolated profile root ({home}); no "
+    print(f"executing-runtime check: HERMES_HOME is the deployed isolated profile root ({home}); no "
           "human/default Linear-capable credentials in the process environment — OK")
 
 
@@ -170,15 +258,7 @@ def persist_token(env_path, env_txt, token):
     os.replace(tmp, env_path)
 
 def main():
-    ap = argparse.ArgumentParser()
-    default_root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "hermes",
-                                "profiles", "factory-integrate")
-    ap.add_argument("--profile-root", default=default_root,
-                    help="Root of the isolated worker profile (scanned root and its .env are "
-                         "both reported in output so the audit trail shows what was checked)")
-    a = ap.parse_args()
-
-    root = os.path.abspath(a.profile_root)
+    root = deployed_profile_root()
     if not os.path.isdir(root):
         print(f"PREFLIGHT FAIL (5): profile root {root} does not exist")
         sys.exit(5)
@@ -194,6 +274,7 @@ def main():
     scan_profile_configs(root)
 
     check_executing_runtime(root)
+    check_session_provenance(root)
 
     v = viewer(token) if token else None
     if v is None:
