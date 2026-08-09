@@ -30,3 +30,7 @@ Stop feature editing when the reserve begins. Use the remaining budget only for:
 6. BUILD REPORT and `In Review` transition.
 
 A partial refactor without executed proof is not a build completion. Do not report it as finished or move it to review.
+
+## Windows `uv` executable collision
+
+On Windows/Git Bash, the bare `uv` command may resolve to a Linux ELF shim under the Hermes bin directory and fail with `Exec format error`, even when the native Windows binary is installed beside it. Verify with `file <resolved-path>` and `command -v uv.exe`; when `uv.exe` is the native `x86_64-pc-windows-msvc` build, run the specified workflow as `uv.exe sync`, `uv.exe run ...`, and `uv.exe build`. Record the exact executable in proof. Do not reinstall Hermes, modify its runtime bin directory, or claim tests failed before trying the native executable.

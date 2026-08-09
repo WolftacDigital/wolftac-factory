@@ -226,6 +226,14 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    `git worktree prune --dry-run -v 2>&1` — silent means clean (`-v` writes to stderr,
    so a bare pipe looks falsely clean). On `Permission denied` — common under OneDrive,
    where git's recursive delete fails but the shell's does not — `rm -rf` each
-   `.git/worktrees/<name>` prune names and re-confirm. Keep the worktree only when
+   `.git/worktrees/<name>` prune names and re-confirm. If fallback removal returns
+ `Device or resource busy`, first move the terminal's persistent working directory
+ outside the target worktree (for example, set `workdir` to the user home), then run
+ `rm -rf` using the native Windows `D:/...` path. If the empty directory is still
+ locked, do not kill broad process classes: enumerate handles (Sysinternals Handle or
+ equivalent), inspect each PID's command line/parent tree, and terminate only an exact
+ worker-started test/dev-server tree proven to own that worktree. Never stop Hermes or
+ unrelated Python/Node processes. Retry removal, then verify both the filesystem path
+ and `git worktree list --porcelain` are clear before pruning. Keep the worktree only when
    handing the issue back unfinished, and say so in the report. Then: one issue per
    invocation.

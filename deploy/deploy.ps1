@@ -40,6 +40,14 @@ $trees = @(
     @{ Src = "ports\hermes\wolftac-build"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-build" },
     @{ Src = "ports\hermes\wolftac-review"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review" },
     @{ Src = "ports\hermes\wolftac-integrate"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-integrate" },
+    # The isolated factory-integrate profile is a SEPARATE Hermes home with its own
+    # skills tree; the default-profile target above never reaches it. It ran for weeks
+    # on an unversioned SKILL.md with no linear_bot.py, so the worker hand-rolled a
+    # GraphQL client every tick and never processed the queue. Both halves ship here:
+    # the skill (helper paths pointed at THIS profile) and the isolation preflight the
+    # worker must clear before claiming anything.
+    @{ Src = "ports\hermes-factory-integrate\skills\wolftac-integrate"; Dst = "$env:LOCALAPPDATA\hermes\profiles\factory-integrate\skills\wolftac-integrate" },
+    @{ Src = "ports\hermes-factory-integrate\deploy"; Dst = "$env:LOCALAPPDATA\hermes\profiles\factory-integrate\deploy" },
     @{ Src = "plugins\wolftac-factory\skills\wolftac-spec"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-spec" },
     @{ Src = "plugins\wolftac-factory\skills\wolftac-build"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-build" },
     @{ Src = "plugins\wolftac-factory\skills\wolftac-review"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-review" },
