@@ -107,8 +107,11 @@ Notes that carry factory semantics:
 - `queue` and `issue` include the bot `viewer` in their output — that is the id
   the viewer-identity check compares approval authors against; no separate call
   needed.
-- Comment authors appear as `user` (humans) or `botActor` (app users). An
-  approval whose author id equals the returned viewer id is void.
+- **Never use the author FIELD to tell humans from bots.** Verified 2026-07-30:
+  a comment posted by the factory bot comes back under `user` with the bot's id
+  and a `botActor` of `null` — identical in shape to a human comment. The only
+  valid discriminator is comparing the author id against the `viewer` id
+  returned alongside the data: equal ⇒ self-authored ⇒ the approval is void.
 - `claim` exits **2** with `"claimed": false` when the delegate read-back does not
   match — that is the lost-claim-race signal: back off silently, post nothing.
 - `--body-file -` keeps proof packs off the command line; write the pack to a
