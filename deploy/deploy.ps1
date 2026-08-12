@@ -23,6 +23,9 @@ $Pairs = @(
     @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$env:USERPROFILE\.claude\skills\wolftac-review\SKILL.md" }
     @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\SKILL.md" }
     @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" }
+    # Shared doctrine skill (not a pipeline stage) — ships to every local agent surface.
+    @{ Src = "canonical\wolftac-agent-command-patterns\SKILL.md"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-agent-command-patterns\SKILL.md" }
+    @{ Src = "ports\codex\wolftac-agent-command-patterns.md"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-agent-command-patterns.md" }
     @{ Src = "ports\codex\wolftac-spec.md";             Dst = "$env:USERPROFILE\.codex\prompts\wolftac-spec.md" }
     @{ Src = "ports\codex\wolftac-build.md";            Dst = "$env:USERPROFILE\.codex\prompts\wolftac-build.md" }
     @{ Src = "ports\codex\wolftac-review.md";           Dst = "$env:USERPROFILE\.codex\prompts\wolftac-review.md" }
@@ -40,6 +43,7 @@ $trees = @(
     @{ Src = "ports\hermes\wolftac-build"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-build" },
     @{ Src = "ports\hermes\wolftac-review"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review" },
     @{ Src = "ports\hermes\wolftac-integrate"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-integrate" },
+    @{ Src = "ports\hermes\wolftac-agent-command-patterns"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-agent-command-patterns" },
     # The isolated factory-integrate profile is a SEPARATE Hermes home with its own
     # skills tree; the default-profile target above never reaches it. It ran for weeks
     # on an unversioned SKILL.md with no linear_bot.py, so the worker hand-rolled a
@@ -75,6 +79,7 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
     $Pairs += @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$wslSkills\wolftac-review\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$wslSkills\wolftac-integrate\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$wslSkills\wolftac-integrate\scripts\linear_bot.py" }
+    $Pairs += @{ Src = "canonical\wolftac-agent-command-patterns\SKILL.md"; Dst = "$wslSkills\wolftac-agent-command-patterns\SKILL.md" }
 }
 
 # Read a file and return its content with LF line endings (no trailing-CR).
@@ -142,7 +147,7 @@ if ($Deploy) {
     # recurses, which is how wolftac-integrate\scripts\linear_bot.py reaches the bundle.
     # Desktop still RUNS the helper from the Claude Code target above, because its MCP
     # terminal server sees the local filesystem, not the uploaded bundle.
-    foreach ($s in @("wolftac-spec", "wolftac-build", "wolftac-review", "wolftac-integrate")) {
+    foreach ($s in @("wolftac-spec", "wolftac-build", "wolftac-review", "wolftac-integrate", "wolftac-agent-command-patterns")) {
         Compress-Archive -Path (Join-Path $Repo "ports\claude-desktop\$s") -DestinationPath (Join-Path $zipOut "$s.zip") -Force
         Write-Output "zipped   $s.zip -> $zipOut"
     }
