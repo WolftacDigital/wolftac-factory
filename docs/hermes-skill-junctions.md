@@ -145,18 +145,30 @@ junctioned path writes *into the repo working tree*, which would clobber exactly
 the uncommitted `/learn` edit this whole design exists to preserve.
 
 `deploy.ps1` reads `deploy/junctions.json`, and for each pair confirms the deployed
-path is a live reparse point **pointing at this repo's tree** before treating it as
-junctioned. A stale manifest entry, a missing link, or a link to somewhere else
-falls back to ordinary copy behavior — the manifest alone is never trusted.
+path is a live reparse point resolving to an existing directory **at that pair's
+repo-relative path** before treating it as junctioned. A stale manifest entry, a
+missing link, or a link somewhere else falls back to ordinary copy behavior — the
+manifest alone is never trusted.
+
+The match is on the path *tail* (`…\ports\hermes\wolftac-build`), not the full path,
+and that detail is load-bearing: decision 1 puts the junction in a **dedicated
+worktree**, which is never the checkout `deploy.ps1` is running from. An earlier
+revision compared full paths, and testing the two decisions together caught the
+consequence — the junction went unrecognized, `-Deploy -Force` fell through to the
+copy path, and it overwrote the uncommitted `/learn` edit in the live worktree. The
+regression test is the one recorded below: run `deploy.ps1` from one checkout with
+the junction pointing at another, and assert the edit's SHA-256 is unchanged.
 
 * `-Check` prints `JUNCTIONED <n> file(s) across <m> linked skill dir(s)` and excludes
   them from the drift count.
 * `-Deploy` prints `JUNCTION-NOOP` and writes nothing. The test precedes the `-Force`
   branch, so **`-Deploy -Force` cannot clobber the working tree either.**
 
-Measured: with an uncommitted edit in the junctioned tree, `-Deploy` and
-`-Deploy -Force` both exited 0, and the file's SHA-256 was identical before and
-after both runs.
+Measured, with `deploy.ps1` running from one checkout and the junction pointing at a
+separate worktree: `-Check` reported `JUNCTIONED 40 file(s) across 4 linked skill
+dir(s)` plus `CLEAN` for the 24 copy-deployed files (exit 0), `-Deploy` and
+`-Deploy -Force` both reported `JUNCTION-NOOP` and exited 0, and the edited file's
+SHA-256 was identical before and after all three runs.
 
 ### Alternatives rejected
 

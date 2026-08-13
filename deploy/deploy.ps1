@@ -94,6 +94,7 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
 # — so -Deploy skips those pairs and -Check reports them as JUNCTIONED rather
 # than counting them. See docs\hermes-skill-junctions.md.
 $JunctionedRoots = @()
+$JunctionedTargets = @()
 $junctionManifestPath = Join-Path $PSScriptRoot "junctions.json"
 if (Test-Path -LiteralPath $junctionManifestPath -PathType Leaf) {
     try {
@@ -103,13 +104,20 @@ if (Test-Path -LiteralPath $junctionManifestPath -PathType Leaf) {
             $linkPath = Join-Path $junctionSkillsRoot $jp.name
             $linkItem = Get-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
             if (-not $linkItem -or -not ($linkItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
-            # Trust the manifest only as a hint: the link must actually point at
-            # THIS repo's tree before its targets are excluded from deploy.
-            $expected = [IO.Path]::GetFullPath((Join-Path $Repo ($jp.repo -replace '/', '\')))
+            # Trust the manifest only as a hint: the link must actually resolve to
+            # a real directory at this pair's repo-relative path. The tail is
+            # matched rather than the full path because the recommended layout
+            # points the junction at a DEDICATED always-on-main worktree, not at
+            # the checkout deploy.ps1 happens to be running from — a full-path
+            # comparison silently fails there, and -Deploy -Force then writes
+            # through the link into somebody's uncommitted /learn edit.
+            $suffix = "\" + ($jp.repo -replace '/', '\').Trim('\')
             $actual = $null
             try { $actual = [IO.Path]::GetFullPath($linkItem.LinkTarget) } catch {}
-            if ($actual -and $actual.TrimEnd('\') -ieq $expected.TrimEnd('\')) {
+            if ($actual -and $actual.TrimEnd('\').EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase) -and
+                (Test-Path -LiteralPath $actual -PathType Container)) {
                 $JunctionedRoots += [IO.Path]::GetFullPath($linkPath)
+                $JunctionedTargets += "$([IO.Path]::GetFullPath($linkPath)) -> $actual"
             }
         }
     } catch {
@@ -150,6 +158,7 @@ if ($Check) {
     }
     if ($junctioned -gt 0) {
         Write-Output "JUNCTIONED $junctioned file(s) across $($JunctionedRoots.Count) linked skill dir(s) - the repo IS the deployed copy, so no drift is possible and none is checked."
+        foreach ($t in $JunctionedTargets) { Write-Output "  linked   $t" }
     }
     if ($drift -eq 0) {
         Write-Output "CLEAN: all $($Pairs.Count - $junctioned) copy-deployed files match the repo."
@@ -196,6 +205,7 @@ if ($Deploy) {
     }
     if ($junctioned -gt 0) {
         Write-Output "JUNCTION-NOOP $junctioned file(s) across $($JunctionedRoots.Count) linked skill dir(s) - single copy, nothing to write, no working-tree content touched."
+        foreach ($t in $JunctionedTargets) { Write-Output "  linked   $t" }
     }
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
