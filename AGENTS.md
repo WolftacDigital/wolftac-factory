@@ -130,6 +130,23 @@ installed and oriented; **`canonical/wolftac-{spec,build,review,integrate}/SKILL
 is the actual spec you execute against.** Read the one(s) for the stage(s) you'll run
 before your first invocation.
 
+## Shared doctrine skill (not a stage)
+
+This repo also ships `wolftac-agent-command-patterns`: shared Wolftac operating
+doctrine, **not a fourth pipeline stage**. The pipeline remains exactly
+spec → build → review → integrate. Load the doctrine skill before strategy,
+implementation, review, or an agent-to-agent handoff to get consistent operating-mode
+selection, decision-complete handoff prompts, memory boundaries, tool-schema-first
+discipline, subagent delegation limits, verification gates, and final reporting. It
+never replaces a stage skill and changes no Linear state, label, queue order, approval
+rule, or merge authority. It is available at
+`canonical/wolftac-agent-command-patterns/SKILL.md`,
+`ports/hermes/wolftac-agent-command-patterns/SKILL.md`,
+`ports/codex/wolftac-agent-command-patterns.md`, and
+`ports/claude-desktop/wolftac-agent-command-patterns/SKILL.md`; install it exactly the
+way you install a stage skill for your platform. Whether your persona loads it
+automatically is a separate, deliberate decision — this repo does not patch it in.
+
 **Naming note:** the deployed commands in this repo are `/wolftac-*`. If you find
 `/factory-*` names in `share/build-your-own-agent-factory.html`, those are
 sanitized public examples for clients/community — templates, not installed skills.

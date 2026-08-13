@@ -28,8 +28,9 @@ canonical/              Claude Code skills (the reference implementation)
   wolftac-build/          build stage: issue -> working, tested code
   wolftac-review/         review stage: independent re-verification -> Approved
   wolftac-integrate/      integrate stage: rebase + gates + APPROVE MERGE -> merged, the only stage that marks Done
+  wolftac-agent-command-patterns/  shared cross-agent doctrine — NOT a pipeline stage
 plugins/wolftac-factory/ Codex plugin with four native skills (authoritative Codex port)
-ports/codex/            Deprecated `/prompts:wolftac-*` compatibility prompts
+ports/codex/            Deprecated `/prompts:wolftac-*` compatibility prompts, plus the shared doctrine prompt
 ports/hermes/           Hermes skills (same stages, Hermes' format)
   wolftac-review/references/   Proof patterns (e.g. reviewing WSL-hosted repos via a detached worktree)
 ports/claude-desktop/   Sources for Claude Desktop's uploadable skill bundles
@@ -39,6 +40,16 @@ deploy/model-policy.yaml  Versioned per-harness model and reasoning policy
 deploy/linear-mcp.toml.example   Codex config.toml snippet for connecting Linear
 share/build-your-own-agent-factory.html   Public/client field manual (generic /factory-* names — see Naming)
 ```
+
+**Shared doctrine, not a stage:** `wolftac-agent-command-patterns` is a fifth *skill*
+but **not a fourth pipeline stage**. The pipeline is still exactly
+spec → build → review → integrate. The doctrine skill packages Wolftac's reusable
+operating patterns — operating-mode selection, decision-complete handoff prompts,
+memory boundaries, tool-schema-first discipline, subagent delegation limits,
+verification gates, and final reporting — so any agent (Claude Code, Claude Desktop,
+Codex, Hermes) can load the same standards. It changes no Linear state, label, queue
+order, approval rule, or merge authority, and it never replaces a stage skill. Adopting
+it into a given agent's always-on persona is deliberately separate, follow-up work.
 
 **Naming:** `/wolftac-*` commands are Wolftac's internal deployed skills — the ones
 this repo installs. The `/factory-*` names that appear in `share/` are sanitized,
