@@ -1,0 +1,10 @@
+{
+  "_comment": "WD-349: Hermes skill directories exposed at the deployed path via Windows directory junctions, so a /learn edit lands directly in the repo working tree. Consumed by deploy/junction-setup.ps1, deploy/junction-teardown.ps1 and deploy/deploy.ps1. See docs/hermes-skill-junctions.md.",
+  "skills_root": "%LOCALAPPDATA%/hermes/skills",
+  "pairs": [
+    { "repo": "ports/hermes/wolftac-spec", "name": "wolftac-spec" },
+    { "repo": "ports/hermes/wolftac-build", "name": "wolftac-build" },
+    { "repo": "ports/hermes/wolftac-review", "name": "wolftac-review" },
+    { "repo": "ports/hermes/wolftac-integrate", "name": "wolftac-integrate" }
+  ]
+}

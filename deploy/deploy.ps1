@@ -12,6 +12,10 @@ skill's YAML frontmatter silently breaks skill discovery on Linux (WSL / Hermes)
 If -Check reports drift and the DEPLOYED copy is the improvement (e.g. Hermes /learn
 edited a skill in place), copy it back into the repo and commit; otherwise -Deploy
 overwrites the target with the repo version.
+
+Targets listed in deploy\junctions.json that are live directory junctions into this
+repo are neither checked nor written: repo and deployed are one set of bytes. See
+docs\hermes-skill-junctions.md.
 #>
 param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force)
 
@@ -82,6 +86,45 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
     $Pairs += @{ Src = "canonical\wolftac-agent-command-patterns\SKILL.md"; Dst = "$wslSkills\wolftac-agent-command-patterns\SKILL.md" }
 }
 
+# ── Junctioned targets (WD-349) ───────────────────────────────────────────────
+# When a deployed Hermes skill directory is a directory junction into this repo
+# (deploy\junction-setup.ps1), repo and "deployed" are the SAME bytes: there is
+# no copy to make and no drift that can exist. Writing to such a path writes INTO
+# the repo working tree, which would silently clobber an uncommitted /learn edit
+# — so -Deploy skips those pairs and -Check reports them as JUNCTIONED rather
+# than counting them. See docs\hermes-skill-junctions.md.
+$JunctionedRoots = @()
+$junctionManifestPath = Join-Path $PSScriptRoot "junctions.json"
+if (Test-Path -LiteralPath $junctionManifestPath -PathType Leaf) {
+    try {
+        $junctionManifest = Get-Content -LiteralPath $junctionManifestPath -Raw | ConvertFrom-Json
+        $junctionSkillsRoot = [Environment]::ExpandEnvironmentVariables($junctionManifest.skills_root)
+        foreach ($jp in @($junctionManifest.pairs)) {
+            $linkPath = Join-Path $junctionSkillsRoot $jp.name
+            $linkItem = Get-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
+            if (-not $linkItem -or -not ($linkItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+            # Trust the manifest only as a hint: the link must actually point at
+            # THIS repo's tree before its targets are excluded from deploy.
+            $expected = [IO.Path]::GetFullPath((Join-Path $Repo ($jp.repo -replace '/', '\')))
+            $actual = $null
+            try { $actual = [IO.Path]::GetFullPath($linkItem.LinkTarget) } catch {}
+            if ($actual -and $actual.TrimEnd('\') -ieq $expected.TrimEnd('\')) {
+                $JunctionedRoots += [IO.Path]::GetFullPath($linkPath)
+            }
+        }
+    } catch {
+        Write-Output "WARN: could not read $junctionManifestPath ($($_.Exception.Message)); treating all targets as copy-based."
+    }
+}
+
+function Test-UnderJunction([string]$Path) {
+    $full = try { [IO.Path]::GetFullPath($Path) } catch { $Path }
+    foreach ($root in $JunctionedRoots) {
+        if ($full -ieq $root -or $full.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 # Read a file and return its content with LF line endings (no trailing-CR).
 function Get-LfText($Path) {
     $raw = [IO.File]::ReadAllText($Path)
@@ -97,14 +140,19 @@ function Get-LfHash($Path) {
 
 if ($Check) {
     $drift = 0
+    $junctioned = 0
     foreach ($p in $Pairs) {
+        if (Test-UnderJunction $p.Dst) { $junctioned++; continue }
         $srcHash = Get-LfHash (Join-Path $Repo $p.Src)
         $dstHash = Get-LfHash $p.Dst
         if ($null -eq $dstHash)        { Write-Output "MISSING  $($p.Dst)"; $drift++ }
         elseif ($srcHash -ne $dstHash) { Write-Output "DRIFT    $($p.Dst)"; $drift++ }
     }
+    if ($junctioned -gt 0) {
+        Write-Output "JUNCTIONED $junctioned file(s) across $($JunctionedRoots.Count) linked skill dir(s) - the repo IS the deployed copy, so no drift is possible and none is checked."
+    }
     if ($drift -eq 0) {
-        Write-Output "CLEAN: all $($Pairs.Count) deployed files match the repo."
+        Write-Output "CLEAN: all $($Pairs.Count - $junctioned) copy-deployed files match the repo."
     } else {
         Write-Output "$drift file(s) out of sync. If the deployed copy is the improvement, copy it into the repo and commit; otherwise run -Deploy."
     }
@@ -121,7 +169,12 @@ if ($Deploy) {
     $enc = New-Object System.Text.UTF8Encoding($false)
     $skipped = 0
     $forced = 0
+    $junctioned = 0
     foreach ($p in $Pairs) {
+        # Never write through a junction: the destination IS the repo working
+        # tree, and an uncommitted /learn edit there must survive -Deploy. This
+        # test precedes the $Force branch, so -Force cannot clobber it either.
+        if (Test-UnderJunction $p.Dst) { $junctioned++; continue }
         $dstDir = Split-Path $p.Dst -Parent
         if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Force $dstDir | Out-Null }
         $srcHash = Get-LfHash (Join-Path $Repo $p.Src)
@@ -140,6 +193,9 @@ if ($Deploy) {
             Write-Output "deployed $($p.Src)"
         }
         [IO.File]::WriteAllText($p.Dst, (Get-LfText (Join-Path $Repo $p.Src)), $enc)
+    }
+    if ($junctioned -gt 0) {
+        Write-Output "JUNCTION-NOOP $junctioned file(s) across $($JunctionedRoots.Count) linked skill dir(s) - single copy, nothing to write, no working-tree content touched."
     }
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
