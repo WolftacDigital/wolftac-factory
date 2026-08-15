@@ -1,174 +1,255 @@
 ---
 name: wolftac-build
-description: Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from Linear (team Wolftac Digital), implement it on a feature branch per its spec, verify it, and move it to In Review with a build report. One issue per invocation. Use when asked to build from the factory queue; designed for looped runs (/loop 5m /wolftac-build) on Opus or Sonnet.
+description: |
+  Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from
+  Linear (team Wolftac Digital), implement it on a feature branch per its spec, verify
+  by executing the test plan, and move it to In Review with a build report.
+  One issue per invocation.
+  Use when asked to "build", "run the build stage", "work the factory queue", or on a
+  recurring factory-build schedule/cron.
+  Voice triggers (speech-to-text aliases): "build from the queue", "work the queue".
 ---
 
 # /wolftac-build — Factory stage 2: execution
 
-You are the build stage of the software factory. You take ONE specced issue from the
-Linear queue, implement it exactly to spec, prove it works, and hand it to review.
+Take ONE specced issue from the Linear queue, implement it exactly to spec, prove it
+works, hand it to review.
 
-## Factory constants
+## Hermes MoA routing
+
+Preferred Hermes execution preset: `wolftac-factory-build`.
+
+When launching this stage from Hermes, run it under:
+
+```text
+/model wolftac-factory-build --provider moa
+```
+
+Model roles inside the preset:
+- **GPT-5.6 Sol** is the aggregator / acting builder-verifier. It owns tool calls, code edits, tests, commits, Linear state changes, and the build report.
+- **Claude Opus 4.8** advises on architecture, implementation plan, repo-fit, and hidden risks.
+- **Claude Sonnet 5** advises on implementation mechanics and likely code changes.
+- **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and defect spotting. Treat Gemma as advisory only; if the LM Studio reference fails or disagrees with cloud models, continue with cloud consensus and real execution proof.
+
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-build`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
+
+## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
-- Queue label: **Factory Queue**
-- You consume: state **Todo** • You produce: state **In Review**
-- State conveyor: `Todo` → `In Progress` (you, while working) → `In Review` (you, when done) → `Approved` (/wolftac-review PASS) → `Done` (/wolftac-integrate after an approved merge — never yours)
-- Spec template reference: `~/.claude/skills/wolftac-spec/spec-template.md`
-- Intended model: Opus or Sonnet. Fable should be orchestrating, not executing.
-- Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
-  conventions above are the shared contract; any agent may build what any agent specced.
+- Queue label: **Factory Queue** — only touch issues carrying this label
+- You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the integrate stage after an approved merge — never by you (review's pass verdict is `Approved`).
+- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
+- Linear tool names vary by platform — use this profile's Linear toolset equivalents.
+
+## Preflight
+Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
+
+### Completion-budget gate
+Before claiming an issue, estimate the change surface and the remaining execution/tool budget. Reserve the final 20% of the run for at least one fix cycle, the full test plan, diff review, commit/push verification, the Linear build report, and the `In Review` transition. If that reserve cannot be protected, skip the candidate without claiming it rather than leaving partially edited work in `In Progress`.
+
+For broad multi-file work, follow `references/build-execution-budget-and-batching.md`: batch independent reads, use coherent multi-file edits, never edit the same file concurrently, and run the cheapest compile/type check after each logical batch.
 
 ## Procedure
 
-### 1. Pick up work
-- If the Linear MCP tools aren't loaded, load them via ToolSearch (keyword query:
-  `"Linear workspace issues"` — you need `list_issues`, `get_issue`, `save_issue`,
-  `save_comment`, `list_comments`).
-- `list_issues`: team `Wolftac Digital`, state `Todo`, label `Factory Queue`.
-- Before choosing a Todo issue, perform a read-first stale-claim sweep: list issues
-  in state `In Progress` with label `Factory Queue` (and the lane filter, if any).
-  For each claimed issue, read comments and metadata. If the most recent comment, or
-  `startedAt`/claim time when there are no comments, is OLDER than 4 hours, you may
-  post exactly `SWEPT: stale claim, no activity since <timestamp>` and reset the
-  issue to `Todo`. If there is ANY comment younger than 4 hours, the issue is
-  UNTOUCHABLE — never sweep it. This sweep is the ONLY time build posts a comment
-  during pickup; during a claim-race back off you post NOTHING.
-- Lane filter: if this skill was invoked with an argument (e.g. `/wolftac-build agentic`), only
-  consider issues whose Linear project name or labels contain it (case-insensitive).
-- **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
-  `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
-  later Jonathan decision comment. Do not comment or change state. A later decision
-  comment from Jonathan plus removal of his assignment clears the park; the issue is
-  then buildable and that comment is part of its work order. The comment author must
-  be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
-  the park.
-- **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
-  review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
-  rework tier and within the fresh tier, preserve priority order
-  (Urgent > High > Medium > Low), oldest first on ties.
-- Skip:
-  - issues whose most recent comment is a `BLOCKED:` comment (they need a human/respec),
-  - issues with unresolved blocking relations (check with `get_issue`),
-  - issues whose spec **Repo:** path is unreachable from THIS session's environment
-    (test the path — e.g. a WSL path from a Windows session, or another machine's
-    repo). Skip these SILENTLY: no comment, no state change — they belong to a
-    differently-homed session.
-- **Queue empty or everything skipped → say "Factory queue: nothing buildable" and stop
-  cleanly.** (A looped run will simply check again next cycle.)
+1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
+   `Factory Queue`. Exhaust pagination before concluding the queue or stale-claim set is
+   empty. If the listing omits project names, first filter to active `Factory Queue`
+   issues, then enrich those candidates before applying a lane filter; do not infer a
+   project lane from the issue title. If invoked with an argument (e.g. "build agentic"), treat it as a
+   lane filter: only consider issues whose Linear project name or labels contain it
+   (case-insensitive).
+   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
+   later Jonathan decision comment. Do not comment or change state. A later decision
+   comment from Jonathan plus removal of his assignment clears the park; the issue is
+   then buildable and that comment is part of its work order. The comment author must
+   be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
+   the park.
+   **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
+   review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
+   rework tier and within the fresh tier, preserve priority order
+   (Urgent > High > Medium > Low), oldest first on ties.
+   Skip issues whose latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
+   SILENTLY, no comment or state change — issues whose spec **Repo:** path is
+   unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
+   Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
+   `In Progress` issues with label `Factory Queue` (and the lane filter, if any).
+   Before resetting one, resolve its Linear-generated branch against `git worktree
+   list --porcelain` and inspect any owning issue worktree. A dirty issue worktree is
+   preserved operator-attention work, not proof of abandonment: do not sweep, reset,
+   claim, edit, commit, or discard it, even when Linear activity is older than four
+   hours. Report the worktree path and diff stat in the cron result and follow
+   `references/stale-claim-dirty-worktree-safety.md`. If no dirty issue worktree exists
+   and the most recent comment, or `startedAt`/claim time when there are no comments,
+   is OLDER than 4 hours, you may post exactly
+   `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
+   If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
+   sweep it. This sweep is the ONLY time build posts a comment during pickup; during
+   a claim-race back off you post NOTHING.
 
-### 2. Claim it
-`save_issue`: state `In Progress`, assignee `me`. Immediately `get_issue` again and
-verify state is still `In Progress` AND assignee is still you. If another session won
-the race (assignee is someone else, or state is no longer `In Progress`), back off
-silently: no comment, no state change, stop this tick. Then read the FULL description
-(the spec) and ALL comments — a prior `REVIEW REPORT (FAIL)` comment means this is a
-rework pass and its defect list is your primary work order, on top of the original
-spec.
+   Before claiming each selected `Todo` candidate, resolve its Linear-generated branch
+   against `git worktree list --porcelain` **and inspect the deterministic durable
+   `build-<ISSUE>` path even when the worktree list omits it**. A failed cleanup can
+   leave an unregistered/orphaned issue directory with uncommitted work and a surviving
+   local branch. Inspect any owning/reused issue worktree or orphaned path before any
+   claim mutation or `git worktree add`; never register, overwrite, delete, or reuse an
+   existing non-empty orphaned path merely because Git omitted it from the worktree
+   list.
+   For WSL repos, make this a repository-identity-verified, explicit-path probe: pass the
+   literal spec repo path and branch ref to WSL (do not rely on nested shell variables),
+   and confirm `git rev-parse --show-toplevel` plus `git remote get-url origin` identify
+   the intended repo before trusting the worktree list. If output resolves to the host
+   current checkout or any unexpected repo, treat the probe as invalid and rerun it
+   before any Linear claim mutation. The claim is permitted only after this explicit
+   probe and the target worktree dirty check complete successfully.
+   A dirty dedicated worktree is operator-attention work even while Linear says `Todo`:
+   do not claim, edit, commit, reset, discard, comment, or change state. Report its path
+   and complete dirty summary, then consider the next lane-eligible candidate in normal
+   priority order. Use `git diff --stat` for unstaged changes, `git diff --cached --stat`
+   for staged changes, and `git status --short` for untracked paths; a branch-range diff
+   such as `git diff --stat origin/main...HEAD` does **not** include uncommitted work.
+   Follow `references/stale-claim-dirty-worktree-safety.md` for both stale `In Progress`
+   claims and dirty reused worktrees on `Todo` candidates. In scheduled runs, this is an
+   actionable operator-attention result, not a generic empty queue, so normal
+   nothing-buildable suppression does not hide it.
 
-### 3. Locate the repo
-The spec's **Repo** header line names the working directory. Verify it exists and is a
-git repo. If the **Repo:** header is missing, ambiguous, or names a path that exists
-nowhere (a genuine spec defect): post a comment `BLOCKED: <what's unclear>`, set state
-back to `Todo`, and stop. Reserve `BLOCKED:` for spec defects only — a repo that is
-merely unreachable from this environment should have been silently skipped at step 1.
+   Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
-### 4. Branch
-Work on the issue's `gitBranchName` (Linear generates it; it's in the issue payload).
-Fetch the remote, then create a dedicated worktree for this issue from the current
-remote default branch. Never switch branches in a checkout that has user changes and
-never commit directly to main/master. If an existing worktree is dirty and clearly
-belongs to another process or human, fail closed without modifying it.
+2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Immediately
+   re-fetch with `get_issue` and verify state is still `In Progress` AND
+   assignee is still you. If another session won the race (assignee is someone else,
+   or state is no longer `In Progress`), back off silently: no comment, no state
+   change, stop this tick. Then read the FULL spec and ALL comments — a prior
+   `REVIEW REPORT — FAIL` defect list is your primary work order. If comments show
+   the issue was previously built and later reset to `Todo`, verify the existing
+   branch/commits before coding. When the approved implementation is already present
+   and no FAIL report changed the work order, re-run the test plan, publish current
+   proof, and return it to `In Review` without manufacturing a no-op commit. See
+   `references/stale-reset-existing-branch-reverification.md`.
 
-**Put the worktree in the durable scratch root — never a system temp dir.** On Windows
-use `D:\Wolftac\.build-worktrees\` (native `D:/Wolftac/.build-worktrees/...` for
-`git worktree add`, MSYS `/d/Wolftac/.build-worktrees/...` for shell commands); on
-WSL/Linux use `~/.build-worktrees/`. One directory per issue, named `build-<ISSUE>`.
-Create the root if it does not exist. Never `C:\tmp`, `C:/tmp`, or `/tmp`: those are
-cleared by reboots, cleanup tools, and — under WSL — between separate `wsl.exe`
-invocations. A build worktree is *reused across ticks*, so losing it mid-issue drops
-uncommitted work and strands a `.git/worktrees/` entry in the target repo that its
-owner then has to clean up. `/wolftac-review` uses the same root with a `review-`
-prefix; the two never collide.
+3. **Locate the repo.** The spec's **Repo:** header names the working directory.
+   Verify it exists and is a git repo. Missing/ambiguous → comment
+   `BLOCKED: <what's unclear>`, state back to `Todo`, stop. Reserve `BLOCKED:` for
+   spec defects only — a repo that is merely unreachable from this environment
+   should have been silently skipped at step 1.
 
-### 5. Implement — with guardrails
-- **Before editing anything**, when the spec uses `AC-N`/`NG-N` IDs, compare every
-  `AC-N` against every `NG-N`. Non-goals are binding. An acceptance criterion that
-  requires a non-goal is a spec defect: post
-  `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and stop.
-  Old-format (unnumbered) specs proceed under the existing rules.
-- If it is not in the Linear issue, it does not exist — no side-channel instructions.
-- Read the repo's CLAUDE.md/AGENTS.md first; match its conventions.
-- Build exactly what the spec's Technical approach and Acceptance criteria describe.
-  **No scope creep**: tangential improvements get noted in your build report as
-  "suggest /wolftac-spec", not built.
-- Secrets go in .env/env vars, never hardcoded — review checks this.
-- If the spec turns out ambiguous or wrong in a way that blocks correct implementation:
-  post `BLOCKED: <specific questions>`, set state back to `Todo`, stop. Do not guess
-  on load-bearing decisions.
+   **WSL repo note:** from Windows/Git Bash, disable path conversion for Linux paths,
+   for example `MSYS2_ARG_CONV_EXCL='*' wsl --cd /home/... sh -lc '<cmd>'`.
 
-### 6. Verify
-Execute the spec's **Test plan** literally. Every acceptance criterion needs evidence
-from running code (tests passing, app behavior observed) — "the code looks right" is
-not verification. If verification fails, fix and re-verify before proceeding.
+   Verify any prerequisite that the spec says must already be merged to `main` before
+   coding. Linear `Done` is not proof of git integration. If the prerequisite is absent
+   from the remote default branch, post a specific `BLOCKED:` comment, restore `Todo`,
+   and stop without merging dependency branches or expanding scope.
 
-### 7. Commit
-Commit with descriptive messages. Record the SHAs and branch name.
-Before committing, review `git status` and the staged file list: never commit build
-artifacts (`__pycache__/`, `*.pyc`, `node_modules/`, `dist/`, logs); add .gitignore
-entries as needed. (Guardrail added after the factory's first review pass caught
-committed bytecode — WD-158.)
+4. **Branch safely.** Fetch the remote, then create a dedicated worktree for the
+   issue's Linear-generated branch from the current remote default branch. Never switch
+   branches in a checkout with user changes and never commit directly to main/master.
+   A dirty *target/reused issue worktree* owned by another process or human is a
+   fail-closed condition. A dirty source checkout does not by itself block creating a
+   separate clean issue worktree from the fetched remote default branch: leave the dirty
+   checkout untouched, do not switch it, and verify the new worktree starts clean.
 
-Publish the branch with `git push -u origin <branch>` and verify the remote head SHA
-equals the local head SHA. If the repository has no writable remote, do not move the
-issue to `In Review`; report the publication blocker without exposing credentials.
+   Put the worktree in the durable scratch root: `D:\Wolftac\.build-worktrees\` on
+   Windows. Use native forward-slash paths such as `D:/Wolftac/...` for Git path
+   operands, including `git -C`, `git worktree add`, and `git worktree remove`; in
+   Hermes' MSYS shell, `git -C '/d/...'` can bypass path conversion and fail with
+   `No such file or directory` even when the shell's current directory renders as
+   `/d/...`. MSYS `/d/...` paths remain suitable for ordinary shell file commands.
+   Use `~/.build-worktrees/` under WSL. One directory per issue, named
+   `build-<ISSUE>`; create the root if missing. Never `C:\tmp`, `C:/tmp`, or `/tmp` —
+   those are cleared by reboots, cleanup tools, and between separate `wsl.exe`
+   invocations. A build worktree is reused across ticks, so losing it mid-issue drops
+   uncommitted work and strands a `.git/worktrees/` entry in the target repo for its
+   owner to clean up. `/wolftac-review` shares the root with a `review-` prefix.
 
-**PR-CREATE-CONTRACT:** After the push and remote-SHA verification, create one
-non-draft PR per issue when the repository has a GitHub remote. First run
-`gh pr view <branch>`; if a PR already exists for that branch, reuse its URL
-and never open a second. Otherwise run:
+   If the Linear-generated branch already contains approved implementation commits but
+   predates current `origin/main`, inspect its branch-only history before changing it.
+   Without explicit history-rewrite approval, preserve those commits and merge
+   `origin/main` into the branch in its dedicated worktree rather than resetting and
+   force-pushing. During a merge, `git status` may list many current-main paths; prove
+   issue scope with `git diff --cached origin/main` before commit and the final diff
+   against `origin/main` afterward. See
+   `references/existing-feature-branch-main-integration.md`.
 
-```text
-gh pr create --title "WD-NNN: <issue title>" --body "<summary>
+   For WSL-hosted Next.js/WebGL work, also use
+   `references/wsl-webgl-build-pitfalls.md` for line endings, React state/fallback
+   design, build verification, and honest browser-proof boundaries.
 
-Closes WD-NNN
+5. **Implement — guardrails.** **Before editing anything**, when the spec uses
+   `AC-N`/`NG-N` IDs, compare every `AC-N` against every `NG-N`. Non-goals are
+   binding. An acceptance criterion that requires a non-goal is a spec defect:
+   comment `BLOCKED: AC-x requires NG-y (<detail>)`, set state back to `Todo`, and
+   stop. Old-format (unnumbered) specs proceed under the existing rules.
+   If it is not in the Linear issue, it does not exist — no side-channel instructions.
+   Read the repo's CLAUDE.md/AGENTS.md first; match conventions. Build exactly to the
+   spec's Technical approach and Acceptance criteria. NO scope creep — tangents go in
+   the report as "suggest /wolftac-spec". Secrets in .env, never hardcoded. Blocking
+   ambiguity → `BLOCKED: <questions>` comment, state `Todo`, stop. Don't guess on
+   load-bearing decisions.
 
-Linear: <issue URL>" --base main --head <branch>
-```
+6. **Verify.** Execute the spec's Test plan literally. Every criterion needs evidence
+   from running code — "looks right" is not verification. Classify proof precisely:
+   automated command output, live browser/API behavior, or an unavailable fixture path.
+   If a live criterion needs config, credentials, or a fixture that is not safely
+   available, do not mutate secrets/config merely to manufacture proof. Run every safe
+   check, describe the unverified interaction under **Deviations from spec**, and make
+   it the reviewer's first explicit check; never imply that an empty/fallback smoke
+   proved the configured live path.
 
-If `gh` reports a rate-limit or transient failure, retry once. If the retry fails,
-record the PR-creation blocker in the BUILD REPORT but do not fail a build whose
-branch published successfully. For a local-only repository with no GitHub remote,
-skip PR commands and record `local-only repo — no PR`; execution verification and
-the rest of the handoff are unchanged.
+7. **Commit.** Descriptive messages; record SHAs. Review the staged file list before
+   committing: never commit artifacts (`__pycache__/`, `*.pyc`, `node_modules/`,
+   `dist/`, logs); add .gitignore entries as needed. Push with
+   `git push -u origin <branch>` and verify the remote head equals local `HEAD`. If no
+   writable remote exists, do not advance the issue to `In Review`.
 
-### 8. Hand off
-Post a comment on the issue:
+   **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
+   non-draft PR per issue for a GitHub remote. Run `gh pr view <branch>` first
+   and reuse the existing PR URL when present; never open a second PR for the branch.
+   Otherwise run
+   `gh pr create --title "WD-NNN: <issue title>" --body "<summary>` followed by a
+   blank line, `Closes WD-NNN`, another blank line, and
+   `Linear: <issue URL>" --base main --head <branch>`. Retry a `gh` rate-limit or
+   transient failure once; if it fails again, record the PR-creation blocker without
+   failing a build whose branch published successfully. With no GitHub remote, skip
+   PR steps and record `local-only repo — no PR`; execution verification is
+   unchanged.
 
-```
-**BUILD REPORT**
-- **Agent:** Claude Code / <model>
-- **Implemented:** <what was built, per spec section>
-- **Verified:** <exact commands run and their results, per acceptance criterion>
-- **Branch / commits:** <branch> @ <SHAs>
-- **Published head:** <remote branch> @ <exact remote SHA>
-- **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
-- **Deviations from spec:** <none, or what and why>
-- **Notes for review:** <anything the reviewer should look at first>
-```
+8. **Hand off.** Comment:
 
-Then `save_issue`: state `In Review`. **Do not mark anything Done — that is /wolftac-integrate's
-exclusive right.**
+   ```
+   **BUILD REPORT**
+   - **Agent:** Hermes / <model>
+   - **Implemented:** <what was built, per spec section>
+   - **Verified:** <exact commands run and results, per criterion>
+   - **Branch / commits:** <branch> @ <SHAs>
+   - **Published head:** <remote branch> @ <exact remote SHA>
+   - **PR:** <PR URL, PR-creation blocker, or "local-only repo — no PR">
+   - **Deviations from spec:** <none, or what and why>
+   - **Notes for review:** <what the reviewer should check first>
+   ```
 
-### 9. Stop
-Once the branch is pushed and the remote head verified, the worktree has served its
-purpose — `/wolftac-review` builds its own from the published SHA. Remove it: delete
-generated heavy artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`,
-`next-env.d.ts`) — on Windows they block removal — then `git worktree remove <path>` and
-`git worktree prune`. Confirm with `git worktree prune --dry-run -v 2>&1`; silent output
-means clean (`-v` writes to stderr, so a bare pipe sees nothing and looks falsely clean).
-If prune reports `Permission denied` — common when the target repo lives under OneDrive,
-where git's own recursive delete fails but the shell's does not — `rm -rf` each
-`.git/worktrees/<name>` directory prune names, then re-confirm. Keep the worktree only
-if you are handing the issue back unfinished; then say so in the report.
+   Then state `In Review`.
 
-One issue per invocation. Do not pick up a second issue; the loop handles cadence.
+9. **Stop.** Once the branch is pushed and the remote head verified, remove the
+   worktree — review rebuilds its own from the published SHA. Delete generated heavy
+   artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`, `next-env.d.ts`), then
+   `git worktree remove <path>` and `git worktree prune`. Confirm with
+   `git worktree prune --dry-run -v 2>&1` — silent means clean (`-v` writes to stderr,
+   so a bare pipe looks falsely clean). On `Permission denied` — common under OneDrive,
+   where git's recursive delete fails but the shell's does not — `rm -rf` each
+   `.git/worktrees/<name>` prune names and re-confirm. If fallback removal returns
+ `Device or resource busy`, first move the terminal's persistent working directory
+ outside the target worktree. On Hermes, a `workdir` argument alone may not move a
+ previously persisted cwd after a failed cleanup command: run a separate successful
+ `cd /c/Users/<user> && pwd` call first, then invoke `rm -rf` in a new call with
+ `workdir` set to the user home and the native Windows `D:/...` target path. If the empty directory is still
+ locked, do not kill broad process classes: enumerate handles (Sysinternals Handle or
+ equivalent), inspect each PID's command line/parent tree, and terminate only an exact
+ worker-started test/dev-server tree proven to own that worktree. On Windows, terminating
+ a tracked shell/background session may leave its `npm`/Next.js child processes alive;
+ re-enumerate process command lines for the exact `build-<ISSUE>` path after stopping the
+ session, and terminate only those proven worktree-owned Node children (plus an exact
+ `npm run dev` parent when verified). Never stop Hermes or unrelated Python/Node
+ processes. Retry removal, then verify both the filesystem path and `git worktree
+ list --porcelain` are clear before pruning. Keep the worktree only when
+   handing the issue back unfinished, and say so in the report. Then: one issue per
+   invocation.
