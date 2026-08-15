@@ -31,7 +31,10 @@ change from the moment it is written.
 
 ```powershell
 # One-time: create the dedicated worktree the junctions point at.
-git -C D:\Wolftac\Factory worktree add D:/Wolftac/.factory-live main
+# --detach is required: the primary checkout already has main checked out, so
+# `worktree add <path> main` fails with "fatal: 'main' is already used by
+# worktree at ...". Detached is also the point - nothing switches its branch.
+git -C D:\Wolftac\Factory worktree add --detach D:/Wolftac/.factory-live main
 
 pwsh deploy\junction-setup.ps1 -RepoRoot D:/Wolftac/.factory-live -DryRun   # validate only
 pwsh deploy\junction-setup.ps1 -RepoRoot D:/Wolftac/.factory-live           # migrate
@@ -224,8 +227,12 @@ running them in the wrong order cannot destroy content.
 then re-materializes the real directory from the repo (LF-normalized) and verifies
 the result is neither a reparse point nor different from the repo.
 
-**Idempotence:** setup run twice reported `NOOP` for all four pairs and exit 0;
-teardown run twice reported `RESTORED` for all four and exit 0.
+**Idempotence:** setup run twice reported `NOOP` for all four pairs and exit 0.
+Teardown run twice reports `NOOP` for all four and exit 0 — the second pass
+compares the restored directory against the repo, finds it identical, and writes
+nothing at all (mtimes unchanged). It reported `RESTORED` and rewrote the tree
+before the defect-1 fix; if the deployed copy has *diverged* since teardown, the
+second run now REFUSES instead of overwriting it.
 
 **Rollback:** after teardown, `deploy.ps1 -Deploy` returned to ordinary copy
 behavior — including reporting `DRIFT-SKIPPED` on a target whose restored copy

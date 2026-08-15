@@ -109,13 +109,14 @@ if ($DryRun) {
 
 # ── Phase 2: act. ─────────────────────────────────────────────────────────
 $restored = 0
+$untouched = 0
 foreach ($entry in $plan) {
     $pair = $entry.Pair
     if ($entry.Action -eq "NOOP") {
         # Already real and byte-identical to the repo. Writing would churn mtimes
         # for no gain, and every write is a chance to lose something.
         Write-Output "NOOP     $($pair.LinkPath) (already a real directory matching the repo)"
-        $restored++
+        $untouched++
         continue
     }
     if ($entry.Action -eq "UNLINK") {
@@ -135,6 +136,8 @@ foreach ($entry in $plan) {
 }
 
 Write-Output ""
-Write-Output "Junction teardown complete: $restored real director(ies) restored from the repo."
+$summary = "Junction teardown complete: $restored real director(ies) restored from the repo"
+if ($untouched -gt 0) { $summary += ", $untouched already matching and left untouched" }
+Write-Output "$summary."
 Write-Output "Copy-based deploy is active again - run 'pwsh deploy\deploy.ps1 -Check' to confirm these targets are clean."
 exit 0

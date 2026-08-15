@@ -62,8 +62,12 @@ if ($isPrimaryCheckout -and -not $AllowActiveCheckout) {
     Write-Output "discard /learn edits that exist nowhere else. Decision 1 in"
     Write-Output "docs\hermes-skill-junctions.md records this as measurably unsafe."
     Write-Output ""
-    Write-Output "Use a dedicated worktree pinned to main:"
-    Write-Output "  git -C `"$RepoRoot`" worktree add D:/Wolftac/.factory-live main"
+    # --detach is REQUIRED, not stylistic: the primary checkout normally has main
+    # checked out already, and `worktree add <path> main` then dies with
+    # "fatal: 'main' is already used by worktree at ...". A detached worktree is
+    # also what decision 1 specifies - nothing should ever switch its branch.
+    Write-Output "Use a dedicated worktree detached at main:"
+    Write-Output "  git -C `"$RepoRoot`" worktree add --detach D:/Wolftac/.factory-live main"
     Write-Output "  pwsh deploy\junction-setup.ps1 -RepoRoot D:/Wolftac/.factory-live"
     Write-Output ""
     Write-Output "Pass -AllowActiveCheckout only if you accept that hazard deliberately."
