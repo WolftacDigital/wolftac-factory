@@ -380,5 +380,16 @@
       { "file": "ports/codex/wolftac-agent-command-patterns.md", "pattern": "(?=[\\s\\S]*Choose the operating mode)(?=[\\s\\S]*Assess[\\s\\S]{0,600}Plan[\\s\\S]{0,600}Execute[\\s\\S]{0,600}Verify[\\s\\S]{0,600}Report)(?=[\\s\\S]*latest user\\s+message)(?=[\\s\\S]*handoff prompt)(?=[\\s\\S]*schema first)(?=[\\s\\S]*Memory boundaries)(?=[\\s\\S]*Delegation boundaries)(?=[\\s\\S]*Verification gates)(?=[\\s\\S]*Final reporting)(?=[\\s\\S]*prompt-research guardrails)" },
       { "file": "ports/claude-desktop/wolftac-agent-command-patterns/SKILL.md", "pattern": "(?=[\\s\\S]*Choose the operating mode)(?=[\\s\\S]*Assess[\\s\\S]{0,600}Plan[\\s\\S]{0,600}Execute[\\s\\S]{0,600}Verify[\\s\\S]{0,600}Report)(?=[\\s\\S]*latest user\\s+message)(?=[\\s\\S]*handoff prompt)(?=[\\s\\S]*schema first)(?=[\\s\\S]*Memory boundaries)(?=[\\s\\S]*Delegation boundaries)(?=[\\s\\S]*Verification gates)(?=[\\s\\S]*Final reporting)(?=[\\s\\S]*prompt-research guardrails)" }
     ]
+  },
+  {
+    "id": "hermes-skill-junction-safety",
+    "description": "The Hermes skill-junction mechanism keeps its guardrails: setup refuses to junction when repo and deployed content differ or the link points somewhere unexpected, teardown removes only the link entry, deploy.ps1 never writes through a junction (including with -Force), and the decisions doc records the junction-vs-symlink and skill-caching evidence.",
+    "checks": [
+      { "file": "deploy/junction-setup.ps1", "pattern": "(?=[\\s\\S]*JUNCTION SETUP REFUSED)(?=[\\s\\S]*repo and deployed content differ)(?=[\\s\\S]*unexpected target)(?=[\\s\\S]*Test-JunctionTreeSafety)(?=[\\s\\S]*New-Item -ItemType Junction)" },
+      { "file": "deploy/junction-teardown.ps1", "pattern": "(?=[\\s\\S]*JUNCTION TEARDOWN REFUSED)(?=[\\s\\S]*Remove-DirectoryLink)(?=[\\s\\S]*not ours to remove)" },
+      { "file": "deploy/junction-lib.ps1", "pattern": "(?=[\\s\\S]*IO\\.Directory\\]::Delete\\(\\$Path, \\$false\\))(?=[\\s\\S]*refusing to unlink)(?=[\\s\\S]*CredentialNamePatterns)" },
+      { "file": "deploy/deploy.ps1", "pattern": "(?=[\\s\\S]*Test-UnderJunction)(?=[\\s\\S]*JUNCTION-NOOP)(?=[\\s\\S]*JUNCTIONED)(?=[\\s\\S]*precedes the \\$Force branch)" },
+      { "file": "docs/hermes-skill-junctions.md", "pattern": "(?=[\\s\\S]*Administrator privilege required)(?=[\\s\\S]*re-read from disk on every invocation)(?=[\\s\\S]*dedicated worktree)(?=[\\s\\S]*JUNCTION-NOOP)" }
+    ]
   }
 ]
