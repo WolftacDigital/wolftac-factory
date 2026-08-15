@@ -15,9 +15,36 @@ Set-StrictMode -Version Latest
 # Files that must never live inside a junctioned tree: the junction publishes the
 # repo subtree at an agent-writable path (and vice versa), so a credential in
 # there would become reachable from both sides and committable by accident.
+#
+# The first cut matched only a narrow list and provably accepted secrets.json,
+# token.json, .git-credentials, service-account.json, config.yaml and apikeys.txt
+# (WD-349 defect 4). Patterns below are deliberately broad: a false positive costs
+# one rename, a false negative publishes a credential into a git-tracked tree.
+#
+# Scoping matters as much as breadth. A first attempt at widening used bare
+# substrings ('password', '[-_.]secrets?...') and flagged this repo's own skill
+# documentation — `preview-bypass-secret-masking-review.md` and
+# `wsl-token-gated-live-review.md` — which would have blocked junction setup
+# outright. A secret-ish WORD inside a prose filename is not a credential, so the
+# substring forms below require the word to sit immediately before a config-file
+# extension. Documentation extensions (.md) never match.
+$script:CredentialNameWords = 'secrets?|tokens?|credentials?|apikeys?|api[-_]keys?|passwords?|passwd'
+$script:CredentialFileExts  = 'json|ya?ml|toml|ini|txt|conf|cfg|xml|properties|env'
 $script:CredentialNamePatterns = @(
-    '^\.env($|\..*)', '^auth\.json$', '^credentials(\..*)?$', '^id_(rsa|ed25519|ecdsa)$',
-    '\.pem$', '\.pfx$', '\.p12$', '\.key$', '^\.npmrc$', '^\.netrc$', '_token(\..*)?$'
+    # dotfiles and key material — extension or whole-name is decisive
+    '^\.env($|\..*)', '^\.npmrc$', '^\.netrc$', '^\.git-credentials$', '^\.htpasswd$',
+    '^\.secrets(\..*)?$', '^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$',
+    '\.pem$', '\.pfx$', '\.p12$', '\.key$', '\.keystore$', '\.jks$', '\.ppk$',
+    '\.asc$', '\.gpg$', '\.kdbx$',
+    # whole basename is the secret word (optionally with a config extension)
+    "^($script:CredentialNameWords)(\.($script:CredentialFileExts))?$",
+    '^auth(\.(json|ya?ml|toml|ini|txt))?$',
+    '^(service[-_]?account|serviceaccount|client[-_]secret|sa[-_]key)(\.(json|ya?ml|toml|ini|txt))?$',
+    # secret word directly before a config extension: prod-secrets.yaml,
+    # my_token.json, aws_credentials.ini. NOT foo-secret-masking-review.md.
+    "[-_.]($script:CredentialNameWords)\.($script:CredentialFileExts)$",
+    # config files that routinely carry secrets in this environment
+    '^config\.(ya?ml|json|toml|ini)$', '^settings\.local\.json$'
 )
 
 function Get-JunctionManifest {

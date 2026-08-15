@@ -17,14 +17,25 @@ working tree, and it is what gets copied back out.
 REFUSES (changes nothing, exit 1) when a deployed path is a reparse point aimed
 at something other than its repo tree - that is somebody else's link, not ours.
 
-Idempotent: on an already-torn-down tree every pair reports RESTORED/NOOP and
-the repo content is simply re-materialized.
+ALSO REFUSES when a deployed path is a REAL directory whose content differs from
+the repo. That is the wrong-order / repeat-teardown case: the link is already
+gone, so the deployed copy is an independent tree that may hold /learn edits
+existing nowhere else. Re-materializing over it would destroy exactly the content
+this mechanism exists to protect. Reconcile the deployed edits into the repo
+first (see docs\drift-reconciliation.md), or pass -DiscardDeployedEdits to state
+explicitly that the deployed copy is worthless.
+
+Idempotent: on an already-torn-down tree whose content MATCHES the repo, every
+pair reports NOOP and nothing is rewritten.
 #>
 param(
     [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
     [string]$SkillsRoot,
     [string]$ManifestPath = (Join-Path $PSScriptRoot "junctions.json"),
-    [switch]$DryRun
+    [switch]$DryRun,
+    # Opt-in, deliberately verbose: overwrite a divergent real deployed directory
+    # from the repo, discarding whatever only existed there. Never implied.
+    [switch]$DiscardDeployedEdits
 )
 
 Set-StrictMode -Version Latest
@@ -61,7 +72,18 @@ foreach ($pair in $manifest.Pairs) {
         continue
     }
     if (Test-Path -LiteralPath $pair.LinkPath -PathType Container) {
-        $plan += [pscustomobject]@{ Pair = $pair; Action = "REFRESH"; Detail = "already a real directory - re-materialize from repo" }
+        # Already a real directory: the link is gone, so this is an INDEPENDENT tree.
+        # Diff before touching it - an unconditional copy here is the data-loss bug
+        # this script's own header promises it does not have (WD-349 defect 1).
+        $divergent = @(Compare-Trees $pair.RepoPath $pair.LinkPath)
+        if ($divergent.Count -eq 0) {
+            $plan += [pscustomobject]@{ Pair = $pair; Action = "NOOP"; Detail = "already a real directory and identical to the repo" }
+        } elseif ($DiscardDeployedEdits) {
+            $plan += [pscustomobject]@{ Pair = $pair; Action = "OVERWRITE"; Detail = "DISCARDING $($divergent.Count) divergent file(s) - -DiscardDeployedEdits was passed" }
+        } else {
+            $sample = ($divergent | Select-Object -First 5) -join ', '
+            $refusals += "REFUSE $($pair.Name): deployed path is a real directory that DIFFERS from the repo in $($divergent.Count) file(s) [$sample] - $($pair.LinkPath). It is not a junction, so this content exists only there. Reconcile it into the repo first (docs\drift-reconciliation.md), or re-run with -DiscardDeployedEdits if it is genuinely worthless."
+        }
         continue
     }
     $plan += [pscustomobject]@{ Pair = $pair; Action = "MATERIALIZE"; Detail = "no deployed copy present" }
@@ -89,6 +111,13 @@ if ($DryRun) {
 $restored = 0
 foreach ($entry in $plan) {
     $pair = $entry.Pair
+    if ($entry.Action -eq "NOOP") {
+        # Already real and byte-identical to the repo. Writing would churn mtimes
+        # for no gain, and every write is a chance to lose something.
+        Write-Output "NOOP     $($pair.LinkPath) (already a real directory matching the repo)"
+        $restored++
+        continue
+    }
     if ($entry.Action -eq "UNLINK") {
         # Link entry only - never Remove-Item -Recurse a reparse point.
         Remove-DirectoryLink $pair.LinkPath

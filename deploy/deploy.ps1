@@ -96,6 +96,22 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
 $JunctionedRoots = @()
 $JunctionedTargets = @()
 $junctionManifestPath = Join-Path $PSScriptRoot "junctions.json"
+
+# Identity of THIS repository, shared by every one of its worktrees. Comparing the
+# git common dir is what distinguishes "a worktree of this repo" from "any folder
+# whose path happens to end the same way" (WD-349 defect 2).
+function Get-GitCommonDir([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return $null }
+    try {
+        $out = & git -C $Dir rev-parse --git-common-dir 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+        $p = ($out | Select-Object -First 1).Trim()
+        if (-not [IO.Path]::IsPathRooted($p)) { $p = Join-Path $Dir $p }
+        return ([IO.Path]::GetFullPath($p)).TrimEnd('\').ToLowerInvariant()
+    } catch { return $null }
+}
+$RepoCommonDir = Get-GitCommonDir $Repo
+
 if (Test-Path -LiteralPath $junctionManifestPath -PathType Leaf) {
     try {
         $junctionManifest = Get-Content -LiteralPath $junctionManifestPath -Raw | ConvertFrom-Json
@@ -104,20 +120,37 @@ if (Test-Path -LiteralPath $junctionManifestPath -PathType Leaf) {
             $linkPath = Join-Path $junctionSkillsRoot $jp.name
             $linkItem = Get-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
             if (-not $linkItem -or -not ($linkItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
-            # Trust the manifest only as a hint: the link must actually resolve to
-            # a real directory at this pair's repo-relative path. The tail is
-            # matched rather than the full path because the recommended layout
-            # points the junction at a DEDICATED always-on-main worktree, not at
-            # the checkout deploy.ps1 happens to be running from — a full-path
-            # comparison silently fails there, and -Deploy -Force then writes
-            # through the link into somebody's uncommitted /learn edit.
+            # Trust the manifest only as a hint. Two independent conditions must
+            # hold before a link silences drift checking for its target:
+            #
+            #   1. the tail matches this pair's repo-relative path — the tail
+            #      rather than the full path because the recommended layout points
+            #      the junction at a DEDICATED always-on-main worktree, not at the
+            #      checkout deploy.ps1 happens to be running from; and
+            #   2. the target is a worktree of THIS repository, proven by comparing
+            #      `git rev-parse --git-common-dir`.
+            #
+            # Condition 2 is the WD-349 defect-2 fix. With the tail check alone, a
+            # junction into ANY unrelated repo whose path merely ends the same way
+            # was reported "JUNCTIONED ... no drift is possible" and exit 0 — the
+            # drift alarm went permanently silent over content Hermes actually
+            # loads. A suffix is not an identity.
             $suffix = "\" + ($jp.repo -replace '/', '\').Trim('\')
             $actual = $null
             try { $actual = [IO.Path]::GetFullPath($linkItem.LinkTarget) } catch {}
-            if ($actual -and $actual.TrimEnd('\').EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase) -and
-                (Test-Path -LiteralPath $actual -PathType Container)) {
-                $JunctionedRoots += [IO.Path]::GetFullPath($linkPath)
-                $JunctionedTargets += "$([IO.Path]::GetFullPath($linkPath)) -> $actual"
+            $tailOk = $actual -and $actual.TrimEnd('\').EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase) -and
+                      (Test-Path -LiteralPath $actual -PathType Container)
+            if ($tailOk) {
+                $targetCommonDir = Get-GitCommonDir $actual
+                if ($RepoCommonDir -and $targetCommonDir -and $targetCommonDir -eq $RepoCommonDir) {
+                    $JunctionedRoots += [IO.Path]::GetFullPath($linkPath)
+                    $JunctionedTargets += "$([IO.Path]::GetFullPath($linkPath)) -> $actual"
+                } else {
+                    # Fail LOUD and fail SAFE: not trusted, so the pair keeps being
+                    # drift-checked as an ordinary copy target rather than silently
+                    # exempted.
+                    Write-Output "FOREIGN-LINK $([IO.Path]::GetFullPath($linkPath)) -> $actual (not a worktree of this repo; drift is still checked)"
+                }
             }
         }
     } catch {

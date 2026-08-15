@@ -30,10 +30,21 @@ change from the moment it is written.
 | `deploy/deploy.ps1` | Recognizes live junctions: `-Check` reports them `JUNCTIONED` (never drift), `-Deploy` skips them (`JUNCTION-NOOP`). |
 
 ```powershell
-pwsh deploy\junction-setup.ps1 -DryRun     # validate only, change nothing
-pwsh deploy\junction-setup.ps1             # migrate
-pwsh deploy\junction-teardown.ps1          # roll back
+# One-time: create the dedicated worktree the junctions point at.
+git -C D:\Wolftac\Factory worktree add D:/Wolftac/.factory-live main
+
+pwsh deploy\junction-setup.ps1 -RepoRoot D:/Wolftac/.factory-live -DryRun   # validate only
+pwsh deploy\junction-setup.ps1 -RepoRoot D:/Wolftac/.factory-live           # migrate
+pwsh deploy\junction-teardown.ps1 -RepoRoot D:/Wolftac/.factory-live        # roll back
 ```
+
+**`-RepoRoot` is not optional in practice.** Omitting it resolves to the checkout
+the script itself lives in, which is precisely the configuration decision 1 below
+rejects — so `junction-setup.ps1` **refuses** when `-RepoRoot` is a primary git
+checkout (`.git` is a directory rather than a worktree file). Override with
+`-AllowActiveCheckout` only if you are accepting that hazard deliberately. An
+earlier revision of this quick-start showed the bare form, contradicting its own
+decision 1; the guard now makes the two agree by construction.
 
 Both scripts take `-RepoRoot` and `-SkillsRoot` so they can be exercised against
 scratch trees — which is how every claim below was tested.
