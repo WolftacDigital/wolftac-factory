@@ -87,7 +87,13 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    a claim-race back off you post NOTHING.
 
    Before claiming each selected `Todo` candidate, resolve its Linear-generated branch
-   against `git worktree list --porcelain` and inspect any owning/reused issue worktree.
+   against `git worktree list --porcelain` **and inspect the deterministic durable
+   `build-<ISSUE>` path even when the worktree list omits it**. A failed cleanup can
+   leave an unregistered/orphaned issue directory with uncommitted work and a surviving
+   local branch. Inspect any owning/reused issue worktree or orphaned path before any
+   claim mutation or `git worktree add`; never register, overwrite, delete, or reuse an
+   existing non-empty orphaned path merely because Git omitted it from the worktree
+   list.
    For WSL repos, make this a repository-identity-verified, explicit-path probe: pass the
    literal spec repo path and branch ref to WSL (do not rely on nested shell variables),
    and confirm `git rev-parse --show-toplevel` plus `git remote get-url origin` identify
@@ -143,8 +149,12 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    checkout untouched, do not switch it, and verify the new worktree starts clean.
 
    Put the worktree in the durable scratch root: `D:\Wolftac\.build-worktrees\` on
-   Windows (native `D:/...` form for `git worktree add`, MSYS `/d/...` for shell
-   commands), `~/.build-worktrees/` under WSL. One directory per issue, named
+   Windows. Use native forward-slash paths such as `D:/Wolftac/...` for Git path
+   operands, including `git -C`, `git worktree add`, and `git worktree remove`; in
+   Hermes' MSYS shell, `git -C '/d/...'` can bypass path conversion and fail with
+   `No such file or directory` even when the shell's current directory renders as
+   `/d/...`. MSYS `/d/...` paths remain suitable for ordinary shell file commands.
+   Use `~/.build-worktrees/` under WSL. One directory per issue, named
    `build-<ISSUE>`; create the root if missing. Never `C:\tmp`, `C:/tmp`, or `/tmp` —
    those are cleared by reboots, cleanup tools, and between separate `wsl.exe`
    invocations. A build worktree is reused across ticks, so losing it mid-issue drops
@@ -228,12 +238,18 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    where git's recursive delete fails but the shell's does not — `rm -rf` each
    `.git/worktrees/<name>` prune names and re-confirm. If fallback removal returns
  `Device or resource busy`, first move the terminal's persistent working directory
- outside the target worktree (for example, set `workdir` to the user home), then run
- `rm -rf` using the native Windows `D:/...` path. If the empty directory is still
+ outside the target worktree. On Hermes, a `workdir` argument alone may not move a
+ previously persisted cwd after a failed cleanup command: run a separate successful
+ `cd /c/Users/<user> && pwd` call first, then invoke `rm -rf` in a new call with
+ `workdir` set to the user home and the native Windows `D:/...` target path. If the empty directory is still
  locked, do not kill broad process classes: enumerate handles (Sysinternals Handle or
  equivalent), inspect each PID's command line/parent tree, and terminate only an exact
- worker-started test/dev-server tree proven to own that worktree. Never stop Hermes or
- unrelated Python/Node processes. Retry removal, then verify both the filesystem path
- and `git worktree list --porcelain` are clear before pruning. Keep the worktree only when
+ worker-started test/dev-server tree proven to own that worktree. On Windows, terminating
+ a tracked shell/background session may leave its `npm`/Next.js child processes alive;
+ re-enumerate process command lines for the exact `build-<ISSUE>` path after stopping the
+ session, and terminate only those proven worktree-owned Node children (plus an exact
+ `npm run dev` parent when verified). Never stop Hermes or unrelated Python/Node
+ processes. Retry removal, then verify both the filesystem path and `git worktree
+ list --porcelain` are clear before pruning. Keep the worktree only when
    handing the issue back unfinished, and say so in the report. Then: one issue per
    invocation.

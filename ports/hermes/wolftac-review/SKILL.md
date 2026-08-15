@@ -151,6 +151,24 @@ When the full test command fails due unrelated suite collection/tooling failures
    `builder()` returns `undefined` → caller still sends/writes/approves → renderer omits the
    artifact, then require the build to fail closed or block before the external action.
 
+   **Citation-backed content checks:** when acceptance requires cited research, source-backed claims,
+   or claim-to-source mapping, do not accept URL presence plus a syntactic citation ID as proof.
+   Submit an intentionally false factual claim with an unrelated but public URL and inspect whether
+   the system still marks the claim and every downstream readiness check as cited/ready. Require
+   either reproduced source-content support, an immutable approved internal-proof reference, or an
+   explicit human claim-approval gate; a generic templated “research brief” and indiscriminate
+   claim-to-all-sources mapping are blocking fail-open evidence defects. Also test legacy-data
+   migration with migration override env vars absent when the previous release had a hard-coded
+   default path; a fixture that injects the new override proves the mapper, not automatic cutover.
+
+   **Authentication callback and invitation-flow checks:** when acceptance depends on email-link,
+   OAuth, PKCE, SSO, password-reset, or invitation callbacks, do not accept an E2E that signs in
+   directly with a fixture password or pre-seeded cookie. Exercise the shipped callback route with
+   a real or intentionally invalid callback parameter and distinguish its expected invalid-link
+   response from a generic exception path. Inspect whether the handler receives every request/context
+   object it passes downstream, and verify that an authenticated account without an active membership
+   or staff grant cannot use an otherwise valid auth session to enter an invitation-only product.
+
    **Human-approval and cross-invocation artifact checks:** for merge/deploy/publish or other
    privileged workflows, do not accept `author == owner` as human proof when workers use the
    owner's account. Verify that automation cannot mint an accepted approval, and prove the

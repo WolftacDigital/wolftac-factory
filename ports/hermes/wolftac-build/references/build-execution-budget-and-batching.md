@@ -34,3 +34,7 @@ A partial refactor without executed proof is not a build completion. Do not repo
 ## Windows `uv` executable collision
 
 On Windows/Git Bash, the bare `uv` command may resolve to a Linux ELF shim under the Hermes bin directory and fail with `Exec format error`, even when the native Windows binary is installed beside it. Verify with `file <resolved-path>` and `command -v uv.exe`; when `uv.exe` is the native `x86_64-pc-windows-msvc` build, run the specified workflow as `uv.exe sync`, `uv.exe run ...`, and `uv.exe build`. Record the exact executable in proof. Do not reinstall Hermes, modify its runtime bin directory, or claim tests failed before trying the native executable.
+
+## Windows npm-script executable paths
+
+On Windows, npm executes package scripts through `cmd.exe`, even when Hermes launched `npm` from Git Bash. A script such as `./node_modules/.bin/tsx ...` can therefore fail with `'.' is not recognized as an internal or external command` despite a correct `npm ci`. For new or issue-owned scripts, use the cross-platform package binary name (`tsx ...`, `tsc ...`, `next ...`) so npm resolves `node_modules/.bin` itself. Do not rewrite unrelated existing scripts merely to fix one issue; patch only the approved script entries, rerun the literal `npm run <script>`, and record the initial failure plus verified correction in proof.

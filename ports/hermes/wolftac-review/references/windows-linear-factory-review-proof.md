@@ -52,6 +52,7 @@ Use this when `/wolftac-review` is running on Windows/Git Bash and the Linear sp
    - If full suite exits nonzero from apparently unrelated collection/tooling failures, create a clean `origin/main` detached worktree and run the same command there. If the identical failure reproduces on main, record it as pre-existing and continue with changed-scope verification.
    - When creating a baseline/main worktree, run install/test commands with the shell `workdir` set to that baseline worktree. Do not chain `git worktree add` and `npm ci` from the original repo directory; that installs/tests the wrong project and can produce misleading missing-script or locked-file errors.
    - Run targeted changed-scope tests, lint, typecheck, and build when available.
+   - **Supabase reset readiness on Windows:** `supabase db reset` can exit 0 after migrations/seed while Kong still returns `502` for `/auth/v1/health`; auth-backed tests then fail with `AuthRetryableFetchError: An invalid response was received from the upstream server`. Probe the auth health endpoint before judging the branch. If the proxy remains unhealthy and restarting shared services is not approved, run the same auth-backed suite on a clean `origin/main` worktree. An identical upstream-auth failure is baseline infrastructure, not feature evidence; report the changed-scope results separately and do not print `supabase status` key material in the review comment.
 
 6. Baseline checks:
 
