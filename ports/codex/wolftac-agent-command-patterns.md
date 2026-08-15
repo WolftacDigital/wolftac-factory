@@ -1,5 +1,6 @@
 ---
 description: Shared Wolftac operating doctrine — modes, handoffs, memory, tool schemas, delegation, proof, reporting. Not a Factory pipeline stage.
+argument-hint: TASK="<optional task or handoff context>"
 ---
 
 # /prompts:wolftac-agent-command-patterns — shared Wolftac agent doctrine (Codex port)
@@ -11,6 +12,8 @@ This is **shared doctrine, not a Factory pipeline stage.** It supplements — an
 replaces — `$wolftac-spec`, `$wolftac-build`, `$wolftac-review`, or
 `$wolftac-integrate`, and it changes no Linear state, label, queue order, approval rule,
 or merge authority.
+
+Task context: $ARGUMENTS
 
 ## Command priority and context
 
