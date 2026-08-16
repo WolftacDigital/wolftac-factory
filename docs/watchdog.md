@@ -71,7 +71,7 @@ on its own, readable without opening Slack.
 ## Install
 
 ```powershell
-$repo  = "D:\Wolftac\wolftac-factory"
+$repo  = "D:\Wolftac\Factory"
 $pwsh  = (Get-Command pwsh).Source          # full path: "pwsh.exe" alone is not on the task's PATH
 $dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\factory-integrate\cron"
 $arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`""
@@ -80,8 +80,10 @@ $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" `
+    -LogonType ServiceAccount -RunLevel Limited
 Register-ScheduledTask -TaskName "WolftacFactoryWatchdog" `
-    -Action $action -Trigger $trigger -Settings $settings `
+    -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
     -Description "Out-of-band liveness watchdog for the Wolftac factory worker loops (WD-345)."
 ```
 
@@ -104,21 +106,22 @@ both — omit the second path and the integrate worker can die unwatched.
 
 ### Running without an interactive session
 
-As registered above the task is **`Logon Mode: Interactive only`** — it runs on a
-15-minute repetition while the user is logged on, but not on a locked-out or
-logged-off machine. Making it run regardless requires an S4U principal, and
-registering one needs elevation (`Register-ScheduledTask` returns *Access is denied*
-otherwise). From an **elevated** PowerShell:
+The install command above registers the task as the Windows **SYSTEM** service
+account (`LogonType: ServiceAccount`). That needs an elevated PowerShell, but no
+stored user password, interactive login, or batch-logon grant. SYSTEM has been
+verified on this machine with the installed Microsoft Store PowerShell 7 path.
+
+Confirm the persisted principal and cadence:
 
 ```powershell
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType S4U -RunLevel Limited
-Register-ScheduledTask -TaskName "WolftacFactoryWatchdog" -Action $action `
-    -Trigger $trigger -Settings $settings -Principal $principal -Force
+$task = Get-ScheduledTask -TaskName "WolftacFactoryWatchdog"
+$task.Principal | Select-Object UserId, LogonType
+$task.Triggers.Repetition.Interval
+schtasks /query /tn WolftacFactoryWatchdog /v /fo LIST
 ```
 
-Confirm with `schtasks /query /tn WolftacFactoryWatchdog /v /fo LIST` — Logon Mode
-should read `Background`.
+Expected: `UserId: SYSTEM`, `LogonType: ServiceAccount`, interval `PT15M`, and
+`Last Result: 0` after a scheduled tick.
 
 ## Verify
 

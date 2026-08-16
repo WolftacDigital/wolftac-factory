@@ -255,6 +255,13 @@ function Send-SlackAlert([string]$Text, $Policy) {
 foreach ($dir in $CronDir) { Test-CronDirectory $dir }
 
 $policy = Get-Policy
+# Alert delivery is part of watchdog health, not a capability to discover only after
+# the factory is already down. If the token cannot be read, surface that loss now so
+# Task Scheduler never records a false healthy result while Slack alerting is dead.
+if (-not (Get-SlackToken)) {
+    Add-Finding "watchdog cannot read SLACK_FACTORY_BOT_TOKEN (checked environment and $EnvFile)"
+    $readFailure = $true
+}
 $healthy = ($findings.Count -eq 0)
 
 Write-Output "Factory watchdog $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - watching: $($CronDir -join ', ')"
