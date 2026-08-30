@@ -66,8 +66,40 @@ def env_path():
     return os.path.join(local, "hermes", ".env")
 
 
+def _token_from_file(path):
+    """Read TOKEN_KEY out of a .env, or None. Never printed."""
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line.startswith(TOKEN_KEY + "="):
+                continue
+            val = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if val:
+                return val
+    return None
+
+
 def load_token():
-    """Process env wins; otherwise parse the Hermes .env. Never printed."""
+    """Inside a Hermes profile the profile .env WINS over the process env;
+    elsewhere the process env wins. Never printed.
+
+    The precedence flip matters on any tick where integrate-preflight.py
+    re-mints. Hermes loads the profile .env into the process environment when
+    the job starts, so that value is a start-of-job SNAPSHOT. Preflight then
+    mints a fresh token, verifies it live against the pinned bot id, and
+    rewrites the file mid-job. Preferring the process env there returns the
+    token preflight just replaced -- every call 401s while preflight correctly
+    reports OK, because the two are talking about different tokens. Traced
+    2026-08-30: process env f626e3d0, file rewritten to 3bc653bf, viewer
+    exit 1. The file is the authority; the environment is the stale copy.
+    """
+    home = os.environ.get("HERMES_HOME", "").strip()
+    if home:
+        val = _token_from_file(env_path())
+        if val:
+            return val
     tok = os.environ.get(TOKEN_KEY)
     if tok:
         return tok.strip()
