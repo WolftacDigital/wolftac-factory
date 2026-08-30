@@ -35,8 +35,11 @@ them rather than taking the script's word for it.
    `0px` on every element.
 4. **Revealed end-state** — any element behind a reveal gate is asserted visible *in its
    revealed state*: non-zero opacity, non-zero box, not `visibility: hidden`.
-5. **Cross-brand contamination** — no other profile's signature tokens appear.
-6. **Console** — any console error during load fails the gate.
+5. **Contrast** — every element that paints its own text is measured against its
+   effective (composited) background and must clear WCAG AA: 4.5:1 normal, 3:1 large
+   (>=24px, or >=18.66px bold). Translucent colours are composited before measuring.
+6. **Cross-brand contamination** — no other profile's signature tokens appear.
+7. **Console** — any console error during load fails the gate.
 
 ## Revealed end-state, in particular
 
@@ -55,6 +58,32 @@ The assertion walks `body` and its descendants and skips `script`, `style`, `lin
 `meta`, `title`, `template`, `noscript`, and `display: none` subtrees. Head-level nodes
 inherit the UA default font and have no box; including them reports "Times New Roman"
 violations for a page that renders entirely in its profile families.
+
+## Two ways this gate was fail-open, and what closed them
+
+Both were found by review, and both had passed a page that was actually wrong:
+
+- **Alpha was an escape hatch.** The colour check skipped *every* `rgba(...)` value on
+  the theory that alpha is just compositing of an allowed hue. It is not: a trailing
+  `color: rgba(1, 2, 3, .8)` passed cleanly. The check is now alpha-aware — it parses
+  the hue and validates that, exempting only fully transparent values and translucent
+  white/black hairlines, which are documented neutrals.
+- **`document.fonts.check()` is not proof of loading.** It returns `true` when no
+  matching `FontFace` exists at all and a fallback satisfies the request, so an
+  artifact with every webfont `<link>` deleted still reported its fonts loaded. The
+  check now requires an actual `FontFace` entry for the family in status `loaded`, and
+  the failure message reports what `check()` claimed so the trap stays visible.
+
+A third gap was absence rather than fail-open: there was **no contrast measurement at
+all**, and shipped templates failed AA at 3.78:1 while every assertion exited 0.
+
+## Horizontal overflow is a render failure
+
+`render-proof.mjs` compares `documentElement.scrollWidth` against `clientWidth` at each
+viewport and fails on overflow, naming the widest element and its right edge. A
+screenshot proves a render happened, not that it is usable: the 390px dashboard
+overflowed to 512px and clipped its entire Status column while the command reported
+success.
 
 ## Asset exports
 

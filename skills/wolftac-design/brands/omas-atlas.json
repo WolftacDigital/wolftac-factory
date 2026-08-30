@@ -125,5 +125,11 @@
   ],
   "shape_rules": {
     "border_radius_px": 2
+  },
+  "ui": {
+    "accent_text": "#E05A5A",
+    "cta_background": "#A32E2E",
+    "cta_text": "#EDEAE3",
+    "note": "red-500 #C43B3B remains the brand accent and is used for structure and large type. Small text needs WCAG AA (4.5:1); on ink #0B0B0D red-500 is only 3.78:1, so the same scale's red-400 #E05A5A (5.41:1) carries small text and the CTA is bone on red-600 (5.85:1)."
   }
 }

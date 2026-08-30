@@ -88,5 +88,11 @@
   ],
   "shape_rules": {
     "border_radius_px": null
+  },
+  "ui": {
+    "accent_text": "#2F5B8C",
+    "cta_background": "#2F5B8C",
+    "cta_text": "#FFFFFF",
+    "note": "Neutral is a light system; the accent clears AA on white."
   }
 }

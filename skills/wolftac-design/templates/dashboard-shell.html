@@ -36,7 +36,7 @@
       text-transform: uppercase;
       border-left: 2px solid transparent;
     }
-    aside.rail a[aria-current="page"] { color: var(--accent); border-left-color: var(--accent); background: var(--bg-3); }
+    aside.rail a[aria-current="page"] { color: var(--accent-text); border-left-color: var(--accent-text); background: var(--bg-3); }
     aside.rail a:hover, aside.rail a:focus-visible { color: var(--text); }
 
     main.console { padding: 24px 28px 64px; }
@@ -50,10 +50,16 @@
     .tile { border: 1px solid var(--line); border-radius: var(--radius); clip-path: var(--clip-cut); background: var(--bg-2); padding: 16px 18px; }
     .tile .k { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-2); }
     .tile .v { font-family: var(--font-display); font-size: 1.9rem; margin-top: 6px; font-variant-numeric: tabular-nums; }
-    .tile .v.accent { color: var(--accent); }
+    .tile .v.accent { color: var(--accent-text); }
 
+    /* The table is the one element that cannot simply reflow: at 390px the five
+       columns overflowed to 512px and the Status column was clipped entirely off
+       screen, while the render still reported success. Below 720px each row becomes
+       a stacked record with its header as a label, so every column stays present and
+       readable and the page never scrolls horizontally. */
+    .table-wrap { width: 100%; }
     table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    caption { text-align: left; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); padding: 20px 0 10px; }
+    caption { text-align: left; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent-text); padding: 20px 0 10px; }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
     th { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-2); font-weight: 400; }
     td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -61,7 +67,36 @@
 
     .status { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; }
     .status.ok { color: var(--accent-2); }
-    .status.warn { color: var(--accent); }
+    .status.warn { color: var(--accent-text); }
+
+    @media (max-width: 720px) {
+      table, thead, tbody, tr, th, td { display: block; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      tbody tr {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        margin-bottom: 12px;
+        padding: 4px 0;
+      }
+      tbody td {
+        border-bottom: none;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 6px 14px;
+        text-align: left;
+      }
+      tbody td.num { text-align: left; }
+      tbody td::before {
+        content: attr(data-label);
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--text-2);
+        flex: 0 0 auto;
+      }
+    }
 
     .empty { border: 1px dashed var(--line); border-radius: var(--radius); padding: 32px; text-align: center; color: var(--text-2); margin-top: 24px; }
     .empty .t { font-family: var(--font-display); color: var(--text); margin-bottom: 6px; }
@@ -93,17 +128,19 @@
         <div class="tile"><div class="k">Failures 24h</div><div class="v">[00]</div></div>
       </div>
 
+      <div class="table-wrap">
       <table>
         <caption>Recent activity</caption>
         <thead>
           <tr><th scope="col">Reference</th><th scope="col">Stage</th><th scope="col">Owner</th><th scope="col" class="num">Elapsed</th><th scope="col">Status</th></tr>
         </thead>
         <tbody>
-          <tr><td>[REF-0001]</td><td>Assessment</td><td>[Owner]</td><td class="num">[0h]</td><td><span class="status ok">Nominal</span></td></tr>
-          <tr><td>[REF-0002]</td><td>Delivery</td><td>[Owner]</td><td class="num">[0h]</td><td><span class="status ok">Nominal</span></td></tr>
-          <tr><td>[REF-0003]</td><td>Review</td><td>[Owner]</td><td class="num">[0h]</td><td><span class="status warn">Attention</span></td></tr>
+          <tr><td data-label="Reference">[REF-0001]</td><td data-label="Stage">Assessment</td><td data-label="Owner">[Owner]</td><td class="num" data-label="Elapsed">[0h]</td><td data-label="Status"><span class="status ok">Nominal</span></td></tr>
+          <tr><td data-label="Reference">[REF-0002]</td><td data-label="Stage">Delivery</td><td data-label="Owner">[Owner]</td><td class="num" data-label="Elapsed">[0h]</td><td data-label="Status"><span class="status ok">Nominal</span></td></tr>
+          <tr><td data-label="Reference">[REF-0003]</td><td data-label="Stage">Review</td><td data-label="Owner">[Owner]</td><td class="num" data-label="Elapsed">[0h]</td><td data-label="Status"><span class="status warn">Attention</span></td></tr>
         </tbody>
       </table>
+      </div>
 
       <div class="empty">
         <div class="t">No records for this filter</div>

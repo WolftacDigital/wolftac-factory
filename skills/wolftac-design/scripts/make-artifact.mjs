@@ -57,6 +57,15 @@ export function cssVariables(profile, tokens) {
   const radiusCss = radius === null || radius === undefined ? "4px" : `${radius}px`;
   const cut = pick(tokens, ["layout.cut"], "");
 
+  // The brand accent and the accent that may carry small text are not always the
+  // same value. OMAS red-500 is the brand accent but only 3.78:1 on ink, so the
+  // profile names an AA-safe member of the same scale for text and CTAs. Falls back
+  // to the brand accent when a profile declares none.
+  const ui = profile.ui || {};
+  const accentText = ui.accent_text || accent;
+  const ctaBackground = ui.cta_background || accent;
+  const ctaText = ui.cta_text || bgPrimary;
+
   const lines = [
     `--bg: ${bgPrimary};`,
     `--bg-2: ${bgSecondary};`,
@@ -65,6 +74,9 @@ export function cssVariables(profile, tokens) {
     `--text-2: ${textSecondary};`,
     `--accent: ${accent};`,
     `--accent-2: ${accent2};`,
+    `--accent-text: ${accentText};`,
+    `--cta-bg: ${ctaBackground};`,
+    `--cta-text: ${ctaText};`,
     `--line: ${line};`,
     `--radius: ${radiusCss};`,
     `--font-display: "${firstFamily(profile, 0, "system-ui")}", system-ui, sans-serif;`,

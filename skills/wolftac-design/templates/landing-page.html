@@ -36,7 +36,7 @@
       font-size: 0.75rem;
       letter-spacing: 0.2em;
       text-transform: uppercase;
-      color: var(--accent);
+      color: var(--accent-text);
       margin-bottom: 12px;
     }
 
@@ -58,7 +58,7 @@
       text-transform: uppercase;
       margin-left: 24px;
     }
-    nav a:hover, nav a:focus-visible { color: var(--accent); }
+    nav a:hover, nav a:focus-visible { color: var(--accent-text); }
 
     section { padding: 96px 0; border-bottom: 1px solid var(--line); }
     .hero { padding: 128px 0; }
@@ -83,14 +83,14 @@
       font-size: 0.8rem;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: var(--bg);
-      background: var(--accent);
-      border: 1px solid var(--accent);
+      color: var(--cta-text);
+      background: var(--cta-bg);
+      border: 1px solid var(--cta-bg);
       border-radius: var(--radius);
       padding: 14px 28px;
       text-decoration: none;
     }
-    .cta:hover, .cta:focus-visible { background: var(--accent-2); border-color: var(--accent-2); }
+    .cta:hover, .cta:focus-visible { background: var(--accent-text); border-color: var(--accent-text); color: var(--bg); }
 
     dl.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin: 0; }
     @media (max-width: 860px) { dl.stats { grid-template-columns: 1fr; } }
@@ -105,7 +105,7 @@
       font-family: var(--font-display);
       font-size: 2rem;
       margin: 4px 0 0;
-      color: var(--accent);
+      color: var(--accent-text);
       font-variant-numeric: tabular-nums;
     }
 

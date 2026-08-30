@@ -72,6 +72,7 @@ export async function renderProof(artifactPath, outDir) {
   const stem = basename(artifact, extname(artifact));
   const userDataDir = await mkdtemp(join(tmpdir(), "wolftac-design-profile-"));
   const consoleErrors = [];
+  const overflows = [];
   const written = [];
 
   const browser = await puppeteer.launch({
@@ -98,9 +99,30 @@ export async function renderProof(artifactPath, outDir) {
       // Let any reveal gate run to its end state; the assertion checks the result.
       await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
 
+      // A screenshot proves a render happened, not that the render is usable. The
+      // 390px dashboard overflowed to 512px and clipped its entire Status column
+      // while this command still reported success, so measure the document and fail
+      // on horizontal overflow rather than leaving it to someone's eye.
+      const overflow = await page.evaluate(() => {
+        const de = document.documentElement;
+        const widest = Array.from(document.body.querySelectorAll("*"))
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return { right: Math.round(r.right), tag: el.tagName.toLowerCase(), cls: (el.className || "").toString().trim().split(/\s+/)[0] || "" };
+          })
+          .sort((a, b) => b.right - a.right)[0] || null;
+        return { clientWidth: de.clientWidth, scrollWidth: de.scrollWidth, widest };
+      });
+      if (overflow.scrollWidth > overflow.clientWidth + 1) {
+        overflows.push(
+          `[${vp.label} ${vp.width}x${vp.height}] horizontal overflow: scrollWidth=${overflow.scrollWidth} > clientWidth=${overflow.clientWidth}` +
+            (overflow.widest ? ` (widest element ${overflow.widest.tag}${overflow.widest.cls ? "." + overflow.widest.cls : ""} right edge ${overflow.widest.right})` : ""),
+        );
+      }
+
       const file = join(target, `${stem}.${vp.label}-${vp.width}x${vp.height}.png`);
       await page.screenshot({ path: file });
-      written.push({ file, ...vp });
+      written.push({ file, ...vp, ...overflow });
       await page.close();
     }
   } finally {
@@ -108,7 +130,7 @@ export async function renderProof(artifactPath, outDir) {
     await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
   }
 
-  return { written, consoleErrors, userDataDir, args: launchArgs(userDataDir) };
+  return { written, consoleErrors, overflows, userDataDir, args: launchArgs(userDataDir) };
 }
 
 const invokedDirectly =
@@ -121,21 +143,24 @@ if (invokedDirectly) {
     console.log(
       JSON.stringify(
         {
-          status: result.consoleErrors.length ? "failed" : "ok",
+          status: result.consoleErrors.length || result.overflows.length ? "failed" : "ok",
           screenshots: result.written.map((w) => ({
             file: w.file,
             width: w.width,
             height: w.height,
+            clientWidth: w.clientWidth,
+            scrollWidth: w.scrollWidth,
           })),
           cleanProfile: true,
           launchArgs: result.args,
           consoleErrors: result.consoleErrors,
+          overflows: result.overflows,
         },
         null,
         2,
       ),
     );
-    if (result.consoleErrors.length) process.exitCode = 1;
+    if (result.consoleErrors.length || result.overflows.length) process.exitCode = 1;
   } catch (error) {
     console.error(JSON.stringify({ status: "failed", error: String(error.message || error) }));
     process.exitCode = 1;

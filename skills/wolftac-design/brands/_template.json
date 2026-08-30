@@ -26,5 +26,11 @@
   "font_families": [],
   "shape_rules": {
     "border_radius_px": null
+  },
+  "ui": {
+    "accent_text": null,
+    "cta_background": null,
+    "cta_text": null,
+    "note": "<accent tuned for small text; must clear WCAG AA against the surface it sits on>"
   }
 }

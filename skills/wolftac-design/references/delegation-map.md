@@ -31,7 +31,7 @@ skipped, never a hard failure.
 | Deck file output | `anthropic-skills:pptx` | skill invocation | bundled |
 | Document file output | `anthropic-skills:docx` | skill invocation | bundled |
 | Published web page | `artifact-design` + the Artifact tool | load skill, then publish | bundled |
-| Fixed-canvas composition (poster, cover, social) | `anthropic-skills:canvas-design` | skill invocation | bundled |
+| Fixed-canvas composition (poster, cover, social) | `anthropic-skills:canvas-design` | skill invocation | **NOT installed on this host** — see the adoption record below |
 
 ## Rejected candidates
 
@@ -68,18 +68,44 @@ registry. Adoption is a one-file edit — once WD-340's deploy wiring lands,
 5. **Record** the decision inline with a one-line reason — **including rejections**, in
    the table above — so the reasoning survives the session that made it.
 
-### Adoption record — `anthropic-skills:canvas-design` (2026-08-30)
+### Adoption record — `anthropic-skills:canvas-design` (2026-08-30) — **RETRACTED**
 
-1. **Classified:** *fills a gap*. The registry routed web artifacts (landing page,
-   dashboard, identity board) but had no delegate for a fixed-canvas composition — a
-   poster, cover, or social graphic at an exact pixel size.
-2. **Decided:** delegate. It ships with the host, is maintained upstream, and holds no
-   brand opinion of its own — it composes at a canvas size and takes colour direction
-   from the caller, so it cannot become a second source of brand truth.
-3. **Registered:** the "Fixed-canvas composition" row above.
-4. **Verified:** an identity-board artifact was generated under both the `wolftac` and
-   `omas-atlas` profiles and passed the full proof gate — two viewports rendered, zero
-   console errors, `brand-assert.mjs` exit 0 for each. The `DELEGATE-UNAVAILABLE` path
-   was exercised separately against `ui-ux-pro-max` with its `search.py` path made
-   unreachable: the run emitted the line and completed on doctrine.
-5. **Recorded:** this entry.
+An earlier version of this file recorded canvas-design as adopted and "verified" by
+identity-board artifacts passing the proof gate. **That record was wrong and has been
+retracted.** Two things were untrue:
+
+1. **The skill is not installed on this host.** A search of
+   `%LOCALAPPDATA%\hermes\skills` and `%USERPROFILE%\.claude\skills` returns no
+   `canvas-design` package.
+2. **The cited artifacts did not exercise it.** Those identity boards are generated
+   entirely by `scripts/make-artifact.mjs` from `templates/visual-identity-board.html`.
+   The skill was named in this file and never consulted; a passing gate on an
+   internally-generated artifact proves the gate works, not that a delegate ran.
+
+Recorded rather than deleted, per step 5 of the protocol: a retraction is a decision,
+and the next session should not re-evaluate this from scratch.
+
+### Host inventory finding (2026-08-30)
+
+The adoption protocol requires a candidate that is **installed** and can be **exercised**.
+On this host, neither example named in WD-339's AC-15 exists, and every installed design
+skill that is not already a registry row is guidance-class — a `SKILL.md` plus
+`references/`, with no executable:
+
+`design-audit`, `css-native`, `compose-graphics`, `canvas-generative`,
+`brand-asset-production`, `creative-artifact-production`, `motion-design`,
+`premium-b2b-website-conversion`, the `threejs-*` family, and the rest under
+`%LOCALAPPDATA%\hermes\skills\creative\`.
+
+The single exception is `claude-design-system-operations`, which ships a real
+executable (`scripts/validate_claude_design_bundle.py`). It was invoked against this
+package and returned genuine output — `files=2417 html=7 cards=0`, `FAIL`, missing
+roots `assets, components, guidelines, readme.md, styles.css, tokens, ui_kits` — but
+that is a **category mismatch**, not a defect: it validates a `claude.ai/design` bundle,
+which a wolftac-design package is not. It is a validator, not a generator, so it cannot
+"produce or materially contribute to" an artifact either.
+
+**Conclusion:** the adoption protocol below is sound and unchanged, but it cannot be
+demonstrated end-to-end on this host today, because no installed design skill outside
+the registry is of a class that can contribute bytes to an artifact. Naming one anyway
+is what produced the retracted record above.

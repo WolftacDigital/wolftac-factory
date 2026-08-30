@@ -113,5 +113,11 @@
   ],
   "shape_rules": {
     "border_radius_px": 0
+  },
+  "ui": {
+    "accent_text": "#FF5E00",
+    "cta_background": "#FF5E00",
+    "cta_text": "#050706",
+    "note": "hud_active clears AA on every surface it is used for (6.59:1 on the primary background), so the UI accent and the brand accent are the same value."
   }
 }
