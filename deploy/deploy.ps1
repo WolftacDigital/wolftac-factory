@@ -12,7 +12,9 @@ Wolftac Factory deploy/drift/package tool.
   pwsh deploy\deploy.ps1 -Package  # zip the whole repo (minus git/temp/package artifacts) for handoff as plain files
 
   -Only <substring> scopes -Check, -Deploy, and -Reconcile to pairs whose repo-relative
-  source path contains <substring>, case-insensitively.
+  source path contains <substring>, case-insensitively. Supplying -Only always scopes:
+  a value matching no pair exits non-zero and lists the available scopes, so a typo
+  never reads as a clean run and never widens to every pair.
 
 The repo is the source of truth. Files are written with LF line endings — CRLF in a
 skill's YAML frontmatter silently breaks skill discovery on Linux (WSL / Hermes).
@@ -195,9 +197,22 @@ function Get-AvailableScopes($pairs) {
     return $set
 }
 
-$ScopeFilterActive = -not [string]::IsNullOrWhiteSpace($Only)
+# An explicitly supplied -Only always activates scoping, even when the value is
+# empty or whitespace. Deciding scope by IsNullOrWhiteSpace let `-Only '   '`
+# silently fall through to the unscoped path and operate on every pair, which is
+# the broad-operation failure AC-9 exists to prevent. An explicit scope that
+# matches nothing must take the NO-MATCH exit, never widen.
+$ScopeFilterActive = $PSBoundParameters.ContainsKey('Only')
 if ($ScopeFilterActive) {
-    $scoped = @($Pairs | Where-Object { Test-ScopeMatch $_.Src $Only })
+    # An empty or whitespace-only scope names no pair. Ordinal IndexOf treats ''
+    # as a substring of every path, so matching it directly would turn `-Only ''`
+    # into a wildcard selecting all pairs -- and, worse, satisfy the scoped-force
+    # guard. Resolve it to an explicit zero match instead.
+    $scoped = if ([string]::IsNullOrWhiteSpace($Only)) {
+        @()
+    } else {
+        @($Pairs | Where-Object { Test-ScopeMatch $_.Src $Only })
+    }
     if ($scoped.Count -eq 0) {
         # A zero-match scope must never read as success. Silently matching nothing
         # would make `-Deploy -Force -Only typo` look like a clean run while shipping
@@ -358,8 +373,17 @@ if ($Reconcile) {
         # Belt and braces for AC-8: never let a partial or failed read land in the
         # repo as a truncated/empty file. ReadAllText either returns everything or
         # throws, so a non-empty file yielding empty text means something is wrong.
-        if ([string]::IsNullOrEmpty($text) -and (Get-Item -LiteralPath $p.Dst).Length -gt 0) {
-            Write-Output "UNREADABLE $($p.Dst) (read returned empty for a non-empty file); repo file left untouched"
+        if ([string]::IsNullOrEmpty($text)) {
+            # Empty is never reconcilable content. A zero-byte deployed copy is the
+            # signature of an interrupted write or a truncated sync, and copying it
+            # over a populated repo file is the data loss AC-8 forbids -- so refuse
+            # regardless of whether the source is 0 bytes or read back empty.
+            $why = if ((Get-Item -LiteralPath $p.Dst).Length -gt 0) {
+                "read returned empty for a non-empty file"
+            } else {
+                "deployed copy is empty (0 bytes); refusing to truncate the repo file"
+            }
+            Write-Output "UNREADABLE $($p.Dst) ($why); repo file left untouched"
             $failed++
             continue
         }
