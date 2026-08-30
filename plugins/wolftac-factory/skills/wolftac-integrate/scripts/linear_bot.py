@@ -51,6 +51,15 @@ def redact(text):
 
 
 def env_path():
+    # A Hermes profile is its own home with its own .env. HERMES_HOME is the
+    # global var Hermes exports for the executing profile, so honor it first:
+    # an isolated worker must read the credential ITS OWN preflight re-mints,
+    # not the default profile's copy. Getting this wrong is silent and total --
+    # the profile refreshes a valid token while every call here 401s on the
+    # stale default one (observed 2026-08-30 on the factory-integrate worker).
+    home = os.environ.get("HERMES_HOME", "").strip()
+    if home:
+        return os.path.join(home, ".env")
     local = os.environ.get("LOCALAPPDATA") or os.path.expanduser(
         r"~\AppData\Local"
     )
