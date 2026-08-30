@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>@BRAND-NAME@ — Console</title>
+<!-- @FONT-LINKS -->
+  <style>
+    :root {
+/* @BRAND-TOKENS */
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .shell { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+    @media (max-width: 860px) { .shell { grid-template-columns: 1fr; } aside.rail { display: none; } }
+
+    aside.rail { border-right: 1px solid var(--line); background: var(--bg-2); padding: 24px 0; }
+    aside.rail .brand { font-family: var(--font-display); font-size: 1rem; letter-spacing: 0.06em; padding: 0 20px 20px; }
+    aside.rail a {
+      display: block;
+      padding: 10px 20px;
+      color: var(--text-2);
+      text-decoration: none;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      border-left: 2px solid transparent;
+    }
+    aside.rail a[aria-current="page"] { color: var(--accent); border-left-color: var(--accent); background: var(--bg-3); }
+    aside.rail a:hover, aside.rail a:focus-visible { color: var(--text); }
+
+    main.console { padding: 24px 28px 64px; }
+    header.bar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+    header.bar h1 { font-family: var(--font-display); font-size: 1.35rem; margin: 0; letter-spacing: 0.04em; }
+    header.bar .stamp { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-2); }
+
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; }
+    @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 560px) { .tiles { grid-template-columns: 1fr; } }
+    .tile { border: 1px solid var(--line); border-radius: var(--radius); clip-path: var(--clip-cut); background: var(--bg-2); padding: 16px 18px; }
+    .tile .k { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-2); }
+    .tile .v { font-family: var(--font-display); font-size: 1.9rem; margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .tile .v.accent { color: var(--accent); }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    caption { text-align: left; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); padding: 20px 0 10px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+    th { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-2); font-weight: 400; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody tr:hover { background: var(--bg-2); }
+
+    .status { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; }
+    .status.ok { color: var(--accent-2); }
+    .status.warn { color: var(--accent); }
+
+    .empty { border: 1px dashed var(--line); border-radius: var(--radius); padding: 32px; text-align: center; color: var(--text-2); margin-top: 24px; }
+    .empty .t { font-family: var(--font-display); color: var(--text); margin-bottom: 6px; }
+  </style>
+<!-- @PROVENANCE -->
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand">@BRAND-NAME@</div>
+      <nav>
+        <a href="#" aria-current="page">Overview</a>
+        <a href="#">Operations</a>
+        <a href="#">Records</a>
+        <a href="#">Settings</a>
+      </nav>
+    </aside>
+
+    <main class="console">
+      <header class="bar">
+        <h1>Overview</h1>
+        <div class="stamp">Updated [00:00 UTC]</div>
+      </header>
+
+      <div class="tiles">
+        <div class="tile"><div class="k">Active</div><div class="v accent">[00]</div></div>
+        <div class="tile"><div class="k">Queued</div><div class="v">[00]</div></div>
+        <div class="tile"><div class="k">Median cycle</div><div class="v">[00h]</div></div>
+        <div class="tile"><div class="k">Failures 24h</div><div class="v">[00]</div></div>
+      </div>
+
+      <table>
+        <caption>Recent activity</caption>
+        <thead>
+          <tr><th scope="col">Reference</th><th scope="col">Stage</th><th scope="col">Owner</th><th scope="col" class="num">Elapsed</th><th scope="col">Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>[REF-0001]</td><td>Assessment</td><td>[Owner]</td><td class="num">[0h]</td><td><span class="status ok">Nominal</span></td></tr>
+          <tr><td>[REF-0002]</td><td>Delivery</td><td>[Owner]</td><td class="num">[0h]</td><td><span class="status ok">Nominal</span></td></tr>
+          <tr><td>[REF-0003]</td><td>Review</td><td>[Owner]</td><td class="num">[0h]</td><td><span class="status warn">Attention</span></td></tr>
+        </tbody>
+      </table>
+
+      <div class="empty">
+        <div class="t">No records for this filter</div>
+        <div>Adjust the range or clear the filter. An empty result is a state, not an error.</div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

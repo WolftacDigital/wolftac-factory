@@ -1,0 +1,129 @@
+{
+  "id": "omas-atlas",
+  "name": "O.M.A.S. Relief / ATLAS",
+  "tokens_source": "D:\\Wolftac\\omas-relief-site\\assets\\css\\main.css",
+  "snapshot_version": "1.0",
+  "snapshot": {
+    "color": {
+      "ink": {
+        "primary": "#0B0B0D",
+        "secondary": "#121216",
+        "tertiary": "#17171C"
+      },
+      "bone": {
+        "primary": "#EDEAE3",
+        "secondary": "#E4E0D6"
+      },
+      "ash": {
+        "primary": "#9A9AA3",
+        "secondary": "#8A8A94"
+      },
+      "red": {
+        "400": "#E05A5A",
+        "500": "#C43B3B",
+        "600": "#A32E2E",
+        "700": "#7E1F1F",
+        "900": "#3A0F0F"
+      },
+      "accent": {
+        "amber": "#D9A441",
+        "green": "#4CAF7D",
+        "steel": "#6E9BC5"
+      },
+      "lines": {
+        "default": "rgba(237, 234, 227, 0.09)",
+        "strong": "rgba(237, 234, 227, 0.18)"
+      }
+    },
+    "typography": {
+      "font_imports": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap",
+      "display": {
+        "font_family": "Space Grotesk",
+        "weights": [
+          500,
+          700
+        ]
+      },
+      "body": {
+        "font_family": "Inter",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "monospace_labels": {
+        "font_family": "IBM Plex Mono",
+        "weights": [
+          400,
+          600
+        ]
+      }
+    },
+    "layout": {
+      "border_radius": "2px",
+      "container": "1240px",
+      "pad": "clamp(1.25rem, 4vw, 2.5rem)",
+      "section_y": "clamp(4.5rem, 10vw, 8.5rem)",
+      "cut": "14px",
+      "clip_cut": "polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut))"
+    },
+    "effects": {
+      "ease_out": "cubic-bezier(0.22, 1, 0.36, 1)",
+      "restraint": "Editorial restraint. The cut corner is the signature; no glow, no scanline."
+    }
+  },
+  "voice": "Field-credible, humanitarian, unsentimental. Plain words about hard work.",
+  "artifact_defaults": {
+    "landing-page": {
+      "background": "#0B0B0D",
+      "max_width": "1240px",
+      "reveal": true
+    },
+    "visual-identity-board": {
+      "background": "#0B0B0D",
+      "max_width": "1240px"
+    },
+    "dashboard-shell": {
+      "background": "#0B0B0D",
+      "max_width": "1440px"
+    }
+  },
+  "signature_tokens": [
+    "#C43B3B",
+    "#EDEAE3",
+    "#D9A441",
+    "Space Grotesk",
+    "IBM Plex Mono"
+  ],
+  "prohibitions": [
+    "#FF5E00",
+    "#00F0FF",
+    "Rajdhani",
+    "Chakra Petch"
+  ],
+  "palette": [
+    "#0B0B0D",
+    "#121216",
+    "#17171C",
+    "#EDEAE3",
+    "#E4E0D6",
+    "#9A9AA3",
+    "#8A8A94",
+    "#E05A5A",
+    "#C43B3B",
+    "#A32E2E",
+    "#7E1F1F",
+    "#3A0F0F",
+    "#D9A441",
+    "#4CAF7D",
+    "#6E9BC5"
+  ],
+  "font_families": [
+    "Space Grotesk",
+    "Inter",
+    "IBM Plex Mono"
+  ],
+  "shape_rules": {
+    "border_radius_px": 2
+  }
+}

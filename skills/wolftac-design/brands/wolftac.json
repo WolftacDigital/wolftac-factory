@@ -1,0 +1,117 @@
+{
+  "id": "wolftac",
+  "name": "Wolftac Digital",
+  "tokens_source": "D:\\Wolftac\\Brand\\tokens\\brand-tokens.json",
+  "snapshot_version": "4.0",
+  "snapshot": {
+    "color": {
+      "backgrounds": {
+        "primary": "#050706",
+        "secondary": "#0A0D0B",
+        "tertiary": "#121815"
+      },
+      "text": {
+        "primary": "#E2E8F0",
+        "secondary": "#94A3B8",
+        "hud_active": "#FF5E00",
+        "hud_cyan": "#00F0FF",
+        "warning": "#FF003C"
+      },
+      "borders": {
+        "default": "rgba(255, 94, 0, 0.2)",
+        "active": "rgba(0, 240, 255, 0.4)",
+        "structural": "rgba(255, 255, 255, 0.05)"
+      }
+    },
+    "typography": {
+      "font_imports": "https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500&family=JetBrains+Mono:wght@400;700&family=Rajdhani:wght@500;600;700&display=swap",
+      "headings": {
+        "font_family": "Rajdhani",
+        "weights": [
+          600,
+          700
+        ],
+        "styling": "uppercase, letter-spacing >= 0.1em"
+      },
+      "body": {
+        "font_family": "Chakra Petch",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "monospace_labels": {
+        "font_family": "JetBrains Mono",
+        "weights": [
+          400,
+          700
+        ],
+        "styling": "uppercase, letter-spacing 0.2em, ~0.75rem, hud_active"
+      }
+    },
+    "layout": {
+      "border_radius": "0",
+      "borders": "1px solid, low-alpha",
+      "hud_framing": "Corner brackets on framed panels: four L-shaped elements, ~14px arms, 1px stroke, hud_active.",
+      "content_max_width": "960px",
+      "section_padding": "96-128px between modules"
+    },
+    "effects": {
+      "scanline": "repeating-linear-gradient(0deg, rgba(0,0,0,0.15), rgba(0,0,0,0.15) 1px, transparent 1px, transparent 2px)",
+      "hud_glow": "radial-gradient(circle at center, rgba(255, 94, 0, 0.1) 0%, transparent 70%)",
+      "restraint": "Atmosphere, not decoration. One scanline overlay per page; glow only behind hero elements."
+    },
+    "logo": {
+      "package_root": "D:\\Wolftac\\Brand\\assets\\logo\\",
+      "on_dark": "assets/logo/web/svg/*-white.svg",
+      "on_light": "assets/logo/web/svg/*-black.svg"
+    }
+  },
+  "voice": "Operator-grade, calm command. Precise, never playful.",
+  "artifact_defaults": {
+    "landing-page": {
+      "background": "#050706",
+      "max_width": "960px",
+      "reveal": true
+    },
+    "visual-identity-board": {
+      "background": "#050706",
+      "max_width": "1200px"
+    },
+    "dashboard-shell": {
+      "background": "#050706",
+      "max_width": "1440px"
+    }
+  },
+  "signature_tokens": [
+    "#FF5E00",
+    "#00F0FF",
+    "#050706",
+    "Rajdhani",
+    "Chakra Petch"
+  ],
+  "prohibitions": [
+    "#7CFF98",
+    "#8FF0BC",
+    "Archivo",
+    "border-radius > 0"
+  ],
+  "palette": [
+    "#050706",
+    "#0A0D0B",
+    "#121815",
+    "#E2E8F0",
+    "#94A3B8",
+    "#FF5E00",
+    "#00F0FF",
+    "#FF003C"
+  ],
+  "font_families": [
+    "Rajdhani",
+    "Chakra Petch",
+    "JetBrains Mono"
+  ],
+  "shape_rules": {
+    "border_radius_px": 0
+  }
+}

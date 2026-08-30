@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>@BRAND-NAME@</title>
+<!-- @FONT-LINKS -->
+  <style>
+    :root {
+/* @BRAND-TOKENS */
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: var(--max-w); margin: 0 auto; padding: 0 24px; }
+
+    h1, h2, h3 {
+      font-family: var(--font-display);
+      margin: 0 0 0.5em;
+      line-height: 1.1;
+      letter-spacing: 0.02em;
+    }
+    h1 { font-size: clamp(2.25rem, 6vw, 4rem); }
+    h2 { font-size: clamp(1.5rem, 3.5vw, 2.25rem); }
+    p { margin: 0 0 1em; color: var(--text-2); }
+
+    .label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+
+    header.site {
+      border-bottom: 1px solid var(--line);
+      padding: 20px 0;
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 10;
+    }
+    header.site .wrap { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    nav a {
+      color: var(--text-2);
+      text-decoration: none;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-left: 24px;
+    }
+    nav a:hover, nav a:focus-visible { color: var(--accent); }
+
+    section { padding: 96px 0; border-bottom: 1px solid var(--line); }
+    .hero { padding: 128px 0; }
+    .lede { font-size: 1.125rem; max-width: 60ch; }
+
+    .grid { display: grid; gap: 24px; grid-template-columns: repeat(3, 1fr); }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+    .panel {
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      clip-path: var(--clip-cut);
+      padding: 24px;
+    }
+    .panel h3 { font-size: 1.05rem; margin-bottom: 8px; }
+    .panel p { margin: 0; font-size: 0.95rem; }
+
+    .cta {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--bg);
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 14px 28px;
+      text-decoration: none;
+    }
+    .cta:hover, .cta:focus-visible { background: var(--accent-2); border-color: var(--accent-2); }
+
+    dl.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin: 0; }
+    @media (max-width: 860px) { dl.stats { grid-template-columns: 1fr; } }
+    dl.stats dt {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-2);
+    }
+    dl.stats dd {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      margin: 4px 0 0;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+
+    footer.site { padding: 48px 0; }
+    footer.site p { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; }
+
+    /* Scroll reveal. The gate below is the thing AC-9 exercises: content starts
+       hidden and MUST end visible. A gate whose specificity beats .in ships
+       invisible content to production -- that is WD-217, and brand-assert.mjs
+       fails the artifact rather than trusting that the element exists. */
+    [data-reveal] {
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 320ms ease, transform 320ms ease;
+    }
+    [data-reveal].in { opacity: 1; transform: none; }
+
+    @media (prefers-reduced-motion: reduce) {
+      [data-reveal] { opacity: 1; transform: none; transition: none; }
+      * { transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+<!-- @PROVENANCE -->
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <strong>@BRAND-NAME@</strong>
+      <nav>
+        <a href="#capability">Capability</a>
+        <a href="#record">Record</a>
+        <a href="#contact">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <div class="label">Operational Brief</div>
+        <h1>Built for the decision, not the demo.</h1>
+        <p class="lede">@BRAND-VOICE@</p>
+        <p><a class="cta" href="#contact">Request a briefing</a></p>
+      </div>
+    </section>
+
+    <section id="capability">
+      <div class="wrap">
+        <div class="label">Capability</div>
+        <h2>Three things done properly</h2>
+        <div class="grid">
+          <div class="panel" data-reveal>
+            <h3>Assessment</h3>
+            <p>Ground truth before recommendation. Every claim traces to something observed.</p>
+          </div>
+          <div class="panel" data-reveal>
+            <h3>Delivery</h3>
+            <p>Scoped, staged, and verified. Work is proven by running it, not by describing it.</p>
+          </div>
+          <div class="panel" data-reveal>
+            <h3>Sustainment</h3>
+            <p>What ships stays supported. Handover includes the runbook and the failure modes.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="record">
+      <div class="wrap">
+        <div class="label">Record</div>
+        <h2>Measured, not asserted</h2>
+        <dl class="stats" data-reveal>
+          <div><dt>Engagements</dt><dd>[00]</dd></div>
+          <div><dt>Median response</dt><dd>[00h]</dd></div>
+          <div><dt>Retention</dt><dd>[00%]</dd></div>
+        </dl>
+        <p>Figures are shown as bracketed placeholders until the real numbers are supplied. A placeholder is honest; an invented statistic is not.</p>
+      </div>
+    </section>
+
+    <section id="contact">
+      <div class="wrap">
+        <div class="label">Contact</div>
+        <h2>Start with the problem</h2>
+        <p class="lede">Describe the situation and the constraint. A scoped response follows.</p>
+        <p><a class="cta" href="mailto:[contact@example.org]">[contact@example.org]</a></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div class="wrap"><p>@BRAND-NAME@ &middot; [Registered entity] &middot; [Location]</p></div>
+  </footer>
+
+  <script>
+    // Reveal on intersect, with a guaranteed end state: anything still gated after
+    // the observer settles is revealed unconditionally. A reveal that depends on a
+    // scroll event the renderer never fires is how invisible content ships.
+    (function () {
+      var gated = Array.prototype.slice.call(document.querySelectorAll("[data-reveal]"));
+      if (!gated.length) return;
+      var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduce || !("IntersectionObserver" in window)) {
+        gated.forEach(function (el) { el.classList.add("in"); });
+        return;
+      }
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+      }, { rootMargin: "0px 0px -10% 0px" });
+      gated.forEach(function (el) { io.observe(el); });
+      window.addEventListener("load", function () {
+        setTimeout(function () { gated.forEach(function (el) { el.classList.add("in"); }); }, 250);
+      });
+    })();
+  </script>
+</body>
+</html>
