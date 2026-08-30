@@ -33,6 +33,43 @@ Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir`
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
 rather than guessing an interval.
 
+### Deploy drift (WD-348)
+
+Once per run, independent of the cron directories, the watchdog compares repo content
+against deployed content for every pair `deploy.ps1` owns.
+
+| Check | Fails when |
+|---|---|
+| `DRIFT` | a deployed file's LF-normalized hash differs from its repo copy |
+| `MISSING` | a pair's deployed copy is absent |
+| `cannot compare` | either side is unreadable — **never** counted as clean, and reported distinctly from drift |
+
+The pair list is **imported** from `deploy.ps1` by dot-sourcing it with no switches, so
+it falls through to its usage line without checking, writing, or packaging anything. A
+pair added to `deploy.ps1` is covered here with no edit to the watchdog; a duplicated
+list would quietly stop covering new targets, which is exactly the class of failure this
+watchdog exists to catch. Comparison uses `deploy.ps1`'s own `Get-LfHash`, so a
+line-ending-only difference is not drift and the two tools cannot disagree about what is
+drifted.
+
+Junctioned targets are skipped: the repo file *is* the deployed file, so drift is not
+possible. Pass `-SkipDrift` to turn the check off; it then carries the previous drift
+state forward rather than asserting a clean result for a check that never ran.
+
+Drift alerts are a **separate concern from liveness** and say so in their own words —
+they lead with the drift count and state that the factory is running normally. Drift
+never changes the exit code, so Task Scheduler's Last Result stays a pure liveness
+signal. Conflating the two would either cry wolf about a healthy factory or bury a
+worker death under a docs-drift message.
+
+Alerts carry **paths and line counts only, never file content**: a `/learn` edit can
+pick up anything, and this goes to a Slack channel.
+
+Drift has its own transition, its own 12h nag, and its own single recovery message,
+tracked in `watchdog-state.json` under `drift_status` / `drift_last_alert_at`. A sidecar
+written before this feature has no drift keys; that is treated as "no prior state", not
+an error, so rollback and roll-forward both work with no migration step.
+
 An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is an
 UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
