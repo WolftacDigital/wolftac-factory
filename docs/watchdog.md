@@ -41,8 +41,7 @@ against deployed content for every pair `deploy.ps1` owns.
 | Check | Fails when |
 |---|---|
 | `DRIFT` | a deployed file's LF-normalized hash differs from its repo copy |
-| `MISSING` | a pair's deployed copy is absent |
-| `cannot compare` | either side is unreadable — **never** counted as clean, and reported distinctly from drift |
+| `cannot compare` | either side is unreadable **or the deployed copy is absent** — never counted as clean, and reported distinctly from drift |
 
 The pair list is **imported** from `deploy.ps1` by dot-sourcing it with no switches, so
 it falls through to its usage line without checking, writing, or packaging anything. A
@@ -61,6 +60,22 @@ they lead with the drift count and state that the factory is running normally. D
 never changes the exit code, so Task Scheduler's Last Result stays a pure liveness
 signal. Conflating the two would either cry wolf about a healthy factory or bury a
 worker death under a docs-drift message.
+
+Drift magnitude counts **differing lines**, not the difference of the two file
+lengths. Subtracting totals is right for an append and wrong for an in-place edit: a
+same-length substitution reported `+0 deployed-only, +0 repo-only`, naming a drifted
+target while claiming nothing had changed.
+
+A deployed copy that is **absent** is `cannot compare`, not drift — we do not know
+whether the two sides agree, so calling it drift asserts a comparison that never
+happened. This is deliberately stricter than `deploy.ps1 -Check`, which counts
+`MISSING` toward its own drift total; the two tools still agree on the set of
+genuinely drifted targets, which is what the parity check measures.
+
+The drift message's liveness clause is **conditional**. It says "the factory is running
+normally" only when liveness actually passed this tick; when liveness is unhealthy it
+points at the separate worker alert instead. Asserting normal operation in the same tick
+as an outage alert can mask the failure the watchdog exists to surface.
 
 Alerts carry **paths and line counts only, never file content**: a `/learn` edit can
 pick up anything, and this goes to a Slack channel.

@@ -324,11 +324,16 @@ function Measure-Drift {
             Add-DriftUnreadable "cannot compare $($p.Src) (repo copy unreadable at $repoPath)"
             continue
         }
-        $script:driftChecked++
         if ($null -eq $dstHash) {
-            Add-Drift "MISSING  $($p.Dst) (deployed copy absent)"
+            # AC-7: an unreadable side -- repo OR deployed -- is "cannot compare",
+            # never drift. We do not know whether the two agree, so calling it drift
+            # asserts a comparison that never happened. Note this is deliberately
+            # stricter than `deploy.ps1 -Check`, which counts MISSING toward its drift
+            # total; the two still agree on the set of genuinely drifted targets.
+            Add-DriftUnreadable "cannot compare $($p.Src) (deployed copy absent at $($p.Dst))"
             continue
         }
+        $script:driftChecked++
         if ($srcHash -ne $dstHash) {
             # Line counts only -- never file content. A /learn edit can pick up
             # anything, and this message goes to a Slack channel.
@@ -336,16 +341,29 @@ function Measure-Drift {
             # argument to the function instead of operating on its result, and every
             # count silently comes back 0 -- an alert that names a drifted target and
             # then reports +0/+0 tells the operator nothing about urgency.
-            $repoLines = -1
-            $dstLines = -1
-            try { $repoLines = ((Get-LfText $repoPath) -split "`n").Count } catch { $repoLines = -1 }
-            try { $dstLines = ((Get-LfText $p.Dst) -split "`n").Count } catch { $dstLines = -1 }
+            $repoText = $null
+            $dstText = $null
+            try { $repoText = @((Get-LfText $repoPath) -split "`n") } catch { $repoText = $null }
+            try { $dstText = @((Get-LfText $p.Dst) -split "`n") } catch { $dstText = $null }
+            $repoLines = if ($null -eq $repoText) { -1 } else { $repoText.Count }
+            $dstLines = if ($null -eq $dstText) { -1 } else { $dstText.Count }
             if ($repoLines -lt 0 -or $dstLines -lt 0) {
                 Add-DriftUnreadable "cannot compare $($p.Src) (hashes differ but line counts could not be read)"
                 continue
             }
-            $deployedOnly = [math]::Max(0, $dstLines - $repoLines)
-            $repoOnly = [math]::Max(0, $repoLines - $dstLines)
+            # Count DIFFERING lines, not the difference of totals. Subtracting file
+            # lengths reports +0/+0 for a same-line substitution -- the alert names a
+            # drifted target and then claims nothing changed, which is worse than no
+            # magnitude at all. A multiset difference is truthful for appends,
+            # deletions, and in-place edits alike.
+            $counts = @{}
+            foreach ($line in $dstText) { $counts[$line] = ($counts[$line] + 1) }
+            foreach ($line in $repoText) { $counts[$line] = ($counts[$line] - 1) }
+            $deployedOnly = 0
+            $repoOnly = 0
+            foreach ($v in $counts.Values) {
+                if ($v -gt 0) { $deployedOnly += $v } elseif ($v -lt 0) { $repoOnly += (-$v) }
+            }
             Add-Drift ("DRIFT    {0} (deployed {1} lines, repo {2} lines; +{3} deployed-only, +{4} repo-only)" -f `
                 $p.Dst, $dstLines, $repoLines, $deployedOnly, $repoOnly)
         }
@@ -464,10 +482,18 @@ if (-not $SkipDrift) {
     $driftStatus = if ($driftClean -and $driftAvailable) { 'clean' } else { 'drifted' }
     if ($driftStatus -eq 'drifted') {
         $detail = (@($driftFindings) + @($driftUnreadable) | ForEach-Object { "- $_" }) -join "`n"
-        $headline = if ($driftAvailable) {
-            "*Deploy drift: $($driftFindings.Count) target(s) out of sync* - the factory is running normally"
+        # The liveness clause is CONDITIONAL. Asserting "the factory is running
+        # normally" in the same tick that liveness reported unhealthy contradicts the
+        # outage alert and can mask the very failure this watchdog exists to surface.
+        $livenessClause = if ($healthy) {
+            " - the factory is running normally"
         } else {
-            "*Deploy drift check could not run* - the factory is running normally, but drift is currently unmonitored"
+            " - NOTE: liveness is UNHEALTHY this tick; see the separate worker alert"
+        }
+        $headline = if ($driftAvailable) {
+            "*Deploy drift: $($driftFindings.Count) target(s) out of sync*$livenessClause"
+        } else {
+            "*Deploy drift check could not run*$livenessClause, and drift is currently unmonitored"
         }
         if ($prevDriftStatus -ne 'drifted') {
             $driftShouldPost = $true
@@ -476,7 +502,7 @@ if (-not $SkipDrift) {
             $hoursSinceDrift = if ($prevDriftAlert) { ($now - [datetime]::Parse($prevDriftAlert)).TotalHours } else { [double]::MaxValue }
             if ($hoursSinceDrift -ge $NagHours) {
                 $driftShouldPost = $true
-                $driftMessage = (":triangular_flag_on_post: *Deploy drift still unresolved after {0:N0}h* - the factory is running normally`n{1}" -f $hoursSinceDrift, $detail)
+                $driftMessage = (":triangular_flag_on_post: *Deploy drift still unresolved after {0:N0}h*{1}`n{2}" -f $hoursSinceDrift, $livenessClause, $detail)
             } else {
                 Write-Output "DRIFT COOLDOWN: still drifted, last drift alert $([math]::Round($hoursSinceDrift,1))h ago (nag every ${NagHours}h) - not posting."
             }
