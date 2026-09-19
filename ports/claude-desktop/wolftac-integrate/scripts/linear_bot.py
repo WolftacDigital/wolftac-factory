@@ -170,17 +170,19 @@ ISSUE_FIELDS = """
   labels { nodes { name } }
 """
 
+COMMENT_NODE_FIELDS = """
+  id
+  createdAt
+  body
+  user { id name email }
+  botActor { id name }
+"""
+
 COMMENT_FIELDS = """
   comments(first: 100) {
-    nodes {
-      id
-      createdAt
-      body
-      user { id name email }
-      botActor { id name }
-    }
+    nodes { %s }
   }
-"""
+""" % COMMENT_NODE_FIELDS
 
 
 def get_viewer():
@@ -196,6 +198,34 @@ def resolve_issue(identifier):
     if not issue:
         fail("issue %s not found" % identifier)
     return issue
+
+
+def get_all_comments(issue_id):
+    """Fetch every comment page so proof and approval artifacts cannot age past page 1."""
+    query = """
+    query($id: String!, $after: String) {
+      issue(id: $id) {
+        comments(first: 100, after: $after) {
+          nodes { %s }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+    """ % COMMENT_NODE_FIELDS
+    nodes = []
+    cursor = None
+    while True:
+        issue = gq(query, {"id": issue_id, "after": cursor}).get("issue")
+        if not issue:
+            fail("issue %s not found while paging comments" % issue_id)
+        connection = issue["comments"]
+        nodes.extend(connection["nodes"])
+        page = connection["pageInfo"]
+        if not page.get("hasNextPage"):
+            return nodes
+        cursor = page.get("endCursor")
+        if not cursor:
+            fail("comment pagination for %s reported another page without an end cursor" % issue_id)
 
 
 def cmd_viewer(_args):
@@ -236,14 +266,14 @@ def cmd_queue(args):
 
 
 def cmd_issue(args):
-    query = "query($id: String!) { issue(id: $id) { %s description %s } }" % (
-        ISSUE_FIELDS,
-        COMMENT_FIELDS,
-    )
+    query = "query($id: String!) { issue(id: $id) { %s description } }" % ISSUE_FIELDS
     data = gq(query, {"id": args.identifier})
-    if not data.get("issue"):
+    issue = data.get("issue")
+    if not issue:
         fail("issue %s not found" % args.identifier)
-    emit({"viewer": get_viewer(), "issue": data["issue"]})
+    # Same shape as before ({"nodes": [...]}), but no longer truncated at 100 comments.
+    issue["comments"] = {"nodes": get_all_comments(issue["id"])}
+    emit({"viewer": get_viewer(), "issue": issue})
 
 
 def read_body(args):
