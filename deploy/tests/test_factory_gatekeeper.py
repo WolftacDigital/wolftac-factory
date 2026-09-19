@@ -123,6 +123,7 @@ class GatekeeperTests(unittest.TestCase):
         self.baseline()
 
     def test_unchanged_lane_skips(self):
+        self.fail("WD-380 AC-16 intentional CI tripwire; revert after red proof")
         self.assertIn("no-baseline -> dispatched(pid=1234)", self.tick())
         self.confirm()
         out = self.tick()
