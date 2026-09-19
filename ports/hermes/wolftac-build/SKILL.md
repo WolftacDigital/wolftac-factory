@@ -15,29 +15,27 @@ description: |
 Take ONE specced issue from the Linear queue, implement it exactly to spec, prove it
 works, hand it to review.
 
-## Hermes MoA routing
+## Hermes model routing
 
-Preferred Hermes execution preset: `wolftac-factory-build`.
+This skill does not choose the model, and it deliberately names no model IDs, because they go stale. The sources of truth are:
 
-When launching this stage from Hermes, run it under:
+- **Model IDs per stage:** `deploy/model-policy.yaml` in the wolftac-factory repo (`harnesses.hermes-cron` for scheduled workers, `harnesses.hermes-moa` for the optional MoA presets).
+- **What a scheduled Build Worker actually runs on:** the `model` / `provider` pinned on its job in the Hermes profile's `cron/jobs.json`. Standing rule from the model policy: **build and review run on different vendors**, so the reviewer does not share the builder's blind spots.
+- **Optional MoA preset** for launching this stage by hand from Hermes: `wolftac-factory-build`, defined in the profile's `config.yaml` under `moa.presets`:
 
 ```text
 /model wolftac-factory-build --provider moa
 ```
 
-Model roles inside the preset:
-- **GPT-5.6 Sol** is the aggregator / acting builder-verifier. It owns tool calls, code edits, tests, commits, Linear state changes, and the build report.
-- **Claude Opus 4.8** advises on architecture, implementation plan, repo-fit, and hidden risks.
-- **Claude Sonnet 5** advises on implementation mechanics and likely code changes.
-- **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and defect spotting. Treat Gemma as advisory only; if the LM Studio reference fails or disagrees with cloud models, continue with cloud consensus and real execution proof.
+Roles when the MoA preset is active: the **aggregator** is the acting builder-verifier and owns tool calls, code edits, tests, commits, Linear state changes, and the build report. The **reference models** are advisors only (architecture, implementation mechanics, defect spotting). If a reference fails (for example a local LM Studio model is not running) or disagrees with the others, continue with the remaining consensus and real execution proof.
 
-Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-build`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. A skill document is loaded after the model call starts; it cannot change the active model for the current turn, so do not fake model switching. Proceed under whatever model is active — the report's Agent line records what actually ran. In unattended/scheduled runs, never pause to ask about model routing: if the job definition explicitly requires a stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
 - You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the integrate stage after an approved merge — never by you (review's pass verdict is `Approved`).
-- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
+- Reports open with `**Agent:** <platform / model>`, using the model ID that actually ran this session (format: `Hermes / <model-id>`). Never copy a model name from a document; per-model review send-back rates are compared from this line.
 - Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 
 ## Preflight
