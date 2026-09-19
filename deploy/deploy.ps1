@@ -63,7 +63,14 @@ $trees = @(
 )
 foreach ($tree in $trees) {
     $srcRoot = Join-Path $Repo $tree.Src
-    foreach ($file in Get-ChildItem -LiteralPath $srcRoot -File -Recurse) {
+    # This enumerates the FILESYSTEM, not git, so .gitignore does not protect it: running a
+    # shipped script (e.g. integrate-preflight.py) leaves a __pycache__ beside it, which was
+    # then deployed as a stray .pyc and reported as MISSING by -Check. Bytecode is never a
+    # deploy artifact.
+    $treeFiles = Get-ChildItem -LiteralPath $srcRoot -File -Recurse | Where-Object {
+        $_.Extension -ne ".pyc" -and $_.FullName -notmatch '[\\/]__pycache__[\\/]'
+    }
+    foreach ($file in $treeFiles) {
         $relative = [IO.Path]::GetRelativePath($srcRoot, $file.FullName)
         $Pairs += @{ Src = (Join-Path $tree.Src $relative); Dst = (Join-Path $tree.Dst $relative) }
     }
