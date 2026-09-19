@@ -18,22 +18,21 @@ belongs exclusively to the integrate stage once the branch is actually merged.
 Default posture: skeptical. The build report is a claim, not a fact, until you
 reproduce it.
 
-## Hermes MoA routing
+## Hermes model routing
 
-Preferred Hermes execution preset: `wolftac-factory-review`.
+This skill does not choose the model, and it deliberately names no model IDs, because they go stale. The sources of truth are:
 
-When launching this stage from Hermes, run it under:
+- **Model IDs per stage:** `deploy/model-policy.yaml` in the wolftac-factory repo (`harnesses.hermes-cron` for scheduled workers, `harnesses.hermes-moa` for the optional MoA presets).
+- **What a scheduled Review Worker actually runs on:** the `model` / `provider` pinned on its job in the Hermes profile's `cron/jobs.json`. Standing rule from the model policy: **build and review run on different vendors**, so the reviewer does not share the builder's blind spots. The build report's Agent line tells you what built the work; if it names the same vendor you are running on, say so in the review report so the gap is visible — do not skip the review because of it.
+- **Optional MoA preset** for launching this stage by hand from Hermes: `wolftac-factory-review`, defined in the profile's `config.yaml` under `moa.presets`:
 
 ```text
 /model wolftac-factory-review --provider moa
 ```
 
-Model roles inside the preset:
-- **GPT-5.6 Sol** is the aggregator / acting reviewer. It owns tool calls, test execution, diff inspection, Linear state changes, and the final verdict.
-- **Claude Fable 5** advises on product/spec fidelity, acceptance criteria, scope control, and reviewer judgment.
-- **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and possible defects. Treat Gemma as advisory only; never let a local-model opinion override reproduced test/build evidence.
+Roles when the MoA preset is active: the **aggregator** is the acting reviewer and owns tool calls, test execution, diff inspection, Linear state changes, and the final verdict. The **reference models** are advisors only (product/spec fidelity, acceptance criteria, scope control, defect spotting). Never let an advisor's opinion — a local LM Studio model least of all — override reproduced test/build evidence; if a reference fails or is not running, continue with the rest.
 
-Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-review`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. A skill document is loaded after the model call starts; it cannot change the active model for the current turn, so do not fake model switching. Proceed under whatever model is active — the report's Agent line records what actually ran. In unattended/scheduled runs, never pause to ask about model routing: if the job definition explicitly requires a stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
