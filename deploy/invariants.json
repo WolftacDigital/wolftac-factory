@@ -391,5 +391,21 @@
       { "file": "deploy/deploy.ps1", "pattern": "(?=[\\s\\S]*Test-UnderJunction)(?=[\\s\\S]*JUNCTION-NOOP)(?=[\\s\\S]*JUNCTIONED)(?=[\\s\\S]*precedes the \\$Force branch)" },
       { "file": "docs/hermes-skill-junctions.md", "pattern": "(?=[\\s\\S]*Administrator privilege required)(?=[\\s\\S]*re-read from disk on every invocation)(?=[\\s\\S]*dedicated worktree)(?=[\\s\\S]*JUNCTION-NOOP)" }
     ]
+  },
+  {
+    "id": "build-review-claim-identity",
+    "description": "Every Build and Review claim step names operator-only Linear tool claims, forbids bot-token and hand-rolled credential access, and restores only its own failed claim while preserving race backoff.",
+    "checks": [
+      {"file": "canonical/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/codex/wolftac-build.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "canonical/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/codex/wolftac-review.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"}
+    ]
   }
 ]

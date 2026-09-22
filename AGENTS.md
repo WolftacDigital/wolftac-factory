@@ -286,6 +286,21 @@ before relying on it; never schedule aspirational syntax.
   skills' pickup steps. A claimed issue with no comment activity for more than
   4 hours may be returned to `Todo` with the `SWEPT` comment; any issue with
   activity younger than 4 hours is untouchable.
+- Claim identity split: Build and Review act as the operator through the
+  platform's own Linear toolset (`assignee: me`, verified by read-back);
+  Integrate acts as the Wolftac Factory Bot through `linear_bot.py` and
+  `delegate`. Three rules bind every Build and Review port, checked by the
+  `build-review-claim-identity` parity invariant: CLAIM-IDENTITY (claim only
+  with the platform Linear tool as the operator; a Build/Review claim lives in
+  `assignee`, never `delegate`); NO-BOT-TOKEN (never read or use the factory
+  bot token, never hand-roll a Linear GraphQL or HTTP call, never import the
+  gatekeeper or `linear_bot.py` for a credential, never write a helper that
+  fetches one; if the Linear write tool is unavailable, stop without claiming
+  and say so); CLAIM-DID-NOT-TAKE (if your own mutation applied but read-back
+  shows the assignee is not you, restore only what this run changed, post
+  nothing on the issue, stop, and report `CLAIM-DID-NOT-TAKE <ID>` with the
+  read-back state, assignee and delegate; losing a race still means back off
+  with no side effects).
 - Never grant blanket auto-approval to an unattended worker. Scope permissions
   to exactly what the stage needs; a destructive operation outside that scope
   should fail, not auto-approve.
