@@ -275,7 +275,7 @@ if ($Deploy) {
 if ($Package) {
     $out = "$env:USERPROFILE\Downloads\wolftac-factory-package.zip"
     if (Test-Path $out) { Remove-Item -Force $out }
-    $excludedNames = @(".git", ".review-worktrees", "node_modules")
+    $excludedNames = @(".git", ".review-worktrees", ".integrate-sandbox", "node_modules")
     $items = Get-ChildItem $Repo -Force | Where-Object {
         $name = $_.Name
         ($excludedNames -notcontains $name) -and
