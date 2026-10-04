@@ -12,3 +12,6 @@ __pycache__/
 
 # Local integrate-stage scratch worktrees/sandboxes (per-issue, e.g. WD-350/)
 .integrate-sandbox/
+
+# Local integrate-stage git worktrees (one checkout per issue under integration)
+.integrate-worktrees/
