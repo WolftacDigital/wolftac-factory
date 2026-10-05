@@ -84,6 +84,8 @@ foreach ($tree in $trees) {
 # `wsl -l -v`) block forever, which used to hang -Check/-Deploy/-Package outright.
 # Only -Check and -Deploy touch WSL targets, so nothing else probes. A timed-out
 # probe is killed and reported loudly; WSL targets are then skipped, not passed.
+# 60s, not less: a cold WSL boot (first call after `wsl --shutdown` or idle stop)
+# measured 41-48s on a working machine.
 $wslHome = $null
 $WslProbeTimedOut = $false
 if ($Check -or $Deploy) {
@@ -96,12 +98,12 @@ if ($Check -or $Deploy) {
         $proc = [Diagnostics.Process]::Start($psi)
         $stdout = $proc.StandardOutput.ReadToEndAsync()
         $null = $proc.StandardError.ReadToEndAsync()
-        if ($proc.WaitForExit(15000)) {
+        if ($proc.WaitForExit(60000)) {
             $wslHome = ($stdout.Result -split "`n" | Select-Object -First 1)
         } else {
             $WslProbeTimedOut = $true
             try { $proc.Kill($true) } catch {}
-            Write-Output "WARN: WSL probe timed out after 15s (WSL unresponsive; try 'wsl --shutdown'). WSL skill targets were NOT checked or deployed."
+            Write-Output "WARN: WSL probe timed out after 60s (WSL unresponsive; try 'wsl --shutdown'). WSL skill targets were NOT checked or deployed."
         }
     } catch {}
 }
