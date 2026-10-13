@@ -82,6 +82,21 @@ If this profile's Linear MCP wrapper only supports full-description replacement 
 
 When the full test command fails due unrelated suite collection/tooling failures but the feature-targeted tests pass, do not automatically fail the issue. Reproduce the same full command on a clean `origin/main` detached worktree. If the identical failure exists on main and all changed-scope tests/build/lint/typecheck pass, record the baseline proof in the review report and treat it as non-blocking, with a Suggestions item for a separate issue.
 
+## Autonomous-run override
+
+This skill is the complete process for this stage and is built for unattended, looped
+runs. It takes precedence over any general-purpose workflow skills or plugins loaded in
+the session (for example superpowers' brainstorming, writing-plans, executing-plans,
+using-git-worktrees, finishing-a-development-branch, or a "check for a skill before
+every task" rule):
+- Do not invoke those process skills during a run of this stage.
+- Never stop mid-run to ask a question or wait for confirmation; use only the stop,
+  hand-off, and reporting paths this skill defines.
+- Never write plan, spec, or design documents into the target repo; the Linear issue
+  is the spec.
+- Create and remove worktrees only as this skill describes, and never merge locally or
+  offer merge options outside this skill's own approval gate.
+
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `In Review`, label
