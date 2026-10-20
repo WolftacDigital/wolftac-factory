@@ -44,3 +44,10 @@ On Windows/Git Bash, the bare `uv` command may resolve to a Linux ELF shim under
 ## Windows npm-script executable paths
 
 On Windows, npm executes package scripts through `cmd.exe`, even when Hermes launched `npm` from Git Bash. A script such as `./node_modules/.bin/tsx ...` can therefore fail with `'.' is not recognized as an internal or external command` despite a correct `npm ci`. For new or issue-owned scripts, use the cross-platform package binary name (`tsx ...`, `tsc ...`, `next ...`) so npm resolves `node_modules/.bin` itself. Do not rewrite unrelated existing scripts merely to fix one issue; patch only the approved script entries, rerun the literal `npm run <script>`, and record the initial failure plus verified correction in proof.
+
+## Streamed Next.js browser proof
+
+- Wait for the actual route heading or work-surface selector after navigation, not only document load or HTTP 200: streamed routes may initially expose only loading skeletons. Assert the hydrated interaction separately when verifying client controls.
+- Scope page-header sibling assertions to the first route header; kanban cards can contain additional nested headers, making an unqualified `main header + *` locator ambiguous.
+- If the browser harness stalls, use an independent headless Playwright/Chrome session with an explicit viewport and captured page errors. Preserve its script, JSON assertions and screenshots outside the disposable worktree; never treat the stalled skeleton probe as a pass.
+- For a build-time font-resolution failure, retry the unchanged literal build once before changing application code or build configuration. Record the initial failure and subsequent outcome, and rerun the complete verification gate if the retry passes. Do not infer a root cause from a successful retry.
