@@ -414,6 +414,7 @@
     ]
   },
   {
+
     "id": "integrate-token-renewal",
     "description": "Every integrate surface renews and verifies before pickup; helper identity remains pinned.",
     "checks": [
@@ -465,6 +466,19 @@
         "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py",
         "pattern": "^EXPECTED_BOT_ID = \"b8fece8e-8ec5-4125-b4b2-d7fa882db137\"$"
       }
+    ]
+  },
+  {
+    "id": "integrate-no-self-sweep",
+    "description": "Integrate never sweeps its own claim, skips waiting issues, and refreshes Slack-less proof packs (WD-371).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" }
+
     ]
   }
 ]

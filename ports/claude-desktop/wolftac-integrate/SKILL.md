@@ -156,6 +156,28 @@ keeps a rejected token failure read-only. `viewer` reports `token_source` and
 `token_path` (path only). Missing app credentials exit 2; OAuth/network failure
 exits 1; viewer mismatch exits 4. Failed renewal leaves the old file untouched.
 
+**Token-home propagation (WD-547):** After a verified mint and current-home
+persistence, the helper atomically propagates only the token and expiry to existing
+files that already contain the token key. `deploy/token-homes.json` is the registry:
+exactly the default `hermes\.env` and Harper's `hermes\profiles\integrator\.env`,
+relative to `%LOCALAPPDATA%`. Identical `token-homes.json` data ships beside all six
+helper copies; semantic checks enforce parity. App credentials and unrelated lines
+are never copied or changed. Missing, read-only or token-less homes produce a
+path-only `token_home_skipped` warning; current-home success is retained. A warning
+means another consumer may still be broken, not that all homes recovered.
+`LINEAR_FACTORY_TOKEN_HOMES_TEST_JSON` replaces the list with an absolute-path JSON
+array for scratch tests only. Never set it in a live worker; invalid test input
+never falls back to the live registry. `--no-mint` performs no propagation.
+
+**Post-merge operator step only:** after the authorized deploy, run `remint` once
+from Harper's `integrator` profile to seed expiry and propagation. Confirm the same
+`LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` date in BOTH the default and integrator homes
+(dates only), no 401 on the next Gatekeeper tick, and a successful Harper preflight.
+Build/review must not read, copy or change live credentials or perform a live mint.
+Real scratch OAuth tests (AC-1..4, AC-13..15 and AC-17) require Jonathan's bounded
+live-test authorization; transport doubles do not prove Linear's invalidation policy.
+
+
 ## Procedure
 
 1. **Pick up work.** Run `linear_bot.py viewer` before reading the queue; a non-zero
@@ -181,6 +203,19 @@ exits 1; viewer mismatch exits 4. Failed renewal leaves the old file untouched.
    clear it, never read it as a competing claim — worker claims live in `delegate`
    only. Nothing there → say "Factory queue: nothing awaiting integration" and stop
    cleanly.
+
+   **Own claims and waiting issues (WD-371).** Never sweep a delegate claim whose
+   `delegate.id` equals your own bot viewer id: it is your own earlier claim, not a
+   stale foreign one, so keep it, post nothing, and go straight to the approval
+   position. An issue whose newest proof pack has no valid approval newer than it is
+   WAITING, not work: post nothing, keep your claim, and move to the next candidate in
+   queue order. Stop the tick after the first issue that needed an action, or with
+   "Factory queue: nothing awaiting integration" when every candidate is waiting.
+   **Slack-less pack refresh:** if the newest proof pack disclosed `Slack lane
+   unavailable` and the Slack lane is available now (bot token and approval policy
+   present), produce ONE fresh proof pack for that issue (rebase, gates, Slack
+   approval message); the staleness guard then voids approvals older than the new
+   pack.
 
 2. **Claim it.** Run `linear_bot.py claim <ID>`. It sets the issue's **delegate** to
    the bot viewer (`issueUpdate` with `delegateId`) while keeping state `Approved`

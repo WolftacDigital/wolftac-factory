@@ -98,6 +98,24 @@ remote response bodies and exception text that might echo credentials.
 Child output goes to `cron\gatekeeper-logs\<lane>-<timestamp>.log` under Hermes
 home. Each lane has its own exception boundary; one failure cannot starve others.
 
+### Per-lane worker profiles (exec team, 2026-10-20)
+
+Each lane's job lives in its own Hermes profile, one bot per stage:
+
+| Lane | Linear state | Job | Profile (bot) |
+|---|---|---|---|
+| build | Todo | `9b7b5987bcd6` | `builder` (Mason) |
+| review | In Review | `8e5c37a23b91` | `reviewer` (Quinn) |
+| integrate | Approved | `4e7a4d9c5fa4` | `integrator` (Harper) |
+
+The gatekeeper dispatches `hermes -p <profile> cron run <job>` and reads that
+lane's `last_run_at` from `profiles\<profile>\cron\jobs.json`. The gatekeeper job
+itself, its state file and the factory bot token stay in the default profile.
+A `--job-map` entry may be `[state, jobId]` (default profile) or
+`[state, jobId, profile]`; profile names must match `[a-z0-9][a-z0-9_-]*`, and a
+bad entry is a `LANE-ERROR` for that lane only. `--jobs-path`, when given,
+overrides the jobs file for every lane (scratch testing).
+
 A live in-flight marker produces `in-flight (skip)` before any Linear or Slack
 probe for that lane, regardless of queue changes. As before, a changed job
 `last_run_at` clears the marker and prints `confirmed-ran`; it preserves the

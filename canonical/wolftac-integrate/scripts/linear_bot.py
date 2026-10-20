@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 import urllib.error
@@ -37,6 +38,7 @@ EXPIRY_KEY = "LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT"
 APP_ID_KEY = "LINEAR_FACTORY_APP_ID"
 APP_SECRET_KEY = "LINEAR_FACTORY_APP_SECRET"
 RENEW_WINDOW = timedelta(days=5)
+TEST_HOMES_OVERRIDE = "LINEAR_FACTORY_TOKEN_HOMES_TEST_JSON"
 
 _TOKEN = None
 _TOKEN_SOURCE = None
@@ -157,38 +159,106 @@ def _verified_viewer(data):
     return viewer
 
 
-def _persist_token(path, original, token, expires_at):
-    """Verify-then-persist with a private sibling temporary file and atomic replace."""
+def _renewed_bytes(original, token, expires_at):
+    """Replace only credential lines, including duplicates; keep all other bytes."""
     replacements = {TOKEN_KEY: token, EXPIRY_KEY: expires_at}
     lines = []
-    for line in original.decode("utf-8").splitlines(keepends=True):
-        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
-        if not match or match[1] not in replacements:
-            lines.append(line)
-    text = "".join(lines)
-    if text and not text.endswith(("\n", "\r")):
-        text += "\n"
-    text += "".join(f"{key}={value}\n" for key, value in replacements.items())
+    seen = set()
+    for line in original.splitlines(keepends=True):
+        match = re.match(rb"^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=", line)
+        key = match[1].decode("ascii") if match else None
+        if key in replacements:
+            ending = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b"\r" if line.endswith(b"\r") else b""
+            line = (key + "=" + replacements[key]).encode("utf-8") + ending
+            seen.add(key)
+        lines.append(line)
+    # Prepend missing keys: appending would alter an unrelated unterminated line.
+    missing = b"".join(f"{key}={value}\n".encode("utf-8") for key, value in replacements.items() if key not in seen)
+    return missing + b"".join(lines)
+
+
+def _persist_token(path, original, token, expires_at):
+    """Atomic replacement; callers decide whether a failure is fatal or advisory."""
     tmp = None
     try:
+        target = Path(path)
+        if target.is_symlink() or not target.is_file() or not target.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+            raise OSError("Credential file is missing, linked or read-only")
         fd, tmp = tempfile.mkstemp(prefix=".linear-bot-", suffix=".tmp", dir=os.path.dirname(path))
         with os.fdopen(fd, "wb") as fh:
-            fh.write(text.encode("utf-8"))
+            fh.write(_renewed_bytes(original, token, expires_at))
             fh.flush()
             os.fsync(fh.fileno())
         # Fail closed instead of overwriting a concurrent profile edit.
         if Path(path).read_bytes() != original:
-            fail("Credential file changed during renewal; nothing persisted")
+            raise OSError("Credential file changed during renewal; nothing persisted")
         os.replace(tmp, path)
         tmp = None
-    except OSError:
-        fail("Could not atomically persist renewed credential; old file retained")
     finally:
         if tmp is not None:
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
+
+
+def _propagation_skip(path):
+    # Never include exception messages or file contents from an optional home.
+    print(json.dumps({"token_home_skipped": redact(str(path))}), file=sys.stderr)
+
+
+def _registered_token_homes():
+    """Load the checked-in registry (packaged alongside each deployed helper).
+
+    The explicitly test-only override is a JSON array of absolute scratch file
+    paths; it replaces the registry entirely, never supplements live homes.
+    Production entries are LOCALAPPDATA-relative, never arbitrary absolute paths.
+    """
+    registry = Path(__file__).resolve().with_name("token-homes.json")
+    override = os.environ.get(TEST_HOMES_OVERRIDE)
+    try:
+        if override is not None:
+            entries = json.loads(override)
+            if not isinstance(entries, list) or any(not isinstance(p, str) or "\x00" in p or not Path(p).is_absolute() for p in entries):
+                raise ValueError()
+            return [Path(p) for p in entries]
+        entries = json.loads(registry.read_text(encoding="utf-8"))
+        if not isinstance(entries, list):
+            raise ValueError()
+        local = Path(os.environ.get("LOCALAPPDATA") or os.path.expanduser(r"~\AppData\Local"))
+        homes = []
+        for entry in entries:
+            if not isinstance(entry, str):
+                raise ValueError()
+            parts = entry.replace("\\", "/").split("/")
+            if any(p in ("", ".", "..") or ":" in p or "\x00" in p for p in parts):
+                raise ValueError()
+            homes.append(local.joinpath(*parts))
+        return homes
+    except (OSError, ValueError):
+        # A broken optional registry cannot turn a verified current mint into
+        # a failed run, and a bad test override must never fall back to live files.
+        _propagation_skip(registry)
+        return []
+
+
+def _propagate_token(token, expires_at):
+    seen = {os.path.normcase(os.path.abspath(_TOKEN_PATH))}
+    for home in _registered_token_homes():
+        identity = os.path.normcase(os.path.abspath(home))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        try:
+            if home.is_symlink() or not home.is_file():
+                raise OSError()
+            original = home.read_bytes()
+            # No parsing/copying of another home's app credentials is needed.
+            if not re.search(rb"(?m)^[ \t]*(?:export[ \t]+)?LINEAR_FACTORY_BOT_TOKEN[ \t]*=", original):
+                raise OSError()
+            _persist_token(str(home), original, token, expires_at)
+        except OSError:
+            _propagation_skip(home)
 
 
 def mint():
@@ -241,9 +311,13 @@ def mint():
         fail("Renewed token verification HTTP %s; nothing persisted" % exc.code)
     except Exception:
         fail("Renewed token verification failed; nothing persisted")
-    _persist_token(_TOKEN_PATH, original, fresh, expires_at)
+    try:
+        _persist_token(_TOKEN_PATH, original, fresh, expires_at)
+    except OSError:
+        fail("Could not atomically persist renewed credential (file changed during renewal or unavailable); old file retained")
     _TOKEN = fresh
     _TOKEN_SOURCE = "minted"
+    _propagate_token(fresh, expires_at)
     return viewer
 
 

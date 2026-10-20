@@ -11,6 +11,8 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+import stat
 import sys
 import tempfile
 import unittest
@@ -93,7 +95,7 @@ class Transport:
         return io.BytesIO(json.dumps({"data": data}).encode())
 
 
-class RenewalTests(unittest.TestCase):
+class FixtureBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="wd547-test-", dir=os.environ.get("TMPDIR"))
         self.addCleanup(self.tmp.cleanup)
@@ -103,7 +105,8 @@ class RenewalTests(unittest.TestCase):
         self.env_file = self.home / ".env"
         self.bot = load_module(HELPER)
         self.transport = Transport()
-        self.environment = {"LOCALAPPDATA": str(self.base), "HERMES_HOME": str(self.home)}
+        self.environment = {"LOCALAPPDATA": str(self.base), "HERMES_HOME": str(self.home),
+                            "LINEAR_FACTORY_TOKEN_HOMES_TEST_JSON": "[]"}
         self.write_env()
 
     def write_env(self, token=OLD, days=None, app=True, secret=True, expiry=None):
@@ -142,6 +145,8 @@ class RenewalTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         return json.loads(out)
 
+
+class RenewalTests(FixtureBase):
     def test_missing_expiry_renews_verifies_persists(self):
         before = self.env_file.read_bytes()
         result = self.successful("remint")
@@ -462,7 +467,175 @@ class RenewalTests(unittest.TestCase):
         self.assertEqual(before, self.env_file.read_bytes())
 
 
+class PropagationTests(FixtureBase):
+    """AC-17/18 are transport-double proof, not live OAuth verification."""
+    def peer(self, name="peer", content=None):
+        path = self.base / name / ".env"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(self.env_file.read_bytes() if content is None else content)
+        return path
+
+    def register(self, *paths):
+        self.environment[self.bot.TEST_HOMES_OVERRIDE] = json.dumps([str(p) for p in paths])
+
+    def unrelated(self, raw):
+        return b"".join(line for line in raw.splitlines(keepends=True)
+                        if not re.match(rb"^[ \t]*(?:export[ \t]+)?LINEAR_FACTORY_BOT_TOKEN(?:_EXPIRES_AT)?[ \t]*=", line))
+
+    def values(self, path):
+        # Fixture values only; never printed or taken from a real credential store.
+        return dict(line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
+                    if line.startswith("LINEAR_FACTORY_BOT_TOKEN"))
+
+    def test_ac17_propagates_then_peer_authenticates_without_mint(self):
+        for invalidates in (False, True):
+            with self.subTest(invalidates=invalidates):
+                self.transport = Transport()
+                self.transport.invalidate = invalidates
+                self.write_env()
+                peer = self.peer(content=b"# different app credentials stay local\r\n"
+                                 b"LINEAR_FACTORY_APP_ID=fixture-peer-app\r\n"
+                                 b"LINEAR_FACTORY_APP_SECRET=fixture-peer-secret\n"
+                                 b"LINEAR_FACTORY_BOT_TOKEN=fixture-peer-old\r\n"
+                                 b"UNRELATED=unterminated")
+                before_a, before_b = self.env_file.read_bytes(), peer.read_bytes()
+                self.register(self.env_file, peer, peer)
+                calls = []
+                replace = self.bot.os.replace
+                def recording_replace(src, dst):
+                    calls.append(str(dst))
+                    return replace(src, dst)
+                with patch.object(self.bot.os, "replace", side_effect=recording_replace):
+                    first = self.successful("viewer")
+                self.assertEqual(first["token_source"], "minted")
+                self.assertEqual(calls, [str(self.env_file), str(peer)])
+                self.assertEqual(self.values(self.env_file), self.values(peer))
+                self.assertEqual(self.unrelated(before_a), self.unrelated(self.env_file.read_bytes()))
+                self.assertEqual(self.unrelated(before_b), self.unrelated(peer.read_bytes()))
+                env = {**self.environment, "HERMES_HOME": str(peer.parent)}
+                second = self.successful("viewer", "--no-mint", env=env)
+                self.assertEqual(second["viewer"]["id"], BOT_ID)
+                self.assertEqual(second["token_source"], "file")
+                self.assertEqual(self.transport.mints, 1)
+
+    def test_ac18_missing_readonly_no_token_and_healthy_peer(self):
+        missing = self.base / "absent" / ".env"
+        readonly = self.peer("readonly")
+        no_token = self.peer("no-token", b"# LINEAR_FACTORY_BOT_TOKEN=comment-only\nOTHER=keep\n")
+        healthy = self.peer("healthy")
+        readonly.chmod(stat.S_IREAD)
+        self.addCleanup(readonly.chmod, stat.S_IREAD | stat.S_IWRITE)
+        snapshots = {p: p.read_bytes() for p in (readonly, no_token)}
+        self.register(self.env_file, missing, readonly, no_token, healthy)
+        code, out, err = self.invoke("viewer")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["token_source"], "minted")
+        self.assertEqual([json.loads(line) for line in err.splitlines()],
+                         [{"token_home_skipped": str(p)} for p in (missing, readonly, no_token)])
+        self.assertFalse(missing.parent.exists())
+        for path, before in snapshots.items():
+            self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.values(healthy), self.values(self.env_file))
+
+    def test_peer_atomic_replace_denied_is_nonfatal_and_cleans_temp(self):
+        peer, healthy = self.peer(), self.peer("healthy")
+        before = peer.read_bytes()
+        self.register(peer, healthy)
+        replace = self.bot.os.replace
+        def denied(src, dst):
+            if Path(dst) == peer:
+                raise PermissionError(SECRET + APP_ID + OLD)
+            return replace(src, dst)
+        with patch.object(self.bot.os, "replace", side_effect=denied):
+            code, _, err = self.invoke("viewer")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(err), {"token_home_skipped": str(peer)})
+        self.assertEqual(peer.read_bytes(), before)
+        self.assertEqual(list(peer.parent.glob(".linear-bot-*.tmp")), [])
+        self.assertEqual(self.values(healthy), self.values(self.env_file))
+
+    def test_peer_concurrent_edit_is_preserved_and_skipped(self):
+        peer = self.peer()
+        changed = peer.read_bytes() + b"OPERATOR=keep\n"
+        self.register(peer)
+        persist = self.bot._persist_token
+        def edit_before_persist(path, original, token, expiry):
+            if Path(path) == peer:
+                peer.write_bytes(changed)
+            return persist(path, original, token, expiry)
+        with patch.object(self.bot, "_persist_token", side_effect=edit_before_persist):
+            code, _, err = self.invoke("viewer")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(err), {"token_home_skipped": str(peer)})
+        self.assertEqual(peer.read_bytes(), changed)
+        self.assertEqual(list(peer.parent.glob(".linear-bot-*.tmp")), [])
+
+    def test_bad_identity_or_failed_current_write_never_propagates(self):
+        peer = self.peer()
+        before = peer.read_bytes()
+        self.register(peer)
+        self.transport.viewer_id = "wrong"
+        self.assertEqual(self.invoke("viewer")[0], 4)
+        self.assertEqual(peer.read_bytes(), before)
+        self.transport.viewer_id = BOT_ID
+        with patch.object(self.bot.os, "replace", side_effect=PermissionError("fixture only")):
+            self.assertEqual(self.invoke("viewer")[0], 1)
+        self.assertEqual(peer.read_bytes(), before)
+
+    def test_no_mint_and_healthy_remint_never_write_peers(self):
+        peer = self.peer()
+        before = peer.read_bytes()
+        self.register(peer)
+        self.assertEqual(self.invoke("viewer", "--no-mint")[0], 1)
+        self.write_env(days=10)
+        self.transport.valid.add(OLD)
+        self.successful("remint")
+        self.assertEqual(peer.read_bytes(), before)
+        self.assertEqual(self.transport.mints, 0)
+
+    def test_real_registry_resolves_both_homes_under_scratch_localappdata(self):
+        del self.environment[self.bot.TEST_HOMES_OVERRIDE]
+        peer = self.peer("hermes/profiles/integrator")
+        self.successful("viewer")
+        self.assertEqual(self.values(self.env_file), self.values(peer))
+        # Reverse direction: Harper renewal also updates the default Gatekeeper home.
+        self.transport.valid.clear()
+        self.successful("viewer", env={**self.environment, "HERMES_HOME": str(peer.parent)})
+        self.assertEqual(self.values(self.env_file), self.values(peer))
+        self.successful("viewer", "--no-mint")
+        self.assertEqual(self.transport.mints, 2)
+
+    def test_bad_override_never_falls_back_to_registered_homes(self):
+        peer = self.peer("hermes/profiles/integrator")
+        before = peer.read_bytes()
+        for invalid in ("invalid-json", "{}", '["relative/path"]', '[null]', json.dumps([str(peer) + "\x00"])):
+            with self.subTest(value=invalid):
+                self.write_env()
+                self.environment[self.bot.TEST_HOMES_OVERRIDE] = invalid
+                code, _, err = self.invoke("viewer")
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(err), {"token_home_skipped": str(HELPER.with_name("token-homes.json"))})
+                self.assertEqual(peer.read_bytes(), before)
+
+    def test_duplicate_export_keys_and_mixed_endings_preserve_other_lines(self):
+        original = (b"# keep\r\n export LINEAR_FACTORY_BOT_TOKEN = 'old'\r\n"
+                    b"LINEAR_FACTORY_BOT_TOKEN=old-again\n"
+                    b"LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT=old-date\r"
+                    b"OTHER=keep-without-final-newline")
+        new = self.bot._renewed_bytes(original, "fixture-new", "2099-01-01T00:00:00Z")
+        self.assertEqual(self.unrelated(original), self.unrelated(new))
+        self.assertEqual(new.count(b"LINEAR_FACTORY_BOT_TOKEN=fixture-new"), 2)
+        self.assertNotIn(b"old", new)
+
+
 class DistributionTests(unittest.TestCase):
+    def test_registry_exact_homes_and_packaged_copies(self):
+        registry = (ROOT / "deploy/token-homes.json").read_bytes()
+        self.assertEqual(json.loads(registry), ["hermes\\.env", "hermes\\profiles\\integrator\\.env"])
+        for helper in ROOT.glob("**/linear_bot.py"):
+            with self.subTest(helper=helper.relative_to(ROOT)):
+                self.assertEqual(helper.with_name("token-homes.json").read_bytes(), registry)
+
     def test_six_identical_helpers_with_one_shared_implementation(self):
         paths = sorted(ROOT.glob("**/linear_bot.py"))
         self.assertEqual(len(paths), 6)

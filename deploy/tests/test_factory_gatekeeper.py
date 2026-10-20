@@ -107,7 +107,7 @@ class GatekeeperTests(unittest.TestCase):
 
     def baseline(self):
         self.write(self.state, {"lanes": {}, "fingerprints": {
-            lane: g.lane_fingerprint(self.issues[state]) for lane, (state, _) in g.DEFAULT_JOB_MAP.items()
+            lane: g.lane_fingerprint(self.issues[state]) for lane, (state, *_) in g.DEFAULT_JOB_MAP.items()
         }, "approval_dispatched": {}})
 
     def confirm(self):
@@ -421,6 +421,45 @@ class GatekeeperTests(unittest.TestCase):
                 params = g.urllib.parse.parse_qs(g.urllib.parse.urlparse(request.full_url).query)
                 self.assertEqual(params["timestamp"], ["1789819979.335359"])
                 self.assertEqual(params["full"], ["true"])
+
+    def test_default_lanes_run_as_exec_team_profiles(self):
+        profiles = {lane: g.lane_entry(entry)[2] for lane, entry in g.DEFAULT_JOB_MAP.items()}
+        self.assertEqual(profiles, {"build": "builder", "review": "reviewer", "integrate": "integrator"})
+
+    def test_dispatch_targets_profile(self):
+        with patch.object(g, "hermes_cli", return_value=["hermes"]):
+            g.dispatch("job123", "build", False, None, "builder")
+            self.assertEqual(self.spawn.call_args[0][0], ["hermes", "-p", "builder", "cron", "run", "job123"])
+            g.dispatch("job123", "build", False, None, None)
+            self.assertEqual(self.spawn.call_args[0][0], ["hermes", "cron", "run", "job123"])
+
+    def test_profile_jobs_path_and_legacy_entry(self):
+        self.assertEqual(g.profile_jobs_path(str(self.root), "reviewer"),
+                         os.path.join(str(self.root), "profiles", "reviewer", "cron", "jobs.json"))
+        self.assertEqual(g.profile_jobs_path(str(self.root), None), os.path.join(str(self.root), "cron", "jobs.json"))
+        self.assertEqual(g.lane_entry(["Todo", "abc"]), ("Todo", "abc", None))
+        for bad in (["Todo", "abc", "../x"], ["Todo", "abc", "A B"], ["Todo"], ["Todo", "abc", "p", "extra"]):
+            with self.assertRaises(ValueError):
+                g.lane_entry(bad)
+
+    def test_last_run_read_from_lane_profile(self):
+        args = [a for a in self.args]
+        i = args.index("--jobs-path"); del args[i:i + 2]
+        self.args = args
+        for lane, entry in g.DEFAULT_JOB_MAP.items():
+            state, job_id, profile = g.lane_entry(entry)
+            path = self.root / "profiles" / profile / "cron" / "jobs.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.write(path, {"jobs": [{"id": job_id, "last_run_at": "2026-09-19T10:00:00Z"}]})
+        out = self.tick()
+        self.assertIn("build: no-baseline -> dispatched(pid=1234)", out)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state["lanes"]["build"]["job_last_run_at"], "2026-09-19T10:00:00Z")
+
+    def test_bad_profile_in_job_map_is_a_lane_error(self):
+        out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
+        self.assertIn("build: LANE-ERROR (", out)
+        self.spawn.assert_not_called()
 
 
 if __name__ == "__main__":

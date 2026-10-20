@@ -124,6 +124,21 @@ foreach ($surface in $helperCopies.Keys) {
     }
 }
 
+# Token-home registry is data, not a second credential implementation. Ship it
+# alongside every helper, including tree/junction and portable Desktop installs.
+$registry = "deploy/token-homes.json"
+$registryText = Read-RepoFile $registry
+if ($registryText) {
+    $registryHash = (Get-FileHash -LiteralPath (Join-Path $RepoRoot $registry) -Algorithm SHA256).Hash
+    foreach ($helper in @($canonicalHelper) + @($helperCopies.Values)) {
+        $copy = (Split-Path $helper -Parent) + "/token-homes.json"
+        $copyText = Read-RepoFile $copy
+        if ($copyText -and (Get-FileHash -LiteralPath (Join-Path $RepoRoot $copy) -Algorithm SHA256).Hash -ne $registryHash) {
+            $errors.Add("$copy - drifted from $registry")
+        }
+    }
+}
+
 # A credentialed GraphQL call hand-rolled into a fenced command block is the exact
 # pattern the helper replaced: it puts the token on a command line, trips the
 # credential-keyword heuristic, and re-prompts on every Linear round-trip. Prose
