@@ -412,5 +412,29 @@
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
       { "file": "ports/codex/wolftac-integrate.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" }
     ]
+  },
+  {
+    "id": "integrate-no-self-sweep",
+    "description": "Integrate never sweeps its own claim, skips waiting issues, and refreshes Slack-less proof packs (WD-371).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" }
+    ]
+  },
+  {
+    "id": "integrate-slack-utf8-posting",
+    "description": "Integrate posts Slack JSON from a UTF-8 file, never message text in argv (2026-10-20 BAD+97 incident).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" }
+    ]
   }
 ]

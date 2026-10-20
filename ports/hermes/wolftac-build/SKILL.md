@@ -183,6 +183,13 @@ every task" rule):
    against `origin/main` afterward. See
    `references/existing-feature-branch-main-integration.md`.
 
+   If GitHub fetch/push stalls under Windows `credential.helper=helper-selector`
+   while `gh api` succeeds, retry with command-scoped authentication:
+   `GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' -C '<native-repo-path>' <operation>`.
+   Clear the inherited helper for that command only; do not edit persistent Git
+   config, expose tokens, or restart services. Still verify fetched refs and pushed
+   heads normally; a successful `gh api` read alone does not prove a fetch or push.
+
    For WSL-hosted Next.js/WebGL work, also use
    `references/wsl-webgl-build-pitfalls.md` for line endings, React state/fallback
    design, build verification, and honest browser-proof boundaries.

@@ -39,6 +39,17 @@ one thing: the issue's reviewed commits are ancestors of the remote default bran
   human's Slack identity. If the bot token is absent, invalid, or expired: post no
   Slack message, disclose the unavailable Slack lane in the proof pack, and use
   only the typed-comment gate for that pack.
+- **Slack posting encoding.** Never pass Slack message text as a command-line argument
+  (`curl --data-urlencode 'text=...'`, `-d`, or PowerShell argv): on Windows, non-ASCII
+   characters in argv are re-encoded through the legacy code page, Slack receives
+  invalid UTF-8, and characters such as an em dash arrive as `BAD+97` (2026-10-20,
+  WD-347). Write the JSON payload (`channel`, `text`, `username`, `icon_emoji`, and
+  `thread_ts` for replies) to a temporary file as UTF-8 without a BOM, post it with
+  `curl --data-binary @<file>` and header `Content-Type: application/json;
+  charset=utf-8`, then delete the file. Keep factory Slack text ASCII anyway: use `-`
+  for dashes. Check the returned `message.text`; if it differs from what you sent,
+  delete that post with `chat.delete` (same bot token) before posting the corrected
+  one, so only one approval message exists for the pack.
 - **Workers never ADD reactions to factory notification messages** — read-only on
   reactions. A worker reacting to an approval message would blur the human-artifact
   boundary exactly the way a self-authored `APPROVE MERGE` would.
@@ -154,6 +165,19 @@ every task" rule):
    clear it, never read it as a competing claim — worker claims live in `delegate`
    only. Nothing there → say "Factory queue: nothing awaiting integration" and stop
    cleanly.
+
+   **Own claims and waiting issues (WD-371).** Never sweep a delegate claim whose
+   `delegate.id` equals your own bot viewer id: it is your own earlier claim, not a
+   stale foreign one, so keep it, post nothing, and go straight to the approval
+   position. An issue whose newest proof pack has no valid approval newer than it is
+   WAITING, not work: post nothing, keep your claim, and move to the next candidate in
+   queue order. Stop the tick after the first issue that needed an action, or with
+   "Factory queue: nothing awaiting integration" when every candidate is waiting.
+   **Slack-less pack refresh:** if the newest proof pack disclosed `Slack lane
+   unavailable` and the Slack lane is available now (bot token and approval policy
+   present), produce ONE fresh proof pack for that issue (rebase, gates, Slack
+   approval message); the staleness guard then voids approvals older than the new
+   pack.
 
 2. **Claim it.** Run `linear_bot.py claim <ID>`. It sets the issue's **delegate** to
    the bot viewer (`issueUpdate` with `delegateId`) while keeping state `Approved`

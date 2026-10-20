@@ -109,7 +109,7 @@ class GatekeeperTests(unittest.TestCase):
 
     def baseline(self):
         self.write(self.state, {"lanes": {}, "fingerprints": {
-            lane: g.lane_fingerprint(self.issues[state]) for lane, (state, _) in g.DEFAULT_JOB_MAP.items()
+            lane: g.lane_fingerprint(self.issues[state]) for lane, (state, *_) in g.DEFAULT_JOB_MAP.items()
         }, "approval_dispatched": {}})
 
     def confirm(self):
@@ -319,7 +319,7 @@ class GatekeeperTests(unittest.TestCase):
         for order in itertools.permutations(g.DEFAULT_JOB_MAP):
             for rejected_lane in g.DEFAULT_JOB_MAP:
                 with self.subTest(order=order, rejected_lane=rejected_lane):
-                    self.issues = {state: [issue(state=state)] for state, _ in g.DEFAULT_JOB_MAP.values()}
+                    self.issues = {state: [issue(state=state)] for state, *_ in g.DEFAULT_JOB_MAP.values()}
                     self.baseline()
                     # Earlier successful build/review probes would dispatch if
                     # the implementation did not wait for the later 401.
@@ -340,7 +340,8 @@ class GatekeeperTests(unittest.TestCase):
                         self.assertIn(f"{lane}: linear-auth-failed (401) -> skipped", out)
                     self.assertIn("integrate: linear-auth-failed (401) -> dispatched(pid=1234) for re-mint", out)
                     self.spawn.assert_called_once()
-                    dispatch.assert_called_once_with(g.DEFAULT_JOB_MAP["integrate"][1], "integrate", False, ["fake-noop"])
+                    dispatch.assert_called_once_with(g.DEFAULT_JOB_MAP["integrate"][1], "integrate", False,
+                                                     ["fake-noop"], "integrator")
                     state = json.loads(self.state.read_text())
                     self.assertEqual(set(state["lanes"]), {"integrate"})
                     self.assertEqual(state["fingerprints"], {})
@@ -348,6 +349,29 @@ class GatekeeperTests(unittest.TestCase):
                     self.assertNotIn("FAIL-OPEN", out)
                     self.assertNotIn(LINEAR, out)
                     self.assertFalse(any("slack.com" in r.full_url for r in self.requests))
+
+    def test_two_phase_dispatch_preserves_each_lane_profile(self):
+        i = self.args.index("--exec-override")
+        del self.args[i:i + 2]
+        for legacy in (False, True):
+            for order in itertools.permutations(g.DEFAULT_JOB_MAP):
+                for rejected in (False, True):
+                    with self.subTest(legacy=legacy, order=order, rejected=rejected):
+                        mapping = {lane: g.DEFAULT_JOB_MAP[lane][:2] if legacy else g.DEFAULT_JOB_MAP[lane]
+                                   for lane in order}
+                        self.issues = {state: [issue(state=state)] for state, *_ in mapping.values()}
+                        self.write(self.state, {})
+                        self.linear_error = (urllib.error.HTTPError(
+                            "https://api.linear.app/graphql", 401, LINEAR, {}, None) if rejected else None)
+                        with patch.object(g, "hermes_cli", return_value=["hermes"]):
+                            self.tick("--job-map", json.dumps(mapping))
+                        expected = []
+                        for lane, entry in mapping.items():
+                            if rejected and lane != "integrate":
+                                continue
+                            profile = [] if legacy else ["-p", entry[2]]
+                            expected.append(["hermes", *profile, "cron", "run", entry[1]])
+                        self.assertEqual([call.args[0] for call in self.spawn.call_args_list], expected)
 
     def test_linear_401_on_later_page_vetoes_earlier_success(self):
         self.issues["In Review"] = [issue(f"WD-{n}", "In Review") for n in range(101)]
@@ -449,6 +473,7 @@ class GatekeeperTests(unittest.TestCase):
         self.with_pack()
         self.issues["Todo"] = [issue()]
         self.slack_error = urllib.error.HTTPError("https://slack.com/api/reactions.get", 401, SLACK, {}, None)
+        self.addCleanup(self.slack_error.close)
         out = self.tick()
         self.assertIn("integrate: slack-check-failed (HTTPError)", out)
         self.assertIn("build: changed -> dispatched", out)
@@ -564,6 +589,45 @@ class GatekeeperTests(unittest.TestCase):
                 params = g.urllib.parse.parse_qs(g.urllib.parse.urlparse(request.full_url).query)
                 self.assertEqual(params["timestamp"], ["1789819979.335359"])
                 self.assertEqual(params["full"], ["true"])
+
+    def test_default_lanes_run_as_exec_team_profiles(self):
+        profiles = {lane: g.lane_entry(entry)[2] for lane, entry in g.DEFAULT_JOB_MAP.items()}
+        self.assertEqual(profiles, {"build": "builder", "review": "reviewer", "integrate": "integrator"})
+
+    def test_dispatch_targets_profile(self):
+        with patch.object(g, "hermes_cli", return_value=["hermes"]):
+            g.dispatch("job123", "build", False, None, "builder")
+            self.assertEqual(self.spawn.call_args[0][0], ["hermes", "-p", "builder", "cron", "run", "job123"])
+            g.dispatch("job123", "build", False, None, None)
+            self.assertEqual(self.spawn.call_args[0][0], ["hermes", "cron", "run", "job123"])
+
+    def test_profile_jobs_path_and_legacy_entry(self):
+        self.assertEqual(g.profile_jobs_path(str(self.root), "reviewer"),
+                         os.path.join(str(self.root), "profiles", "reviewer", "cron", "jobs.json"))
+        self.assertEqual(g.profile_jobs_path(str(self.root), None), os.path.join(str(self.root), "cron", "jobs.json"))
+        self.assertEqual(g.lane_entry(["Todo", "abc"]), ("Todo", "abc", None))
+        for bad in (["Todo", "abc", "../x"], ["Todo", "abc", "A B"], ["Todo"], ["Todo", "abc", "p", "extra"]):
+            with self.assertRaises(ValueError):
+                g.lane_entry(bad)
+
+    def test_last_run_read_from_lane_profile(self):
+        args = [a for a in self.args]
+        i = args.index("--jobs-path"); del args[i:i + 2]
+        self.args = args
+        for lane, entry in g.DEFAULT_JOB_MAP.items():
+            state, job_id, profile = g.lane_entry(entry)
+            path = self.root / "profiles" / profile / "cron" / "jobs.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.write(path, {"jobs": [{"id": job_id, "last_run_at": "2026-09-19T10:00:00Z"}]})
+        out = self.tick()
+        self.assertIn("build: no-baseline -> dispatched(pid=1234)", out)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state["lanes"]["build"]["job_last_run_at"], "2026-09-19T10:00:00Z")
+
+    def test_bad_profile_in_job_map_is_a_lane_error(self):
+        out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
+        self.assertIn("build: LANE-ERROR (", out)
+        self.spawn.assert_not_called()
 
 
 if __name__ == "__main__":
