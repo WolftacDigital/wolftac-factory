@@ -33,6 +33,17 @@ default branch — nothing less.
   Never post a factory message through the human's Slack identity. Missing,
   invalid, or expired bot token → post no Slack message, disclose the unavailable
   Slack lane in the proof pack, and use only the typed-comment gate for that pack.
+- **Slack posting encoding.** Never pass Slack message text as a command-line argument
+  (`curl --data-urlencode 'text=...'`, `-d`, or PowerShell argv): on Windows, non-ASCII
+   characters in argv are re-encoded through the legacy code page, Slack receives
+  invalid UTF-8, and characters such as an em dash arrive as `BAD+97` (2026-10-20,
+  WD-347). Write the JSON payload (`channel`, `text`, `username`, `icon_emoji`, and
+  `thread_ts` for replies) to a temporary file as UTF-8 without a BOM, post it with
+  `curl --data-binary @<file>` and header `Content-Type: application/json;
+  charset=utf-8`, then delete the file. Keep factory Slack text ASCII anyway: use `-`
+  for dashes. Check the returned `message.text`; if it differs from what you sent,
+  delete that post with `chat.delete` (same bot token) before posting the corrected
+  one, so only one approval message exists for the pack.
 - **Approvals must be provably human:** workers connect to Linear through the
   dedicated factory bot identity; humans approve from their own accounts. Fetch your
   own Linear identity (`viewer`) and require that the approval's author id differs
