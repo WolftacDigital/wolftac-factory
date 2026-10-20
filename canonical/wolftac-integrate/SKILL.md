@@ -159,6 +159,19 @@ every task" rule):
   clear or replace the stale delegate, and keep the issue in `Approved`. ANY comment
   younger than 4 hours makes the issue UNTOUCHABLE. This sweep is the only comment
   you post during pickup; during a claim-race back off you post NOTHING.
+
+  **Own claims and waiting issues (WD-371).** Never sweep a delegate claim whose
+  `delegate.id` equals your own bot viewer id: it is your own earlier claim, not a
+  stale foreign one, so keep it, post nothing, and go straight to the approval
+  position. An issue whose newest proof pack has no valid approval newer than it is
+  WAITING, not work: post nothing, keep your claim, and move to the next candidate in
+  queue order. Stop the tick after the first issue that needed an action, or with
+  "Factory queue: nothing awaiting integration" when every candidate is waiting.
+  **Slack-less pack refresh:** if the newest proof pack disclosed `Slack lane
+  unavailable` and the Slack lane is available now (bot token and approval policy
+  present), produce ONE fresh proof pack for that issue (rebase, gates, Slack approval
+  message); the staleness guard then voids approvals older than the new pack.
+
 - A human **assignee is NOT a worker claim.** Reviewed issues routinely carry one
   (often the workspace owner), and the NEEDS-HUMAN park assigns one deliberately.
   Never sweep it, never clear it, and never read it as a competing claim — worker
