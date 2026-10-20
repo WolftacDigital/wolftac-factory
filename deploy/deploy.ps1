@@ -4,20 +4,32 @@ Wolftac Factory deploy/drift/package tool.
   pwsh deploy\deploy.ps1 -Check           # diff deployed copies and validate cross-port invariants
   pwsh deploy\deploy.ps1 -Deploy          # copy repo -> agent locations (LF-normalized), rebuild Desktop zips;
                                           #   drifted (live-edited) targets are SKIPPED with a warning, exit 1
-  pwsh deploy\deploy.ps1 -Deploy -Force   # overwrite drifted targets too
+  pwsh deploy\deploy.ps1 -Deploy -Force -Only <scope>
+                                          # overwrite drifted targets, but only within <scope>.
+                                          #   Unscoped -Force is REFUSED while drift exists (WD-347).
+  pwsh deploy\deploy.ps1 -Reconcile       # pull DEPLOYED copies back into the repo working tree
+                                          #   (LF-normalized) so `git diff` is the review surface
   pwsh deploy\deploy.ps1 -Package  # zip the whole repo (minus git/temp/package artifacts) for handoff as plain files
+
+  -Only <substring> scopes -Check, -Deploy, and -Reconcile to pairs whose repo-relative
+  source path contains <substring>, case-insensitively. Supplying -Only always scopes:
+  a value matching no pair exits non-zero and lists the available scopes, so a typo
+  never reads as a clean run and never widens to every pair.
 
 The repo is the source of truth. Files are written with LF line endings — CRLF in a
 skill's YAML frontmatter silently breaks skill discovery on Linux (WSL / Hermes).
 If -Check reports drift and the DEPLOYED copy is the improvement (e.g. Hermes /learn
-edited a skill in place), copy it back into the repo and commit; otherwise -Deploy
-overwrites the target with the repo version.
+edited a skill in place), run -Reconcile to copy it back into the repo working tree and
+commit what belongs; otherwise -Deploy overwrites the target with the repo version.
+-Reconcile never commits, branches, or pushes: it leaves the changes in the working tree
+so `git diff` is the review surface and `git checkout --` is the undo.
 
 Targets listed in deploy\junctions.json that are live directory junctions into this
 repo are neither checked nor written: repo and deployed are one set of bytes. See
 docs\hermes-skill-junctions.md.
 #>
-param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force)
+param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force,
+      [switch]$Reconcile, [string]$Only)
 
 $Repo = Split-Path $PSScriptRoot -Parent
 $Pairs = @(
@@ -199,6 +211,54 @@ function Test-UnderJunction([string]$Path) {
     return $false
 }
 
+# ── Scope filter (-Only, WD-347) ──────────────────────────────────────────────
+# Matches the pair's repo-relative SOURCE path, which encodes both the surface and
+# the skill (ports\hermes\wolftac-build\SKILL.md), so one flag scopes either way.
+# Ordinal substring rather than -like: an operator scope containing [ or * would
+# otherwise be silently reinterpreted as a wildcard pattern.
+function Test-ScopeMatch([string]$Src, [string]$Scope) {
+    return $Src.IndexOf($Scope, [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Get-AvailableScopes($pairs) {
+    $set = New-Object 'System.Collections.Generic.SortedSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $pairs) {
+        foreach ($seg in ($p.Src -split '[\\/]')) {
+            if ($seg -and $seg -notmatch '\.[A-Za-z0-9]+$') { [void]$set.Add($seg) }
+        }
+    }
+    return $set
+}
+
+# An explicitly supplied -Only always activates scoping, even when the value is
+# empty or whitespace. Deciding scope by IsNullOrWhiteSpace let `-Only '   '`
+# silently fall through to the unscoped path and operate on every pair, which is
+# the broad-operation failure AC-9 exists to prevent. An explicit scope that
+# matches nothing must take the NO-MATCH exit, never widen.
+$ScopeFilterActive = $PSBoundParameters.ContainsKey('Only')
+if ($ScopeFilterActive) {
+    # An empty or whitespace-only scope names no pair. Ordinal IndexOf treats ''
+    # as a substring of every path, so matching it directly would turn `-Only ''`
+    # into a wildcard selecting all pairs -- and, worse, satisfy the scoped-force
+    # guard. Resolve it to an explicit zero match instead.
+    $scoped = if ([string]::IsNullOrWhiteSpace($Only)) {
+        @()
+    } else {
+        @($Pairs | Where-Object { Test-ScopeMatch $_.Src $Only })
+    }
+    if ($scoped.Count -eq 0) {
+        # A zero-match scope must never read as success. Silently matching nothing
+        # would make `-Deploy -Force -Only typo` look like a clean run while shipping
+        # nothing at all — the exact failure this guard exists to prevent.
+        Write-Output "NO-MATCH -Only '$Only' matched none of the $($Pairs.Count) deploy pairs. Nothing was checked, written, or reconciled."
+        Write-Output "Available scopes:"
+        foreach ($sc in (Get-AvailableScopes $Pairs)) { Write-Output "  $sc" }
+        exit 2
+    }
+    Write-Output "SCOPED   -Only '$Only' -> $($scoped.Count) of $($Pairs.Count) pair(s)."
+    $Pairs = $scoped
+}
+
 # Read a file and return its content with LF line endings (no trailing-CR).
 function Get-LfText($Path) {
     $raw = [IO.File]::ReadAllText($Path)
@@ -242,6 +302,26 @@ if ($Check) {
 }
 
 if ($Deploy) {
+    # Unscoped -Force is refused while drift exists (WD-347). The check is a PRE-PASS:
+    # it must complete before any write, so a refusal leaves the tree byte-identical
+    # rather than half-clobbered. Runs only on the -Force-without-Only path, so plain
+    # -Deploy pays no extra hashing and its behaviour is provably unchanged.
+    if ($Force -and -not $ScopeFilterActive) {
+        $drifted = @()
+        foreach ($p in $Pairs) {
+            if (Test-UnderJunction $p.Dst) { continue }
+            $dstHash = Get-LfHash $p.Dst
+            if ($null -ne $dstHash -and (Get-LfHash (Join-Path $Repo $p.Src)) -ne $dstHash) { $drifted += $p }
+        }
+        if ($drifted.Count -gt 0) {
+            Write-Output "REFUSED: -Force without -Only would overwrite $($drifted.Count) drifted target(s):"
+            foreach ($p in $drifted) { Write-Output "  would-clobber $($p.Dst)" }
+            Write-Output "-Force must state its scope. Re-run as: -Deploy -Force -Only <substring>"
+            Write-Output "Or run -Reconcile first to pull those live edits into the repo and review them with git diff."
+            Write-Output "No file was written."
+            exit 2
+        }
+    }
     $enc = New-Object System.Text.UTF8Encoding($false)
     $skipped = 0
     $forced = 0
@@ -299,6 +379,69 @@ if ($Deploy) {
     exit 0
 }
 
+if ($Reconcile) {
+    # Copies the DEPLOYED bytes over the repo copy, LF-normalized, and stops there.
+    # No commit, no branch, no push (NG-1) and no content merging (NG-2): deciding
+    # what to keep is a human's call, made against `git diff`.
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    $changed = 0
+    $failed = 0
+    $junctioned = 0
+    foreach ($p in $Pairs) {
+        # A junctioned target IS the repo file; there is nothing to copy back.
+        if (Test-UnderJunction $p.Dst) { $junctioned++; continue }
+        $repoPath = Join-Path $Repo $p.Src
+        $dstHash = Get-LfHash $p.Dst
+        if ($null -eq $dstHash) {
+            Write-Output "UNREADABLE $($p.Dst) (no deployed copy to reconcile from; repo file left untouched)"
+            $failed++
+            continue
+        }
+        if ((Get-LfHash $repoPath) -eq $dstHash) { continue }
+        $text = $null
+        try { $text = Get-LfText $p.Dst } catch {
+            Write-Output "UNREADABLE $($p.Dst) ($($_.Exception.Message)); repo file left untouched"
+            $failed++
+            continue
+        }
+        # Belt and braces for AC-8: never let a partial or failed read land in the
+        # repo as a truncated/empty file. ReadAllText either returns everything or
+        # throws, so a non-empty file yielding empty text means something is wrong.
+        if ([string]::IsNullOrEmpty($text)) {
+            # Empty is never reconcilable content. A zero-byte deployed copy is the
+            # signature of an interrupted write or a truncated sync, and copying it
+            # over a populated repo file is the data loss AC-8 forbids -- so refuse
+            # regardless of whether the source is 0 bytes or read back empty.
+            $why = if ((Get-Item -LiteralPath $p.Dst).Length -gt 0) {
+                "read returned empty for a non-empty file"
+            } else {
+                "deployed copy is empty (0 bytes); refusing to truncate the repo file"
+            }
+            Write-Output "UNREADABLE $($p.Dst) ($why); repo file left untouched"
+            $failed++
+            continue
+        }
+        [IO.File]::WriteAllText($repoPath, $text, $enc)
+        Write-Output "reconciled $($p.Src)  <- $($p.Dst)"
+        $changed++
+    }
+    if ($junctioned -gt 0) {
+        Write-Output "JUNCTION-NOOP $junctioned file(s) across $($JunctionedRoots.Count) linked skill dir(s) - single copy, already the repo, nothing to reconcile."
+    }
+    if ($changed -eq 0 -and $failed -eq 0) {
+        Write-Output "Nothing to reconcile: all $($Pairs.Count - $junctioned) copy-deployed file(s) already match the repo. No file was written."
+        exit 0
+    }
+    if ($changed -gt 0) {
+        Write-Output "Reconciled $changed file(s) into the repo working tree. Review with 'git diff', keep what belongs, and 'git checkout -- <path>' to discard the rest. Nothing was committed."
+    }
+    if ($failed -gt 0) {
+        Write-Output "$failed target(s) could not be read and were skipped; no partial content was written for them."
+        exit 1
+    }
+    exit 0
+}
+
 if ($Package) {
     $out = "$env:USERPROFILE\Downloads\wolftac-factory-package.zip"
     if (Test-Path $out) { Remove-Item -Force $out }
@@ -316,4 +459,5 @@ if ($Package) {
     exit 0
 }
 
-Write-Output "Usage: deploy.ps1 -Check | -Deploy [-Force] | -Package"
+Write-Output "Usage: deploy.ps1 -Check | -Deploy [-Force] | -Reconcile | -Package  [-Only <substring>]"
+Write-Output "       -Force requires -Only while drift exists; -Reconcile pulls deployed edits back into the repo."
