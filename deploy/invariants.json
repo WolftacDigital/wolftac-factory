@@ -412,5 +412,17 @@
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
       { "file": "ports/codex/wolftac-integrate.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" }
     ]
+  },
+  {
+    "id": "integrate-no-self-sweep",
+    "description": "Integrate never sweeps its own claim, skips waiting issues, and refreshes Slack-less proof packs (WD-371).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" }
+    ]
   }
 ]
