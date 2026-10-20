@@ -42,11 +42,15 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+# lane -> (Linear state, cron job id, Hermes profile). Each stage runs as its own
+# exec-team bot profile: Mason (builder), Quinn (reviewer), Harper (integrator).
+# A 2-item entry (no profile) means the default profile, for older --job-map overrides.
 DEFAULT_JOB_MAP = {
-    "build": ("Todo", "a1ca59d16be5"),
-    "review": ("In Review", "a8004c5f3bab"),
-    "integrate": ("Approved", "a5d6e054f3fa"),
+    "build": ("Todo", "9b7b5987bcd6", "builder"),
+    "review": ("In Review", "8e5c37a23b91", "reviewer"),
+    "integrate": ("Approved", "4e7a4d9c5fa4", "integrator"),
 }
+PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
 
 # Live-verified direction: inverseRelations(type=blocks).issue is the blocker;
@@ -155,6 +159,24 @@ def save_state(path: str, state: dict) -> None:
             json.dump(state, fh, indent=2)
     except OSError:
         pass  # state is an optimisation; losing it degrades to fail-open
+
+
+def lane_entry(entry):
+    """Normalise a job-map entry to (state, job_id, profile-or-None); reject unsafe profile names."""
+    if not isinstance(entry, (list, tuple)) or len(entry) not in (2, 3):
+        raise ValueError("job-map entry must be [state, jobId] or [state, jobId, profile]")
+    state, job_id = entry[0], entry[1]
+    profile = entry[2] if len(entry) == 3 else None
+    if profile is not None and not (isinstance(profile, str) and PROFILE_RE.fullmatch(profile)):
+        raise ValueError("invalid profile name in job map")
+    return state, job_id, profile
+
+
+def profile_jobs_path(home: str, profile) -> str:
+    """The cron jobs.json that records last_run_at for a lane's job."""
+    if profile:
+        return os.path.join(home, "profiles", profile, "cron", "jobs.json")
+    return os.path.join(home, "cron", "jobs.json")
 
 
 def job_last_run(jobs_path: str, job_id: str):
@@ -287,11 +309,12 @@ def hermes_cli() -> list[str]:
     return ["hermes"]
 
 
-def dispatch(job_id: str, lane: str, dry_run: bool, exec_override=None) -> str:
+def dispatch(job_id: str, lane: str, dry_run: bool, exec_override=None, profile=None) -> str:
     """Launch DETACHED; the following tick verifies whether a run occurred."""
     if dry_run:
         return "dispatched(dry-run)"
-    cmd = list(exec_override) if exec_override else hermes_cli() + ["cron", "run", job_id]
+    profile_args = ["-p", profile] if profile else []
+    cmd = list(exec_override) if exec_override else hermes_cli() + profile_args + ["cron", "run", job_id]
     log_dir = os.path.join(hermes_home(), "cron", "gatekeeper-logs")
     try:
         os.makedirs(log_dir, exist_ok=True)
@@ -321,7 +344,7 @@ def main() -> int:
     parser.add_argument("--env-path", default=None, help="override .env location (scratch testing)")
     parser.add_argument("--jobs-path", default=None, help="override cron jobs.json (scratch testing)")
     parser.add_argument("--state-path", default=None, help="override state file (scratch testing)")
-    parser.add_argument("--job-map", default=None, help='JSON lane->[state,jobId] override (scratch testing)')
+    parser.add_argument("--job-map", default=None, help='JSON lane->[state,jobId(,profile)] override (scratch testing)')
     parser.add_argument("--exec-override", default=None,
                         help="TEST ONLY: JSON argv list to launch instead of the hermes CLI")
     parser.add_argument("--approval-policy", default=os.path.join(os.path.dirname(__file__), "approval-policy.json"))
@@ -331,7 +354,6 @@ def main() -> int:
     exec_override = json.loads(args.exec_override) if args.exec_override else None
     home = hermes_home()
     env_path = args.env_path or os.path.join(home, ".env")
-    jobs_path = args.jobs_path or os.path.join(home, "cron", "jobs.json")
     state_path = args.state_path or os.path.join(home, "cron", "gatekeeper-state.json")
     state = load_state(state_path)
     lanes_state = state["lanes"]
@@ -345,8 +367,10 @@ def main() -> int:
         fail_open_reason = "env unreadable: " + error_reason(exc)
 
     lines: list[str] = []
-    for lane, (linear_state, job_id) in job_map.items():
+    for lane, entry in job_map.items():
         try:
+            linear_state, job_id, profile = lane_entry(entry)
+            jobs_path = args.jobs_path or profile_jobs_path(home, profile)
             observed_last_run = job_last_run(jobs_path, job_id)
             marker = lanes_state.get(lane)
             if marker:
@@ -398,7 +422,7 @@ def main() -> int:
                             continue
                         reason = f"slack-approval {approval[0]}"
 
-            result = dispatch(job_id, lane, args.dry_run, exec_override)
+            result = dispatch(job_id, lane, args.dry_run, exec_override, profile)
             lines.append(f"{lane}: {reason} -> {result}")
             if not args.dry_run and result.startswith("dispatched(pid="):
                 lanes_state[lane] = {
