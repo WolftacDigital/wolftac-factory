@@ -113,16 +113,18 @@ Two mechanics that will bite if you change this command:
   directory and an unmarked false outage page. Passing a real PowerShell array still
   works when you call the script from a session rather than via `-File`.
 
-The default watches only `%LOCALAPPDATA%\hermes\cron`. The **integrate worker runs in
-its own Hermes profile** with a separate cron directory, so the command above lists
-both — omit the second path and the integrate worker can die unwatched.
+The default watches only `%LOCALAPPDATA%\hermes\cron`. Since 2026-10-19 the integrate
+worker runs there too (default profile), and the isolated `factory-integrate` profile
+(WD-281) is parked with its job disabled, so watching its cron dir would page about a
+job that is meant to be off. If that profile ever runs a live integrate job again, add
+its cron dir back, or the integrate worker can die unwatched.
 
 ### Running without an interactive session
 
 The install command above registers the task as the Windows **SYSTEM** service
 account (`LogonType: ServiceAccount`). That needs an elevated PowerShell, but no
 stored user password, interactive login, or batch-logon grant. SYSTEM has been
-verified on this machine with the installed Microsoft Store PowerShell 7 path.
+verified on this machine with the machine-wide PowerShell 7 MSI path (2026-10-19).
 
 Confirm the persisted principal and cadence:
 
