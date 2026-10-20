@@ -3,11 +3,13 @@ import contextlib
 import copy
 import importlib.util
 import io
+import itertools
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -312,6 +314,147 @@ class GatekeeperTests(unittest.TestCase):
                 self.assertNotIn(LINEAR, out)
                 self.spawn.assert_called_once()
                 self.assertNotIn("build", json.loads(self.state.read_text())["fingerprints"])
+
+    def test_linear_401_dispatches_only_integrate_in_every_lane_order(self):
+        for order in itertools.permutations(g.DEFAULT_JOB_MAP):
+            for rejected_lane in g.DEFAULT_JOB_MAP:
+                with self.subTest(order=order, rejected_lane=rejected_lane):
+                    self.issues = {state: [issue(state=state)] for state, _ in g.DEFAULT_JOB_MAP.values()}
+                    self.baseline()
+                    # Earlier successful build/review probes would dispatch if
+                    # the implementation did not wait for the later 401.
+                    for state in ("Todo", "In Review"):
+                        self.issues[state][0]["description"] = "changed after baseline"
+                    mapping = {lane: g.DEFAULT_JOB_MAP[lane] for lane in order}
+                    rejected_state = mapping[rejected_lane][0]
+
+                    def opener(request, timeout):
+                        if request.data and json.loads(request.data)["variables"].get("state") == rejected_state:
+                            raise urllib.error.HTTPError(request.full_url, 401, LINEAR, {}, None)
+                        return self.open(request, timeout)
+
+                    with patch.object(g.urllib.request, "urlopen", side_effect=opener), \
+                            patch.object(g, "dispatch", wraps=g.dispatch) as dispatch:
+                        out = self.tick("--job-map", json.dumps(mapping))
+                    for lane in ("build", "review"):
+                        self.assertIn(f"{lane}: linear-auth-failed (401) -> skipped", out)
+                    self.assertIn("integrate: linear-auth-failed (401) -> dispatched(pid=1234) for re-mint", out)
+                    self.spawn.assert_called_once()
+                    dispatch.assert_called_once_with(g.DEFAULT_JOB_MAP["integrate"][1], "integrate", False, ["fake-noop"])
+                    state = json.loads(self.state.read_text())
+                    self.assertEqual(set(state["lanes"]), {"integrate"})
+                    self.assertEqual(state["fingerprints"], {})
+                    self.assertEqual(state["approval_dispatched"], {})
+                    self.assertNotIn("FAIL-OPEN", out)
+                    self.assertNotIn(LINEAR, out)
+                    self.assertFalse(any("slack.com" in r.full_url for r in self.requests))
+
+    def test_linear_401_on_later_page_vetoes_earlier_success(self):
+        self.issues["In Review"] = [issue(f"WD-{n}", "In Review") for n in range(101)]
+
+        def opener(request, timeout):
+            variables = json.loads(request.data)["variables"]
+            if variables.get("state") == "In Review" and variables.get("after") == "100":
+                raise urllib.error.HTTPError(request.full_url, 401, LINEAR, {}, None)
+            return self.open(request, timeout)
+
+        with patch.object(g.urllib.request, "urlopen", side_effect=opener):
+            out = self.tick()
+        self.assertIn("build: linear-auth-failed (401) -> skipped", out)
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched", out)
+        self.spawn.assert_called_once()
+
+    def test_linear_401_keeps_integrate_inflight_guard(self):
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        marker = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        state["lanes"]["integrate"] = marker
+        self.write(self.state, state)
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        out = self.tick()
+        self.assertIn("integrate: in-flight (skip)", out)
+        self.assertIn("build: linear-auth-failed (401) -> skipped", out)
+        self.assertIn("review: linear-auth-failed (401) -> skipped", out)
+        self.spawn.assert_not_called()
+        after = json.loads(self.state.read_text())
+        self.assertEqual(after["lanes"]["integrate"], marker)
+        self.assertEqual(after["fingerprints"], {"integrate": state["fingerprints"]["integrate"]})
+        self.assertFalse(any(json.loads(r.data)["variables"].get("state") == "Approved" for r in self.requests))
+
+    def test_other_probe_failures_keep_fail_open_for_each_ready_lane(self):
+        failures = [urllib.error.URLError(LINEAR), TimeoutError(LINEAR),
+                    urllib.error.HTTPError("https://api.linear.app/graphql", 500, LINEAR, {}, None), "invalid-json"]
+        for failure in failures:
+            for inflight in (False, True):
+                with self.subTest(failure=type(failure).__name__, inflight=inflight):
+                    self.baseline()
+                    if inflight:
+                        state = json.loads(self.state.read_text())
+                        state["lanes"]["integrate"] = {
+                            "dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+                        self.write(self.state, state)
+
+                    def opener(request, timeout):
+                        if isinstance(failure, Exception):
+                            raise failure
+                        return io.StringIO(LINEAR)
+
+                    with patch.object(g.urllib.request, "urlopen", side_effect=opener):
+                        out = self.tick()
+                    expected_reason = type(failure).__name__ if isinstance(failure, Exception) else "JSONDecodeError"
+                    for lane in ("build", "review") if inflight else g.DEFAULT_JOB_MAP:
+                        self.assertIn(f"{lane}: probe failed ({expected_reason}) -> FAIL-OPEN -> dispatched(pid=1234)", out)
+                    self.assertEqual(self.spawn.call_count, 2 if inflight else 3)
+                    if inflight:
+                        self.assertIn("integrate: in-flight (skip)", out)
+                    self.assertNotIn("linear-auth-failed", out)
+                    self.assertNotIn(LINEAR, out)
+
+    def test_linear_401_dry_run_preserves_all_files(self):
+        self.baseline()
+        before = {p: p.read_bytes() for p in (self.env, self.jobs, self.state)}
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        out = self.tick("--dry-run")
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched(dry-run) for re-mint", out)
+        self.spawn.assert_not_called()
+        for path, contents in before.items():
+            self.assertEqual(path.read_bytes(), contents)
+        self.assertFalse((self.root / "cron/gatekeeper-logs").exists())
+
+    def test_linear_401_recovery_rechecks_skipped_lanes(self):
+        self.issues["In Review"] = [issue(state="In Review")]
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        self.tick()
+        self.confirm()
+        self.linear_error = None
+        out = self.tick()
+        self.assertIn("integrate: confirmed-ran", out)
+        for lane in ("build", "review"):
+            self.assertIn(f"{lane}: no-baseline -> dispatched", out)
+        self.assertEqual(self.spawn.call_count, 2)
+
+    def test_linear_401_failed_spawn_is_not_recorded_or_secret_echoed(self):
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        self.spawn.side_effect = OSError(LINEAR)
+        out = self.tick()
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatch-failed(OSError)", out)
+        self.assertNotIn("for re-mint", out)
+        self.assertNotIn(LINEAR, out)
+        self.assertEqual(json.loads(self.state.read_text())["lanes"], {})
+        self.spawn.assert_called_once()
+
+    def test_slack_401_does_not_become_linear_auth_failure(self):
+        self.with_pack()
+        self.issues["Todo"] = [issue()]
+        self.slack_error = urllib.error.HTTPError("https://slack.com/api/reactions.get", 401, SLACK, {}, None)
+        out = self.tick()
+        self.assertIn("integrate: slack-check-failed (HTTPError)", out)
+        self.assertIn("build: changed -> dispatched", out)
+        self.assertNotIn("linear-auth-failed", out)
+        self.assertNotIn(SLACK, out)
+        self.spawn.assert_called_once()
 
     def test_inflight_guard_and_ttl_clears_fingerprint(self):
         self.with_pack()

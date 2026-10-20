@@ -18,8 +18,10 @@ Design constraints learned the hard way (WD-357, WD-380):
   worker run must remain visible. Keep it outside the popped in-flight marker.
   Exclude ``updatedAt``, ``delegate`` and ``SWEPT:`` comment churn so silent
   integrate runs settle without duplicating worker skip rules here.
-* Linear/env/probe failures fail OPEN (subject to the in-flight guard). The
-  deliberate exception is Slack: on an otherwise unchanged integrate lane,
+* Linear/env/probe failures fail OPEN (subject to the in-flight guard), except
+  a Linear HTTP 401 anywhere in the tick: skip build/review and dispatch only
+  integrate for re-mint. Probe all ready lanes before dispatching any of them.
+  Slack is also an exception: on an otherwise unchanged integrate lane,
   missing credentials/policy or API failures report ``slack-check-failed`` and
   do NOT dispatch. The safety net and typed approval comments bound the delay.
 * Tokens come from the .env FILE, never the process environment or argv. Never
@@ -38,6 +40,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -345,6 +348,11 @@ def main() -> int:
         fail_open_reason = "env unreadable: " + error_reason(exc)
 
     lines: list[str] = []
+    ready_lanes = {}
+    probes = {}
+    linear_auth_failed = False
+    # The token is shared. Finish all non-in-flight probes before launching
+    # anything, so a later lane's 401 can veto earlier build/review decisions.
     for lane, (linear_state, job_id) in job_map.items():
         try:
             observed_last_run = job_last_run(jobs_path, job_id)
@@ -366,16 +374,39 @@ def main() -> int:
                     lines.append(f"{lane}: in-flight (skip)")
                     continue
 
-            fingerprint = None
-            approval = None
-            if fail_open_reason is not None:
-                reason = f"FAIL-OPEN ({fail_open_reason})"
-            else:
+            ready_lanes[lane] = (job_id, observed_last_run)
+            if fail_open_reason is None:
                 try:
                     issues = lane_issues(token, linear_state)
-                    fingerprint = lane_fingerprint(issues)
+                    probes[lane] = (issues, lane_fingerprint(issues), None)
                 except Exception as exc:  # noqa: BLE001 — isolate probe failure
-                    reason = f"probe failed ({error_reason(exc)}) -> FAIL-OPEN"
+                    probes[lane] = (None, None, error_reason(exc))
+                    if isinstance(exc, urllib.error.HTTPError):
+                        if exc.code == 401:
+                            linear_auth_failed = True
+                        # Do not retain the response/traceback or let an unclosed
+                        # HTTPError warning echo a remote credential-bearing URL.
+                        exc.close()
+        except Exception as exc:  # noqa: BLE001 — lane isolation
+            ready_lanes.pop(lane, None)
+            lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
+
+    for lane, (job_id, observed_last_run) in ready_lanes.items():
+        try:
+            fingerprint = None
+            approval = None
+            if linear_auth_failed:
+                reason = "linear-auth-failed (401)"
+                if lane != "integrate":
+                    fingerprints.pop(lane, None)
+                    lines.append(f"{lane}: {reason} -> skipped")
+                    continue
+            elif fail_open_reason is not None:
+                reason = f"FAIL-OPEN ({fail_open_reason})"
+            else:
+                issues, fingerprint, probe_error = probes[lane]
+                if probe_error is not None:
+                    reason = f"probe failed ({probe_error}) -> FAIL-OPEN"
                 else:
                     if not issues:
                         fingerprints.pop(lane, None)
@@ -399,7 +430,8 @@ def main() -> int:
                         reason = f"slack-approval {approval[0]}"
 
             result = dispatch(job_id, lane, args.dry_run, exec_override)
-            lines.append(f"{lane}: {reason} -> {result}")
+            suffix = " for re-mint" if linear_auth_failed and result.startswith("dispatched(") else ""
+            lines.append(f"{lane}: {reason} -> {result}{suffix}")
             if not args.dry_run and result.startswith("dispatched(pid="):
                 lanes_state[lane] = {
                     "dispatched_at": now_utc().isoformat(),
