@@ -83,6 +83,7 @@ inside the MCP terminal server's filesystem, which is NOT the uploaded bundle. S
 invoke the copy `deploy.ps1` installs on that machine:
 
 ```bash
+python "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" remint
 python "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" viewer
 python "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" queue --state Approved [--lane crm]
 python "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" issue WD-123
@@ -140,6 +141,20 @@ every task" rule):
   is the spec.
 - Create and remove worktrees only as this skill describes, and never merge locally or
   offer merge options outside this skill's own approval gate.
+
+## Preflight
+
+**TOKEN-RENEWAL-PREFLIGHT:** Run `linear_bot.py remint`, then
+`linear_bot.py viewer`, using the literal helper path in Bot Linear access.
+`remint` checks expiry and renews only when missing/invalid or within five days;
+`viewer` also recovers once from HTTP 401. A new token is persisted atomically
+with `LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` only after its viewer matches the
+non-overridable pinned bot id. Either command failing means fail closed: claim
+nothing, post nothing, stop. Never copy credentials into a command or output.
+Use `--no-mint` when credential writes are forbidden; it disables renewal and
+keeps a rejected token failure read-only. `viewer` reports `token_source` and
+`token_path` (path only). Missing app credentials exit 2; OAuth/network failure
+exits 1; viewer mismatch exits 4. Failed renewal leaves the old file untouched.
 
 ## Procedure
 

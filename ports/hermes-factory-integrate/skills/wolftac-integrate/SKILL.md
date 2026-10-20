@@ -83,6 +83,7 @@ single permission rule cover every call; a variable form re-prompts on each one.
 Hermes' `terminal` is Git Bash, so the POSIX form of `%LOCALAPPDATA%` is used:
 
 ```bash
+python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" remint
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" viewer
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" queue --state Approved [--lane crm]
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" issue WD-123
@@ -129,11 +130,24 @@ executing runtime IS this profile, scans every `*.yaml`/`*.yml` directly under t
 profile root and fails closed on ANY `linear` or `composio` occurrence, and
 confirms `viewer` resolves to the pinned factory bot id. Any non-zero exit -> stop
 immediately: claim nothing, post nothing, report the precondition.
-Exit codes: 0 ok - 2 missing/unmintable credentials - 3 not the isolated runtime,
+Exit codes: 0 ok - 1 OAuth/network/persistence failure - 2 missing credentials -
+3 not the isolated runtime,
 or a Linear-capable transport wired in the profile - 4 viewer identity mismatch -
 5 profile root/env unreadable. Run by hand from an operator shell this correctly
 exits 3 - that IS the gate working; the green path is observed in the worker's own
 cron output, not from a human terminal.
+
+**TOKEN-RENEWAL-PREFLIGHT:** Run `linear_bot.py remint`, then
+`linear_bot.py viewer`, using the literal helper path in Bot Linear access.
+`remint` checks expiry and renews only when missing/invalid or within five days;
+`viewer` also recovers once from HTTP 401. A new token is persisted atomically
+with `LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` only after its viewer matches the
+non-overridable pinned bot id. Either command failing means fail closed: claim
+nothing, post nothing, stop. Never copy credentials into a command or output.
+Use `--no-mint` when credential writes are forbidden; it disables renewal and
+keeps a rejected token failure read-only. `viewer` reports `token_source` and
+`token_path` (path only). Missing app credentials exit 2; OAuth/network failure
+exits 1; viewer mismatch exits 4. Failed renewal leaves the old file untouched.
 
 **2. Identity gate.** Then run `linear_bot.py viewer` before any queue read. Do not
 load or use this profile's default Linear MCP/toolset. Every queue read,
