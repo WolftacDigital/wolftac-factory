@@ -46,6 +46,21 @@ Before claiming an issue, estimate the change surface and the remaining executio
 
 For broad multi-file work, follow `references/build-execution-budget-and-batching.md`: batch independent reads, use coherent multi-file edits, never edit the same file concurrently, and run the cheapest compile/type check after each logical batch.
 
+## Autonomous-run override
+
+This skill is the complete process for this stage and is built for unattended, looped
+runs. It takes precedence over any general-purpose workflow skills or plugins loaded in
+the session (for example superpowers' brainstorming, writing-plans, executing-plans,
+using-git-worktrees, finishing-a-development-branch, or a "check for a skill before
+every task" rule):
+- Do not invoke those process skills during a run of this stage.
+- Never stop mid-run to ask a question or wait for confirmation; use only the stop,
+  hand-off, and reporting paths this skill defines.
+- Never write plan, spec, or design documents into the target repo; the Linear issue
+  is the spec.
+- Create and remove worktrees only as this skill describes, and never merge locally or
+  offer merge options outside this skill's own approval gate.
+
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
@@ -188,6 +203,13 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    issue scope with `git diff --cached origin/main` before commit and the final diff
    against `origin/main` afterward. See
    `references/existing-feature-branch-main-integration.md`.
+
+   If GitHub fetch/push stalls under Windows `credential.helper=helper-selector`
+   while `gh api` succeeds, retry with command-scoped authentication:
+   `GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' -C '<native-repo-path>' <operation>`.
+   Clear the inherited helper for that command only; do not edit persistent Git
+   config, expose tokens, or restart services. Still verify fetched refs and pushed
+   heads normally; a successful `gh api` read alone does not prove a fetch or push.
 
    For WSL-hosted Next.js/WebGL work, also use
    `references/wsl-webgl-build-pitfalls.md` for line endings, React state/fallback

@@ -43,6 +43,17 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
   the bot token is absent, invalid, or expired, post no Slack message, disclose
   the unavailable Slack lane in the proof pack, and use only the typed-comment
   gate for that pack.
+- **Slack posting encoding.** Never pass Slack message text as a command-line argument
+  (`curl --data-urlencode 'text=...'`, `-d`, or PowerShell argv): on Windows, non-ASCII
+   characters in argv are re-encoded through the legacy code page, Slack receives
+  invalid UTF-8, and characters such as an em dash arrive as `BAD+97` (2026-10-20,
+  WD-347). Write the JSON payload (`channel`, `text`, `username`, `icon_emoji`, and
+  `thread_ts` for replies) to a temporary file as UTF-8 without a BOM, post it with
+  `curl --data-binary @<file>` and header `Content-Type: application/json;
+  charset=utf-8`, then delete the file. Keep factory Slack text ASCII anyway: use `-`
+  for dashes. Check the returned `message.text`; if it differs from what you sent,
+  delete that post with `chat.delete` (same bot token) before posting the corrected
+  one, so only one approval message exists for the pack.
 - **Workers may not add reactions to factory notification messages.** A worker
   reacting to its own (or any) approval message would blur the human-artifact
   boundary exactly the way a self-authored `APPROVE MERGE` would. Read
@@ -121,6 +132,21 @@ Notes that carry factory semantics:
 - `--body-file -` keeps proof packs off the command line; write the pack to a
   scratch file or pipe it in.
 
+## Autonomous-run override
+
+This skill is the complete process for this stage and is built for unattended, looped
+runs. It takes precedence over any general-purpose workflow skills or plugins loaded in
+the session (for example superpowers' brainstorming, writing-plans, executing-plans,
+using-git-worktrees, finishing-a-development-branch, or a "check for a skill before
+every task" rule):
+- Do not invoke those process skills during a run of this stage.
+- Never stop mid-run to ask a question or wait for confirmation; use only the stop,
+  hand-off, and reporting paths this skill defines.
+- Never write plan, spec, or design documents into the target repo; the Linear issue
+  is the spec.
+- Create and remove worktrees only as this skill describes, and never merge locally or
+  offer merge options outside this skill's own approval gate.
+
 ## Procedure
 
 ### 1. Pick up work
@@ -144,6 +170,19 @@ Notes that carry factory semantics:
   clear or replace the stale delegate, and keep the issue in `Approved`. ANY comment
   younger than 4 hours makes the issue UNTOUCHABLE. This sweep is the only comment
   you post during pickup; during a claim-race back off you post NOTHING.
+
+  **Own claims and waiting issues (WD-371).** Never sweep a delegate claim whose
+  `delegate.id` equals your own bot viewer id: it is your own earlier claim, not a
+  stale foreign one, so keep it, post nothing, and go straight to the approval
+  position. An issue whose newest proof pack has no valid approval newer than it is
+  WAITING, not work: post nothing, keep your claim, and move to the next candidate in
+  queue order. Stop the tick after the first issue that needed an action, or with
+  "Factory queue: nothing awaiting integration" when every candidate is waiting.
+  **Slack-less pack refresh:** if the newest proof pack disclosed `Slack lane
+  unavailable` and the Slack lane is available now (bot token and approval policy
+  present), produce ONE fresh proof pack for that issue (rebase, gates, Slack approval
+  message); the staleness guard then voids approvals older than the new pack.
+
 - A human **assignee is NOT a worker claim.** Reviewed issues routinely carry one
   (often the workspace owner), and the NEEDS-HUMAN park assigns one deliberately.
   Never sweep it, never clear it, and never read it as a competing claim — worker
