@@ -436,5 +436,35 @@
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
       { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" }
     ]
+  },
+  {
+    "id": "integrate-unattended-gate-limits",
+    "description": "Every integrate surface bounds unattended gates, forbids human authentication, and reports unmet preconditions without rework.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      }
+    ]
   }
 ]
