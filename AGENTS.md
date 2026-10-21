@@ -57,15 +57,19 @@ session can review what Codex built.
   SHA, it creates one non-draft GitHub PR and records the URL in the BUILD REPORT.
   Reuse an existing PR for the branch; never create a duplicate. A local-only repo
   records `local-only repo — no PR` and keeps the execution-verified flow.
-- **Linear identities are split:** factory workers connect to Linear through the
-  dedicated factory bot identity; humans comment and approve from their own
-  accounts. The integrate stage refuses any typed approval comment
-  (`APPROVE MERGE` or `APPROVED MERGE`, case-insensitively) authored by the same
-  identity it writes with — until the split exists in a workspace, integrate can
-  prepare proof packs but will never merge. Integrate performs ALL of its Linear
-  I/O with the bot credentials (`LINEAR_FACTORY_BOT_TOKEN`), failing closed when
-  they are missing, and notification lanes (e.g. Telegram) are notify-only: no
-  relay ever posts an approval on the human's behalf.
+- **Linear identities are split by stage:** Build and Review act as the operator
+  through the platform's own Linear toolset (`assignee: me`, verified by
+  read-back) and never use the factory bot credentials. Only Integrate acts as
+  the dedicated factory bot, through `linear_bot.py` and `delegate`. Humans
+  comment and approve from their own accounts. The integrate stage refuses any
+  typed approval comment (`APPROVE MERGE` or `APPROVED MERGE`,
+  case-insensitively) authored by the same identity it writes with — until the
+  split exists in a workspace, integrate can prepare proof packs but will never
+  merge. Integrate performs ALL of its Linear I/O with the bot credentials
+  (`LINEAR_FACTORY_BOT_TOKEN`), failing closed when they are missing; see the
+  claim identity split under Shared safeguards. Notification lanes (e.g.
+  Telegram) are notify-only: no relay ever posts an approval on the human's
+  behalf.
 - **Every report opens with an identity line:** `**Agent:** <platform / model>`
   (e.g. `Codex / gpt-5.6-sol`, `Hermes / gpt-5.6-sol`, `Claude Code / Opus 4.8`). This is how
   the human (and other agents) can tell who did what. Reviewers should prefer
