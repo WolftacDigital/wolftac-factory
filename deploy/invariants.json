@@ -480,5 +480,17 @@
       { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" }
 
     ]
+  },
+  {
+    "id": "integrate-slack-utf8-posting",
+    "description": "Integrate posts Slack JSON from a UTF-8 file, never message text in argv (2026-10-20 BAD+97 incident).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" }
+    ]
   }
 ]
