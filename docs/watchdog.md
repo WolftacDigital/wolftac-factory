@@ -28,6 +28,7 @@ Per cron directory, every run:
 | `enabled-not-paused` | a `Wolftac Factory *` job has `enabled: false` or `paused: true` |
 | `last-status` | a job's `last_status` is `error` |
 | `next-run-fresh` | `next_run_at` is more than `-StaleIntervals` (default 3) scheduling intervals in the past |
+| `recent-failure` | a job's `last_failure.at` is within `-RecentFailureHours` (default 6). Hermes often writes `last_status: ok` on a tick that failed the same way, so `last-status` alone flaps and posts false recoveries |
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
