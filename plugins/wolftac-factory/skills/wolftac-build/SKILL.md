@@ -49,8 +49,32 @@ every task" rule):
    `Todo` issues. Within the rework tier and within the fresh tier, preserve priority
    order (Urgent > High > Medium > Low), oldest first on ties. Exit cleanly when none
    qualify.
-3. Claim by setting `In Progress` and assignee `me`; immediately re-read state and
-   assignee. Back off silently on any race. Read the full spec and every comment; the
+3. Claim.
+   **CLAIM-IDENTITY:** Claim only through this platform's Linear toolset acting
+   as the operator, with `assignee: me`; a Build/Review worker claim lives in
+   `assignee`, never in `delegate`. Before writing, resolve the operator's identity
+   and read the issue's state, assignee and delegate so you know what this run changes.
+   Use this platform's Linear MCP issue-update tool to set state `In Progress` and `assignee: me`.
+   Immediately re-read and verify state `In Progress` AND assignee equals the operator.
+
+   **NO-BOT-TOKEN:** Never read or use `LINEAR_FACTORY_BOT_TOKEN`, hand-roll a
+   Linear GraphQL or HTTP call, import `deploy/factory-gatekeeper.py` or
+   `linear_bot.py` to obtain a credential, or write a helper script that fetches or
+   embeds one. If the platform's Linear write tool is unavailable, stop without
+   claiming and say so in the run output.
+
+   **CLAIM-DID-NOT-TAKE:** Distinguish your own failed claim from a lost race.
+   If your own mutation applied but the read-back assignee is not you (empty, or
+   accompanied by a `delegate` this run set), and no other session won the claim,
+   restore only what this run changed: return state to `Todo` and clear a delegate you set.
+   Preserve pre-existing fields; never clear another worker's delegate. Re-read to
+   verify restoration, post nothing on the issue, stop, and report
+   `CLAIM-DID-NOT-TAKE <ID>` with the failed read-back state, assignee and delegate
+   plus the restoration result. If restoration fails, report that the issue may
+   be stranded; do not silently exit.
+   If another session won the race (another assignee, or state changed away from
+   `In Progress`), back off silently: no comment, no state change, stop this tick.
+   Read the full spec and every comment; the
    newest FAIL report is the rework order.
 4. Validate `Repo:` and that it identifies a git repository. Missing or ambiguous
    repository information is a spec defect: comment `BLOCKED: <question>`, restore
