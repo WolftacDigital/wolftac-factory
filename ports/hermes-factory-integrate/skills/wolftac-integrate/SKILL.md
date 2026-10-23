@@ -94,6 +94,7 @@ single permission rule cover every call; a variable form re-prompts on each one.
 Hermes' `terminal` is Git Bash, so the POSIX form of `%LOCALAPPDATA%` is used:
 
 ```bash
+python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" remint
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" viewer
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" queue --state Approved [--lane crm]
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" issue WD-123
@@ -140,11 +141,24 @@ executing runtime IS this profile, scans every `*.yaml`/`*.yml` directly under t
 profile root and fails closed on ANY `linear` or `composio` occurrence, and
 confirms `viewer` resolves to the pinned factory bot id. Any non-zero exit -> stop
 immediately: claim nothing, post nothing, report the precondition.
-Exit codes: 0 ok - 2 missing/unmintable credentials - 3 not the isolated runtime,
+Exit codes: 0 ok - 1 OAuth/network/persistence failure - 2 missing credentials -
+3 not the isolated runtime,
 or a Linear-capable transport wired in the profile - 4 viewer identity mismatch -
 5 profile root/env unreadable. Run by hand from an operator shell this correctly
 exits 3 - that IS the gate working; the green path is observed in the worker's own
 cron output, not from a human terminal.
+
+**TOKEN-RENEWAL-PREFLIGHT:** Run `linear_bot.py remint`, then
+`linear_bot.py viewer`, using the literal helper path in Bot Linear access.
+`remint` checks expiry and renews only when missing/invalid or within five days;
+`viewer` also recovers once from HTTP 401. A new token is persisted atomically
+with `LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` only after its viewer matches the
+non-overridable pinned bot id. Either command failing means fail closed: claim
+nothing, post nothing, stop. Never copy credentials into a command or output.
+Use `--no-mint` when credential writes are forbidden; it disables renewal and
+keeps a rejected token failure read-only. `viewer` reports `token_source` and
+`token_path` (path only). Missing app credentials exit 2; OAuth/network failure
+exits 1; viewer mismatch exits 4. Failed renewal leaves the old file untouched.
 
 **2. Identity gate.** Then run `linear_bot.py viewer` before any queue read. Do not
 load or use this profile's default Linear MCP/toolset. Every queue read,
@@ -153,6 +167,28 @@ issue/comment read, claim, report, and state transition goes through
 (missing/invalid/expired token, an unsuccessful viewer query, Linear unreachable)
 or repo absent -> fail closed: log the precondition and exit cleanly WITHOUT
 claiming an issue.
+
+**Token-home propagation (WD-547):** After a verified mint and current-home
+persistence, the helper atomically propagates only the token and expiry to existing
+files that already contain the token key. `deploy/token-homes.json` is the registry:
+exactly the default `hermes\.env` and Harper's `hermes\profiles\integrator\.env`,
+relative to `%LOCALAPPDATA%`. Identical `token-homes.json` data ships beside all six
+helper copies; semantic checks enforce parity. App credentials and unrelated lines
+are never copied or changed. Missing, read-only or token-less homes produce a
+path-only `token_home_skipped` warning; current-home success is retained. A warning
+means another consumer may still be broken, not that all homes recovered.
+`LINEAR_FACTORY_TOKEN_HOMES_TEST_JSON` replaces the list with an absolute-path JSON
+array for scratch tests only. Never set it in a live worker; invalid test input
+never falls back to the live registry. `--no-mint` performs no propagation.
+
+**Post-merge operator step only:** after the authorized deploy, run `remint` once
+from Harper's `integrator` profile to seed expiry and propagation. Confirm the same
+`LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` date in BOTH the default and integrator homes
+(dates only), no 401 on the next Gatekeeper tick, and a successful Harper preflight.
+Build/review must not read, copy or change live credentials or perform a live mint.
+Real scratch OAuth tests (AC-1..4, AC-13..15 and AC-17) require Jonathan's bounded
+live-test authorization; transport doubles do not prove Linear's invalidation policy.
+
 
 ## WSL-hosted repo pattern
 When a spec's **Repo:** path is WSL-hosted (for example `/home/... (WSL Ubuntu)`) but
