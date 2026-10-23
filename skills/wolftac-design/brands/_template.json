@@ -1,0 +1,36 @@
+{
+  "id": "_template",
+  "name": "<Brand display name>",
+  "tokens_source": null,
+  "snapshot_version": "0.1",
+  "snapshot": {
+    "color": {
+      "backgrounds": {},
+      "text": {},
+      "borders": {}
+    },
+    "typography": {
+      "font_imports": null,
+      "headings": {},
+      "body": {},
+      "monospace_labels": {}
+    },
+    "layout": {},
+    "effects": {}
+  },
+  "voice": "<one line: how this brand sounds>",
+  "artifact_defaults": {},
+  "signature_tokens": [],
+  "prohibitions": [],
+  "palette": [],
+  "font_families": [],
+  "shape_rules": {
+    "border_radius_px": null
+  },
+  "ui": {
+    "accent_text": null,
+    "cta_background": null,
+    "cta_text": null,
+    "note": "<accent tuned for small text; must clear WCAG AA against the surface it sits on>"
+  }
+}
