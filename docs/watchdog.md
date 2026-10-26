@@ -55,6 +55,12 @@ Junctioned targets are skipped: the repo file *is* the deployed file, so drift i
 possible. Pass `-SkipDrift` to turn the check off; it then carries the previous drift
 state forward rather than asserting a clean result for a check that never ran.
 
+`deploy.ps1` resolves targets through `%USERPROFILE%` and `%LOCALAPPDATA%`. Under the
+SYSTEM task those point at `C:\WINDOWS\system32\config\systemprofile`, where nothing is
+deployed, so the drift check compares against the profile that owns `-EnvFile`
+(`<profile>\AppData\Local\hermes\.env`) instead. Pass `-UserProfile C:\Users\<name>` to
+set it explicitly.
+
 Drift alerts are a **separate concern from liveness** and say so in their own words —
 they lead with the drift count and state that the factory is running normally. Drift
 never changes the exit code, so Task Scheduler's Last Result stays a pure liveness

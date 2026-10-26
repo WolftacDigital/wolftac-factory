@@ -63,7 +63,13 @@ param(
     # duplicated list would silently stop covering new targets, which is the same
     # class of failure this watchdog exists to catch.
     [string]$DeployScript = (Join-Path $PSScriptRoot "deploy.ps1"),
-    [switch]$SkipDrift
+    [switch]$SkipDrift,
+    # Profile whose deployed copies the drift check compares against. deploy.ps1
+    # resolves targets through %USERPROFILE%/%LOCALAPPDATA%, which under the SYSTEM
+    # scheduled task is C:\WINDOWS\system32\config\systemprofile -- where nothing is
+    # deployed, so every pair read as "cannot compare". Defaults to the profile that
+    # owns -EnvFile (the task already passes the operator's .env), else the current one.
+    [string]$UserProfile = ""
 )
 
 Set-StrictMode -Version Latest
@@ -83,6 +89,10 @@ $CronDir = @(
         Where-Object { $_ }
 )
 if ($CronDir.Count -eq 0) { throw "No cron directory given (-CronDir)." }
+
+$DriftProfile = $UserProfile
+if (-not $DriftProfile -and $EnvFile -match '^(.+)\\AppData\\Local\\hermes\\') { $DriftProfile = $Matches[1] }
+if (-not $DriftProfile) { $DriftProfile = $env:USERPROFILE }
 
 # Findings accumulate here; each is one failed check, already human-readable.
 $findings = New-Object System.Collections.Generic.List[string]
@@ -292,12 +302,19 @@ function Measure-Drift {
         Add-DriftUnreadable "cannot compare: deploy script not found at $DeployScript"
         return
     }
+    $savedProfile = $env:USERPROFILE
+    $savedLocal = $env:LOCALAPPDATA
     try {
+        $env:USERPROFILE = $script:DriftProfile
+        $env:LOCALAPPDATA = Join-Path $script:DriftProfile "AppData\Local"
         . $DeployScript *> $null
     } catch {
         # A watchdog that fails quiet has the disease it treats.
         Add-DriftUnreadable "cannot compare: unable to load pair definitions from ${DeployScript}: $($_.Exception.Message)"
         return
+    } finally {
+        $env:USERPROFILE = $savedProfile
+        $env:LOCALAPPDATA = $savedLocal
     }
     # Dot-sourcing inside a function lands the definitions in THIS scope, not the
     # script scope, which is why $Pairs is looked up here without -Scope Script.
