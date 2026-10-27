@@ -45,6 +45,13 @@ proof pack based on reading reports alone.
   human's Slack identity. If the bot token is absent, invalid, or expired: post no
   Slack message, disclose the unavailable Slack lane in the proof pack, and use
   only the typed-comment gate for that pack.
+- **Slack calls go through `slack_bot.py`.** Use the `slack_bot.py` helper that
+  ships beside `linear_bot.py` for every Slack call: `check` (lane available?),
+  `post --body-file - [--thread-ts TS]`, `reactions TS`, `delete TS`. It finds
+  the bot token (profile `.env`, process env, then `%LOCALAPPDATA%\hermes\.env`)
+  and the approval policy by absolute path, so it works from any target repo;
+  never resolve either relative to the working directory. Exit code 2 means the
+  Slack lane is unavailable: disclose it and use the typed-comment gate.
 - **Slack posting encoding.** Never pass Slack message text as a command-line argument
   (`curl --data-urlencode 'text=...'`, `-d`, or PowerShell argv): on Windows, non-ASCII
    characters in argv are re-encoded through the legacy code page, Slack receives
