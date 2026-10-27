@@ -127,11 +127,32 @@ every task" rule):
 
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
-2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Immediately
-   re-fetch with `get_issue` and verify state is still `In Progress` AND
-   assignee is still you. If another session won the race (assignee is someone else,
-   or state is no longer `In Progress`), back off silently: no comment, no state
-   change, stop this tick. Then read the FULL spec and ALL comments — a prior
+2. **Claim it.**
+   **CLAIM-IDENTITY:** Claim only through this platform's Linear toolset acting
+   as the operator, with `assignee: me`; a Build/Review worker claim lives in
+   `assignee`, never in `delegate`. Before writing, resolve the operator's identity
+   and read the issue's state, assignee and delegate so you know what this run changes.
+   Use `mcp__linear__save_issue` to set state `In Progress` and `assignee: me`.
+   Immediately re-read and verify state `In Progress` AND assignee equals the operator.
+
+   **NO-BOT-TOKEN:** Never read or use `LINEAR_FACTORY_BOT_TOKEN`, hand-roll a
+   Linear GraphQL or HTTP call, import `deploy/factory-gatekeeper.py` or
+   `linear_bot.py` to obtain a credential, or write a helper script that fetches or
+   embeds one. If the platform's Linear write tool is unavailable, stop without
+   claiming and say so in the run output.
+
+   **CLAIM-DID-NOT-TAKE:** Distinguish your own failed claim from a lost race.
+   If your own mutation applied but the read-back assignee is not you (empty, or
+   accompanied by a `delegate` this run set), and no other session won the claim,
+   restore only what this run changed: return state to `Todo` and clear a delegate you set.
+   Preserve pre-existing fields; never clear another worker's delegate. Re-read to
+   verify restoration, post nothing on the issue, stop, and report
+   `CLAIM-DID-NOT-TAKE <ID>` with the failed read-back state, assignee and delegate
+   plus the restoration result. If restoration fails, report that the issue may
+   be stranded; do not silently exit.
+   If another session won the race (another assignee, or state changed away from
+   `In Progress`), back off silently: no comment, no state change, stop this tick.
+   Then read the FULL spec and ALL comments — a prior
    `REVIEW REPORT — FAIL` defect list is your primary work order. If comments show
    the issue was previously built and later reset to `Todo`, verify the existing
    branch/commits before coding. When the approved implementation is already present
@@ -182,6 +203,13 @@ every task" rule):
    issue scope with `git diff --cached origin/main` before commit and the final diff
    against `origin/main` afterward. See
    `references/existing-feature-branch-main-integration.md`.
+
+   If GitHub fetch/push stalls under Windows `credential.helper=helper-selector`
+   while `gh api` succeeds, retry with command-scoped authentication:
+   `GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' -C '<native-repo-path>' <operation>`.
+   Clear the inherited helper for that command only; do not edit persistent Git
+   config, expose tokens, or restart services. Still verify fetched refs and pushed
+   heads normally; a successful `gh api` read alone does not prove a fetch or push.
 
    For WSL-hosted Next.js/WebGL work, also use
    `references/wsl-webgl-build-pitfalls.md` for line endings, React state/fallback

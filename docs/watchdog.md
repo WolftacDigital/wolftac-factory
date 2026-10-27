@@ -51,6 +51,64 @@ Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir`
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
 rather than guessing an interval.
 
+### Deploy drift (WD-348)
+
+Once per run, independent of the cron directories, the watchdog compares repo content
+against deployed content for every pair `deploy.ps1` owns.
+
+| Check | Fails when |
+|---|---|
+| `DRIFT` | a deployed file's LF-normalized hash differs from its repo copy |
+| `cannot compare` | either side is unreadable **or the deployed copy is absent** — never counted as clean, and reported distinctly from drift |
+
+The pair list is **imported** from `deploy.ps1` by dot-sourcing it with no switches, so
+it falls through to its usage line without checking, writing, or packaging anything. A
+pair added to `deploy.ps1` is covered here with no edit to the watchdog; a duplicated
+list would quietly stop covering new targets, which is exactly the class of failure this
+watchdog exists to catch. Comparison uses `deploy.ps1`'s own `Get-LfHash`, so a
+line-ending-only difference is not drift and the two tools cannot disagree about what is
+drifted.
+
+Junctioned targets are skipped: the repo file *is* the deployed file, so drift is not
+possible. Pass `-SkipDrift` to turn the check off; it then carries the previous drift
+state forward rather than asserting a clean result for a check that never ran.
+
+`deploy.ps1` resolves targets through `%USERPROFILE%` and `%LOCALAPPDATA%`. Under the
+SYSTEM task those point at `C:\WINDOWS\system32\config\systemprofile`, where nothing is
+deployed, so the drift check compares against the profile that owns `-EnvFile`
+(`<profile>\AppData\Local\hermes\.env`) instead. Pass `-UserProfile C:\Users\<name>` to
+set it explicitly.
+
+Drift alerts are a **separate concern from liveness** and say so in their own words —
+they lead with the drift count and state that the factory is running normally. Drift
+never changes the exit code, so Task Scheduler's Last Result stays a pure liveness
+signal. Conflating the two would either cry wolf about a healthy factory or bury a
+worker death under a docs-drift message.
+
+Drift magnitude counts **differing lines**, not the difference of the two file
+lengths. Subtracting totals is right for an append and wrong for an in-place edit: a
+same-length substitution reported `+0 deployed-only, +0 repo-only`, naming a drifted
+target while claiming nothing had changed.
+
+A deployed copy that is **absent** is `cannot compare`, not drift — we do not know
+whether the two sides agree, so calling it drift asserts a comparison that never
+happened. This is deliberately stricter than `deploy.ps1 -Check`, which counts
+`MISSING` toward its own drift total; the two tools still agree on the set of
+genuinely drifted targets, which is what the parity check measures.
+
+The drift message's liveness clause is **conditional**. It says "the factory is running
+normally" only when liveness actually passed this tick; when liveness is unhealthy it
+points at the separate worker alert instead. Asserting normal operation in the same tick
+as an outage alert can mask the failure the watchdog exists to surface.
+
+Alerts carry **paths and line counts only, never file content**: a `/learn` edit can
+pick up anything, and this goes to a Slack channel.
+
+Drift has its own transition, its own 12h nag, and its own single recovery message,
+tracked in `watchdog-state.json` under `drift_status` / `drift_last_alert_at`. A sidecar
+written before this feature has no drift keys; that is treated as "no prior state", not
+an error, so rollback and roll-forward both work with no migration step.
+
 An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is an
 UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
@@ -157,6 +215,13 @@ The WD-549 regression suite invokes PowerShell with `-DryRun` only, using scratc
 files and fake credentials. It covers expiry thresholds, invalid/missing dates,
 newest-output selection, secret suppression, multiple cron directories and unchanged
 existing checks/alert routing:
+
+The comparison requires `origin/main`; run `git fetch origin` first locally.
+Factory Checks uses `actions/checkout` with `fetch-depth: 0` so the baseline ref
+exists even in a fresh Actions checkout. A missing baseline remains an error, not
+a skipped test or a fallback comparison against the branch itself. Both script
+versions receive the same explicit drift input: a scratch pair list for isolated
+cases, or the repo's `deploy.ps1` for TP4. Drift checks remain enabled.
 
 ```powershell
 python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v

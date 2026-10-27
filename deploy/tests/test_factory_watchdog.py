@@ -38,6 +38,10 @@ class WatchdogTests(unittest.TestCase):
         self.cron = self.make_cron("cron")
         self.envfile = self.root / "fixture.env"
         self.write_expiry(timestamp())
+        # Both the extracted main script and the branch use the SAME drift input.
+        # A default relative DeployScript would differ with the script's location.
+        self.deploy = self.root / "fixture-deploy.ps1"
+        self.deploy.write_text("$Pairs = @()\n", encoding="utf-8", newline="\n")
         self.policy = self.root / "policy.json"
         self.policy.write_text(json.dumps({"slack_channel_id": "fixture", "approver_slack_user_id": "fixture",
                                           "fallback_identity": {"username": "fixture", "icon_emoji": ":test_tube:"}}))
@@ -73,11 +77,12 @@ class WatchdogTests(unittest.TestCase):
         os.utime(path, (at, at))
         return path
 
-    def run_watchdog(self, script=SCRIPT, cron=None, extra=()):
+    def run_watchdog(self, script=SCRIPT, cron=None, extra=(), deploy=None):
         before = self.envfile.read_bytes() if self.envfile.exists() else None
         result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(script),
                                  "-DryRun", "-CronDir", str(cron or self.cron),
-                                 "-EnvFile", str(self.envfile), "-PolicyPath", str(self.policy), *extra],
+                                 "-EnvFile", str(self.envfile), "-PolicyPath", str(self.policy),
+                                 "-DeployScript", str(deploy or self.deploy), *extra],
                                 env=self.env, capture_output=True, encoding="utf-8", timeout=30)
         text = result.stdout + result.stderr
         for fake in (*FAKES, "fixture-only-slack-549"):
@@ -197,6 +202,17 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(findings(before[1]), findings(after[1]))
         self.assertEqual(len(findings(after[1])), 4)
 
+    def test_drift_check_still_runs_with_linear_checks(self):
+        basepath, _ = self.baseline()
+        missing = self.root / "missing-deploy.ps1"
+        before = self.run_watchdog(script=basepath, deploy=missing)
+        after = self.run_watchdog(deploy=missing)
+        self.assertEqual(before[0], after[0])
+        self.assertEqual(findings(before[1]), findings(after[1]))
+        self.assertIn("DRIFT: CANNOT COMPARE", after[1])
+        self.assertEqual(len(findings(after[1])), 1)
+        self.assertIn("deploy script not found", findings(after[1])[0])
+
     @unittest.skipUnless(os.getenv("WD549_REAL_CRON"), "TP4 opt-in real cron read-only comparison")
     def test_real_cron_findings_match_main(self):
         basepath, _ = self.baseline()
@@ -204,8 +220,9 @@ class WatchdogTests(unittest.TestCase):
         state = cron / "watchdog-state.json"
         before_state = state.read_bytes() if state.exists() else None
         # No live env/credential reads. Full output is kept in memory, not echoed.
-        before = self.run_watchdog(script=basepath, cron=cron)
-        after = self.run_watchdog(cron=cron)
+        deploy = ROOT / "deploy/deploy.ps1"
+        before = self.run_watchdog(script=basepath, cron=cron, deploy=deploy)
+        after = self.run_watchdog(cron=cron, deploy=deploy)
         self.assertEqual(before[0], after[0])
         self.assertEqual(findings(before[1]), findings(after[1]))
         self.assertEqual(before_state, state.read_bytes() if state.exists() else None)
