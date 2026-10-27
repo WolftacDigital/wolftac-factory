@@ -391,5 +391,66 @@
       { "file": "deploy/deploy.ps1", "pattern": "(?=[\\s\\S]*Test-UnderJunction)(?=[\\s\\S]*JUNCTION-NOOP)(?=[\\s\\S]*JUNCTIONED)(?=[\\s\\S]*precedes the \\$Force branch)" },
       { "file": "docs/hermes-skill-junctions.md", "pattern": "(?=[\\s\\S]*Administrator privilege required)(?=[\\s\\S]*re-read from disk on every invocation)(?=[\\s\\S]*dedicated worktree)(?=[\\s\\S]*JUNCTION-NOOP)" }
     ]
+  },
+  {
+    "id": "build-review-claim-identity",
+    "description": "Every Build and Review claim step names operator-only Linear tool claims, forbids bot-token and hand-rolled credential access, and restores only its own failed claim while preserving race backoff.",
+    "checks": [
+      {"file": "canonical/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/codex/wolftac-build.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "canonical/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/codex/wolftac-review.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"}
+    ]
+  },
+  {
+    "id": "autonomous-run-override",
+    "description": "Build/review/integrate take precedence over general-purpose workflow plugins (e.g. superpowers): no mid-run questions, no plan docs in repos, no merges outside the approval gate.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Autonomous-run override[\\s\\S]*never merge locally" }
+    ]
+  },
+  {
+    "id": "integrate-no-self-sweep",
+    "description": "Integrate never sweeps its own claim, skips waiting issues, and refreshes Slack-less proof packs (WD-371).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" }
+    ]
+  },
+  {
+    "id": "integrate-slack-utf8-posting",
+    "description": "Integrate posts Slack JSON from a UTF-8 file, never message text in argv (2026-10-20 BAD+97 incident).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" }
+    ]
   }
 ]

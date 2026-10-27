@@ -75,7 +75,14 @@ $trees = @(
 )
 foreach ($tree in $trees) {
     $srcRoot = Join-Path $Repo $tree.Src
-    foreach ($file in Get-ChildItem -LiteralPath $srcRoot -File -Recurse) {
+    # This enumerates the FILESYSTEM, not git, so .gitignore does not protect it: running a
+    # shipped script (e.g. integrate-preflight.py) leaves a __pycache__ beside it, which was
+    # then deployed as a stray .pyc and reported as MISSING by -Check. Bytecode is never a
+    # deploy artifact.
+    $treeFiles = Get-ChildItem -LiteralPath $srcRoot -File -Recurse | Where-Object {
+        $_.Extension -ne ".pyc" -and $_.FullName -notmatch '[\\/]__pycache__[\\/]'
+    }
+    foreach ($file in $treeFiles) {
         $relative = [IO.Path]::GetRelativePath($srcRoot, $file.FullName)
         $Pairs += @{ Src = (Join-Path $tree.Src $relative); Dst = (Join-Path $tree.Dst $relative) }
     }
@@ -84,8 +91,34 @@ foreach ($tree in $trees) {
 # Claude Code inside WSL reads the LINUX home (~/.claude/skills), not the Windows one.
 # When WSL is present, add the canonical skills as targets there too (dynamic home
 # detection so this ports to other machines, e.g. jon-omen, unchanged).
+#
+# The probe is bounded: a wedged WSL service makes every wsl.exe call (even
+# `wsl -l -v`) block forever, which used to hang -Check/-Deploy/-Package outright.
+# Only -Check and -Deploy touch WSL targets, so nothing else probes. A timed-out
+# probe is killed and reported loudly; WSL targets are then skipped, not passed.
+# 60s, not less: a cold WSL boot (first call after `wsl --shutdown` or idle stop)
+# measured 41-48s on a working machine.
 $wslHome = $null
-try { $wslHome = (& wsl.exe -d Ubuntu -- sh -c 'echo $HOME' 2>$null | Select-Object -First 1) } catch {}
+$WslProbeTimedOut = $false
+if ($Check -or $Deploy) {
+    try {
+        $psi = [Diagnostics.ProcessStartInfo]::new("wsl.exe")
+        foreach ($a in @("-d", "Ubuntu", "--", "sh", "-c", 'echo $HOME')) { $psi.ArgumentList.Add($a) }
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $proc = [Diagnostics.Process]::Start($psi)
+        $stdout = $proc.StandardOutput.ReadToEndAsync()
+        $null = $proc.StandardError.ReadToEndAsync()
+        if ($proc.WaitForExit(60000)) {
+            $wslHome = ($stdout.Result -split "`n" | Select-Object -First 1)
+        } else {
+            $WslProbeTimedOut = $true
+            try { $proc.Kill($true) } catch {}
+            Write-Output "WARN: WSL probe timed out after 60s (WSL unresponsive; try 'wsl --shutdown'). WSL skill targets were NOT checked or deployed."
+        }
+    } catch {}
+}
 if ($wslHome) { $wslHome = ($wslHome -replace "`0", "").Trim() }
 if ($wslHome -and $wslHome.StartsWith("/")) {
     $wslSkills = "\\wsl$\Ubuntu" + ($wslHome -replace "/", "\") + "\.claude\skills"
@@ -254,7 +287,8 @@ if ($Check) {
         foreach ($t in $JunctionedTargets) { Write-Output "  linked   $t" }
     }
     if ($drift -eq 0) {
-        Write-Output "CLEAN: all $($Pairs.Count - $junctioned) copy-deployed files match the repo."
+        $wslNote = if ($WslProbeTimedOut) { " (WSL targets unchecked: probe timed out)" } else { "" }
+        Write-Output "CLEAN: all $($Pairs.Count - $junctioned) copy-deployed files match the repo.$wslNote"
     } else {
         Write-Output "$drift file(s) out of sync. If the deployed copy is the improvement, copy it into the repo and commit; otherwise run -Deploy."
     }
@@ -411,7 +445,7 @@ if ($Reconcile) {
 if ($Package) {
     $out = "$env:USERPROFILE\Downloads\wolftac-factory-package.zip"
     if (Test-Path $out) { Remove-Item -Force $out }
-    $excludedNames = @(".git", ".review-worktrees", "node_modules")
+    $excludedNames = @(".git", ".review-worktrees", ".integrate-sandbox", ".integrate-worktrees", "node_modules")
     $items = Get-ChildItem $Repo -Force | Where-Object {
         $name = $_.Name
         ($excludedNames -notcontains $name) -and

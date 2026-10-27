@@ -15,28 +15,26 @@ description: |
 Your only deliverable is a filed Linear issue containing a build-ready spec. You never
 write code in this stage.
 
-## Hermes MoA routing
+## Hermes model routing
 
-Preferred Hermes execution preset: `wolftac-factory-spec`.
+This skill does not choose the model, and it deliberately names no model IDs, because they go stale. The sources of truth are:
 
-When launching this stage from Hermes, run it under:
+- **Model IDs per stage:** `deploy/model-policy.yaml` in the wolftac-factory repo (`harnesses.hermes-moa` for the MoA presets; spec is interactive, so there is no scheduled spec worker). The policy's intent for this stage: the spec sets the quality ceiling for everything downstream and its volume is low, so it runs on the strongest model available.
+- **Optional MoA preset** for launching this stage from Hermes: `wolftac-factory-spec`, defined in the profile's `config.yaml` under `moa.presets`:
 
 ```text
 /model wolftac-factory-spec --provider moa
 ```
 
-Model roles inside the preset:
-- **Claude Fable 5** is the aggregator / acting spec writer and owns the final Linear spec voice.
-- **GPT-5.6 Sol** critiques execution clarity, acceptance criteria, and proof gates.
-- **Claude Opus 4.8** critiques architecture, repo-fit, and implementation risk.
+Roles when the MoA preset is active: the **aggregator** is the acting spec writer and owns the final Linear spec voice. The **reference models** are critics only (execution clarity, acceptance criteria and proof gates, architecture, repo-fit, implementation risk).
 
-If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-spec`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
+A skill document is loaded after the model call starts; it cannot change the active model for the current turn, so do not fake model switching. This stage is interactive: if the active model is not the one the model policy names for spec, tell Jonathan once which model is active and continue unless he chooses to relaunch on another — never stall on it. In unattended/scheduled runs, never pause to ask about model routing: if the job definition explicitly requires a stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model. The report's Agent line records what actually ran.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — stages ONLY touch issues carrying this label
 - States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) → `Approved` (review PASS, awaiting merge) → `Done` (set ONLY by the integrate stage after an approved merge). Failed reviews go back to `Todo` with a defect list.
-- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
+- Reports open with `**Agent:** <platform / model>`, using the model ID that actually ran this session (format: `Hermes / <model-id>`). Never copy a model name from a document.
 - Linear tool names vary by platform (`create_issue`/`update_issue` vs `save_issue`) — use whatever Linear toolset this Hermes profile has (Linear MCP or Composio Linear).
 
 ## Preflight

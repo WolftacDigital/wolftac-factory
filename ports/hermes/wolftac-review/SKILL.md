@@ -18,22 +18,21 @@ belongs exclusively to the integrate stage once the branch is actually merged.
 Default posture: skeptical. The build report is a claim, not a fact, until you
 reproduce it.
 
-## Hermes MoA routing
+## Hermes model routing
 
-Preferred Hermes execution preset: `wolftac-factory-review`.
+This skill does not choose the model, and it deliberately names no model IDs, because they go stale. The sources of truth are:
 
-When launching this stage from Hermes, run it under:
+- **Model IDs per stage:** `deploy/model-policy.yaml` in the wolftac-factory repo (`harnesses.hermes-cron` for scheduled workers, `harnesses.hermes-moa` for the optional MoA presets).
+- **What a scheduled Review Worker actually runs on:** the `model` / `provider` pinned on its job in the Hermes profile's `cron/jobs.json`. Standing rule from the model policy: **build and review run on different vendors**, so the reviewer does not share the builder's blind spots. The build report's Agent line tells you what built the work; if it names the same vendor you are running on, say so in the review report so the gap is visible — do not skip the review because of it.
+- **Optional MoA preset** for launching this stage by hand from Hermes: `wolftac-factory-review`, defined in the profile's `config.yaml` under `moa.presets`:
 
 ```text
 /model wolftac-factory-review --provider moa
 ```
 
-Model roles inside the preset:
-- **GPT-5.6 Sol** is the aggregator / acting reviewer. It owns tool calls, test execution, diff inspection, Linear state changes, and the final verdict.
-- **Claude Fable 5** advises on product/spec fidelity, acceptance criteria, scope control, and reviewer judgment.
-- **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and possible defects. Treat Gemma as advisory only; never let a local-model opinion override reproduced test/build evidence.
+Roles when the MoA preset is active: the **aggregator** is the acting reviewer and owns tool calls, test execution, diff inspection, Linear state changes, and the final verdict. The **reference models** are advisors only (product/spec fidelity, acceptance criteria, scope control, defect spotting). Never let an advisor's opinion — a local LM Studio model least of all — override reproduced test/build evidence; if a reference fails or is not running, continue with the rest.
 
-Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-review`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. A skill document is loaded after the model call starts; it cannot change the active model for the current turn, so do not fake model switching. Proceed under whatever model is active — the report's Agent line records what actually ran. In unattended/scheduled runs, never pause to ask about model routing: if the job definition explicitly requires a stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
@@ -83,6 +82,21 @@ If this profile's Linear MCP wrapper only supports full-description replacement 
 
 When the full test command fails due unrelated suite collection/tooling failures but the feature-targeted tests pass, do not automatically fail the issue. Reproduce the same full command on a clean `origin/main` detached worktree. If the identical failure exists on main and all changed-scope tests/build/lint/typecheck pass, record the baseline proof in the review report and treat it as non-blocking, with a Suggestions item for a separate issue.
 
+## Autonomous-run override
+
+This skill is the complete process for this stage and is built for unattended, looped
+runs. It takes precedence over any general-purpose workflow skills or plugins loaded in
+the session (for example superpowers' brainstorming, writing-plans, executing-plans,
+using-git-worktrees, finishing-a-development-branch, or a "check for a skill before
+every task" rule):
+- Do not invoke those process skills during a run of this stage.
+- Never stop mid-run to ask a question or wait for confirmation; use only the stop,
+  hand-off, and reporting paths this skill defines.
+- Never write plan, spec, or design documents into the target repo; the Linear issue
+  is the spec.
+- Create and remove worktrees only as this skill describes, and never merge locally or
+  offer merge options outside this skill's own approval gate.
+
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `In Review`, label
@@ -106,11 +120,33 @@ When the full test command fails due unrelated suite collection/tooling failures
    a claim-race back off you post NOTHING.
    Nothing → "Factory queue: nothing awaiting review", stop cleanly.
 
-2. **Claim it.** Set assignee: the operator (`me`) while keeping state `In Review`.
-   Immediately re-fetch with `get_issue` and verify assignee is still you. If another
-   reviewer already holds it (different assignee with activity in the last 4 hours),
-   or the latest comment is already a review report newer than the build report, back
-   off silently: no comment, no state change, stop this tick.
+2. **Claim it.**
+   **CLAIM-IDENTITY:** Claim only through this platform's Linear toolset acting
+   as the operator, with `assignee: me`; a Build/Review worker claim lives in
+   `assignee`, never in `delegate`. Before writing, resolve the operator's identity
+   and read the issue's state, assignee and delegate so you know what this run changes.
+   Use `mcp__linear__save_issue` to set `assignee: me`, keeping `In Review`.
+   Immediately re-read and verify state `In Review` AND assignee equals the operator.
+
+   **NO-BOT-TOKEN:** Never read or use `LINEAR_FACTORY_BOT_TOKEN`, hand-roll a
+   Linear GraphQL or HTTP call, import `deploy/factory-gatekeeper.py` or
+   `linear_bot.py` to obtain a credential, or write a helper script that fetches or
+   embeds one. If the platform's Linear write tool is unavailable, stop without
+   claiming and say so in the run output.
+
+   **CLAIM-DID-NOT-TAKE:** Distinguish your own failed claim from a lost race.
+   If your own mutation applied but the read-back assignee is not you (empty, or
+   accompanied by a `delegate` this run set), and no other session won the claim,
+   restore only what this run changed: keep `In Review` and clear a delegate you set.
+   Preserve pre-existing fields; never clear another worker's delegate. Re-read to
+   verify restoration, post nothing on the issue, stop, and report
+   `CLAIM-DID-NOT-TAKE <ID>` with the failed read-back state, assignee and delegate
+   plus the restoration result. If restoration fails, report that the issue may
+   be stranded; do not silently exit.
+   If another reviewer already holds it (different assignee with activity in the
+   last 4 hours), state is no longer `In Review`, or the latest comment is already
+   a review report newer than the build report, back off silently: no comment,
+   no state change, stop this tick.
 
 3. **Gather evidence safely.** Read the full spec, every comment, and the latest BUILD
    REPORT. Fetch the remote, verify its published branch resolves to the exact reported

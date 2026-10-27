@@ -1,10 +1,12 @@
 version: 1
-reviewed_on: 2026-07-12
+reviewed_on: 2026-09-19
 policy:
   selection_timing: before_skill_invocation
   require_actual_model_in_reports: true
   allow_skill_to_claim_model_switch: false
   refresh_rule: verify provider documentation and local availability before changing IDs
+  # The reviewer must not share the builder's blind spots.
+  build_and_review_use_different_vendors: true
 
 harnesses:
   codex:
@@ -35,6 +37,24 @@ harnesses:
         model: claude-opus-4-8
     value_lane:
       model: claude-sonnet-5
+  # Scheduled Hermes cron workers. Each job pins `model` / `provider` in the
+  # profile's cron/jobs.json; this block records what those pins should be.
+  hermes-cron:
+    stages:
+      build:
+        provider: openai-codex
+        model: gpt-6-astra          # account-gated on the Codex OAuth route; verified 2026-09-19
+      review:
+        provider: openai-codex
+        model: gpt-5.6-sol          # interim: same vendor as build
+        target:
+          provider: anthropic
+          model: claude-fable-5-1   # blocked until the Hermes Anthropic login is re-authorized
+      integrate:
+        provider: openai-codex
+        model: gpt-5.6-sol          # mechanical stage; reliability over reasoning depth
+      gatekeeper:
+        model: null                 # script job, no LLM
   hermes-moa:
     stages:
       spec:

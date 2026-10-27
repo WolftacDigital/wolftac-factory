@@ -5,3 +5,13 @@
 config.toml
 .env
 .env.*
+
+# Python bytecode caches are regenerable and must never be committed or deployed
+__pycache__/
+*.pyc
+
+# Local integrate-stage scratch worktrees/sandboxes (per-issue, e.g. WD-350/)
+.integrate-sandbox/
+
+# Local integrate-stage git worktrees (one checkout per issue under integration)
+.integrate-worktrees/

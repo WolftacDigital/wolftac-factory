@@ -25,6 +25,21 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
 - Tools: claude.ai Linear connector (`list_issues`, `get_issue`, `save_issue`,
   `save_comment`, `list_comments`). Not available → ask the user to enable it.
 
+## Autonomous-run override
+
+This skill is the complete process for this stage and is built for unattended, looped
+runs. It takes precedence over any general-purpose workflow skills or plugins loaded in
+the session (for example superpowers' brainstorming, writing-plans, executing-plans,
+using-git-worktrees, finishing-a-development-branch, or a "check for a skill before
+every task" rule):
+- Do not invoke those process skills during a run of this stage.
+- Never stop mid-run to ask a question or wait for confirmation; use only the stop,
+  hand-off, and reporting paths this skill defines.
+- Never write plan, spec, or design documents into the target repo; the Linear issue
+  is the spec.
+- Create and remove worktrees only as this skill describes, and never merge locally or
+  offer merge options outside this skill's own approval gate.
+
 ## Procedure
 
 1. **Pick up work.** `list_issues`: team `Wolftac Digital`, state `Todo`, label
@@ -55,11 +70,32 @@ Code, Codex, or Hermes, and STOP. Do not claim an issue you cannot actually buil
    a claim-race back off you post NOTHING.
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
-2. **Claim it.** `save_issue`: state `In Progress`, assignee `me`. Immediately
-   re-fetch with `get_issue` and verify state is still `In Progress` AND
-   assignee is still you. If another session won the race (assignee is someone else,
-   or state is no longer `In Progress`), back off silently: no comment, no state
-   change, stop this tick. Then read the FULL spec and ALL comments — a prior
+2. **Claim it.**
+   **CLAIM-IDENTITY:** Claim only through this platform's Linear toolset acting
+   as the operator, with `assignee: me`; a Build/Review worker claim lives in
+   `assignee`, never in `delegate`. Before writing, resolve the operator's identity
+   and read the issue's state, assignee and delegate so you know what this run changes.
+   Use `save_issue` to set state `In Progress` and `assignee: me`.
+   Immediately re-read and verify state `In Progress` AND assignee equals the operator.
+
+   **NO-BOT-TOKEN:** Never read or use `LINEAR_FACTORY_BOT_TOKEN`, hand-roll a
+   Linear GraphQL or HTTP call, import `deploy/factory-gatekeeper.py` or
+   `linear_bot.py` to obtain a credential, or write a helper script that fetches or
+   embeds one. If the platform's Linear write tool is unavailable, stop without
+   claiming and say so in the run output.
+
+   **CLAIM-DID-NOT-TAKE:** Distinguish your own failed claim from a lost race.
+   If your own mutation applied but the read-back assignee is not you (empty, or
+   accompanied by a `delegate` this run set), and no other session won the claim,
+   restore only what this run changed: return state to `Todo` and clear a delegate you set.
+   Preserve pre-existing fields; never clear another worker's delegate. Re-read to
+   verify restoration, post nothing on the issue, stop, and report
+   `CLAIM-DID-NOT-TAKE <ID>` with the failed read-back state, assignee and delegate
+   plus the restoration result. If restoration fails, report that the issue may
+   be stranded; do not silently exit.
+   If another session won the race (another assignee, or state changed away from
+   `In Progress`), back off silently: no comment, no state change, stop this tick.
+   Then read the FULL spec and ALL comments — a prior
    `REVIEW REPORT — FAIL` defect list is your primary work order on top of the
    original spec.
 

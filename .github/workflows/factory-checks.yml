@@ -21,6 +21,9 @@ jobs:
       - name: Check workflow semantics
         run: ./deploy/semantic-check.ps1
 
+      - name: Test factory gatekeeper
+        run: python3 -m unittest discover -s deploy/tests -v
+
       - name: Reject CR bytes in tracked source documents
         run: |
           $extensions = @(".md", ".json", ".ps1", ".yml")

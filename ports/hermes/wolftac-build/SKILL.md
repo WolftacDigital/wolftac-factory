@@ -15,29 +15,27 @@ description: |
 Take ONE specced issue from the Linear queue, implement it exactly to spec, prove it
 works, hand it to review.
 
-## Hermes MoA routing
+## Hermes model routing
 
-Preferred Hermes execution preset: `wolftac-factory-build`.
+This skill does not choose the model, and it deliberately names no model IDs, because they go stale. The sources of truth are:
 
-When launching this stage from Hermes, run it under:
+- **Model IDs per stage:** `deploy/model-policy.yaml` in the wolftac-factory repo (`harnesses.hermes-cron` for scheduled workers, `harnesses.hermes-moa` for the optional MoA presets).
+- **What a scheduled Build Worker actually runs on:** the `model` / `provider` pinned on its job in the Hermes profile's `cron/jobs.json`. Standing rule from the model policy: **build and review run on different vendors**, so the reviewer does not share the builder's blind spots.
+- **Optional MoA preset** for launching this stage by hand from Hermes: `wolftac-factory-build`, defined in the profile's `config.yaml` under `moa.presets`:
 
 ```text
 /model wolftac-factory-build --provider moa
 ```
 
-Model roles inside the preset:
-- **GPT-5.6 Sol** is the aggregator / acting builder-verifier. It owns tool calls, code edits, tests, commits, Linear state changes, and the build report.
-- **Claude Opus 4.8** advises on architecture, implementation plan, repo-fit, and hidden risks.
-- **Claude Sonnet 5** advises on implementation mechanics and likely code changes.
-- **Gemma 4 31B QAT via LM Studio** is a low-cost local advisor for code-review sanity checks and defect spotting. Treat Gemma as advisory only; if the LM Studio reference fails or disagrees with cloud models, continue with cloud consensus and real execution proof.
+Roles when the MoA preset is active: the **aggregator** is the acting builder-verifier and owns tool calls, code edits, tests, commits, Linear state changes, and the build report. The **reference models** are advisors only (architecture, implementation mechanics, defect spotting). If a reference fails (for example a local LM Studio model is not running) or disagrees with the others, continue with the remaining consensus and real execution proof.
 
-Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. If this skill is invoked while Hermes is not already on `provider=moa`, `model=wolftac-factory-build`, do not fake model switching. Continue only if Jonathan explicitly wants the current model to run it, or ask him to relaunch/switch the session to the preset above. A skill document is loaded after the model call starts; it can prescribe the correct model but cannot itself change the active model for the current turn. In unattended/scheduled runs, never pause to ask about model routing: if the job definition requires this stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model — the report's Agent line records what actually ran.
+Use MoA reference output as private counsel, not as proof. Proof still comes only from running the repo's commands/tests and inspecting real diffs. A skill document is loaded after the model call starts; it cannot change the active model for the current turn, so do not fake model switching. Proceed under whatever model is active — the report's Agent line records what actually ran. In unattended/scheduled runs, never pause to ask about model routing: if the job definition explicitly requires a stage preset and it is not active, log the mismatch and exit cleanly WITHOUT claiming any issue; otherwise proceed under the active model.
 
 ## The factory contract (shared across Claude Code, Claude Desktop, Codex, Hermes)
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue** — only touch issues carrying this label
 - You consume state `Todo`; you produce `In Review`. `Done` is set ONLY by the integrate stage after an approved merge — never by you (review's pass verdict is `Approved`).
-- Reports open with `**Agent:** <platform / model>` (e.g. `Hermes / gpt-5.6-sol`).
+- Reports open with `**Agent:** <platform / model>`, using the model ID that actually ran this session (format: `Hermes / <model-id>`). Never copy a model name from a document; per-model review send-back rates are compared from this line.
 - Linear tool names vary by platform — use this profile's Linear toolset equivalents.
 
 ## Preflight
@@ -47,6 +45,21 @@ Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → S
 Before claiming an issue, estimate the change surface and the remaining execution/tool budget. Reserve the final 20% of the run for at least one fix cycle, the full test plan, diff review, commit/push verification, the Linear build report, and the `In Review` transition. If that reserve cannot be protected, skip the candidate without claiming it rather than leaving partially edited work in `In Progress`.
 
 For broad multi-file work, follow `references/build-execution-budget-and-batching.md`: batch independent reads, use coherent multi-file edits, never edit the same file concurrently, and run the cheapest compile/type check after each logical batch.
+
+## Autonomous-run override
+
+This skill is the complete process for this stage and is built for unattended, looped
+runs. It takes precedence over any general-purpose workflow skills or plugins loaded in
+the session (for example superpowers' brainstorming, writing-plans, executing-plans,
+using-git-worktrees, finishing-a-development-branch, or a "check for a skill before
+every task" rule):
+- Do not invoke those process skills during a run of this stage.
+- Never stop mid-run to ask a question or wait for confirmation; use only the stop,
+  hand-off, and reporting paths this skill defines.
+- Never write plan, spec, or design documents into the target repo; the Linear issue
+  is the spec.
+- Create and remove worktrees only as this skill describes, and never merge locally or
+  offer merge options outside this skill's own approval gate.
 
 ## Procedure
 
@@ -114,11 +127,32 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
 
    Queue empty → "Factory queue: nothing buildable", stop cleanly.
 
-2. **Claim it.** State `In Progress`, assignee: the operator (`me`). Immediately
-   re-fetch with `get_issue` and verify state is still `In Progress` AND
-   assignee is still you. If another session won the race (assignee is someone else,
-   or state is no longer `In Progress`), back off silently: no comment, no state
-   change, stop this tick. Then read the FULL spec and ALL comments — a prior
+2. **Claim it.**
+   **CLAIM-IDENTITY:** Claim only through this platform's Linear toolset acting
+   as the operator, with `assignee: me`; a Build/Review worker claim lives in
+   `assignee`, never in `delegate`. Before writing, resolve the operator's identity
+   and read the issue's state, assignee and delegate so you know what this run changes.
+   Use `mcp__linear__save_issue` to set state `In Progress` and `assignee: me`.
+   Immediately re-read and verify state `In Progress` AND assignee equals the operator.
+
+   **NO-BOT-TOKEN:** Never read or use `LINEAR_FACTORY_BOT_TOKEN`, hand-roll a
+   Linear GraphQL or HTTP call, import `deploy/factory-gatekeeper.py` or
+   `linear_bot.py` to obtain a credential, or write a helper script that fetches or
+   embeds one. If the platform's Linear write tool is unavailable, stop without
+   claiming and say so in the run output.
+
+   **CLAIM-DID-NOT-TAKE:** Distinguish your own failed claim from a lost race.
+   If your own mutation applied but the read-back assignee is not you (empty, or
+   accompanied by a `delegate` this run set), and no other session won the claim,
+   restore only what this run changed: return state to `Todo` and clear a delegate you set.
+   Preserve pre-existing fields; never clear another worker's delegate. Re-read to
+   verify restoration, post nothing on the issue, stop, and report
+   `CLAIM-DID-NOT-TAKE <ID>` with the failed read-back state, assignee and delegate
+   plus the restoration result. If restoration fails, report that the issue may
+   be stranded; do not silently exit.
+   If another session won the race (another assignee, or state changed away from
+   `In Progress`), back off silently: no comment, no state change, stop this tick.
+   Then read the FULL spec and ALL comments — a prior
    `REVIEW REPORT — FAIL` defect list is your primary work order. If comments show
    the issue was previously built and later reset to `Todo`, verify the existing
    branch/commits before coding. When the approved implementation is already present
@@ -169,6 +203,13 @@ For broad multi-file work, follow `references/build-execution-budget-and-batchin
    issue scope with `git diff --cached origin/main` before commit and the final diff
    against `origin/main` afterward. See
    `references/existing-feature-branch-main-integration.md`.
+
+   If GitHub fetch/push stalls under Windows `credential.helper=helper-selector`
+   while `gh api` succeeds, retry with command-scoped authentication:
+   `GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' -C '<native-repo-path>' <operation>`.
+   Clear the inherited helper for that command only; do not edit persistent Git
+   config, expose tokens, or restart services. Still verify fetched refs and pushed
+   heads normally; a successful `gh api` read alone does not prove a fetch or push.
 
    For WSL-hosted Next.js/WebGL work, also use
    `references/wsl-webgl-build-pitfalls.md` for line endings, React state/fallback
