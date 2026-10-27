@@ -91,6 +91,41 @@ tracked in `watchdog-state.json` under `drift_status` / `drift_last_alert_at`. A
 written before this feature has no drift keys; that is treated as "no prior state", not
 an error, so rollback and roll-forward both work with no migration step.
 
+### Pending `/learn` edits (WD-362)
+
+Junctioned Hermes skills are the live worktree itself (`D:\Wolftac\.factory-live`,
+see `docs/hermes-skill-junctions.md`), so the drift check skips them: there is only
+one copy. That made uncommitted `/learn` work there invisible, and on 2026-08-30 a
+rewrite destroyed ~5 such lines without anything noticing. This is a third concern,
+separate from liveness and drift.
+
+- **Resolve:** the junction roots come from `deploy.ps1`'s own `$JunctionedRoots`
+  (the same import the drift check uses), then `git -C <root> rev-parse --show-toplevel`.
+- **Detect:** `git status --porcelain -uall` in that worktree. Modified, deleted *and
+  untracked* files count. `/learn` creates reference docs unversioned, so untracked
+  files are the common case.
+- **Report:** one line per file, `PENDING <path> (+added/-removed, kind)`. Paths and
+  line counts only, never content: a `/learn` edit can pick up anything.
+- **Snapshot:** whenever the pending content changes, every changed file is copied
+  byte-exact (and hash-verified) to
+  `%LOCALAPPDATA%\hermes\backups\learn-edits\<UTC-timestamp>\<repo-relative-path>`.
+  The root resolves under the operator profile even under the SYSTEM task, and can be
+  overridden with `-LearnBackupRoot`. Unchanged content on a later run takes no new
+  snapshot. Snapshots older than `-LearnRetentionDays` (default 30) are pruned; the
+  most recent is never removed.
+- **Restore by hand:** copy the file from the newest snapshot back into the live
+  worktree, then review with `git diff` and commit. Nothing is ever auto-committed.
+- **Alerts:** its own transition, 12h nag and single recovery message, tracked as
+  `learn_status` / `learn_last_alert_at` (plus `learn_fingerprint` / `learn_snapshot`)
+  in the same sidecar. A sidecar without these keys counts as "no prior state". The
+  check never affects the exit code.
+- **Cannot check:** no junction roots, a root outside any git worktree, or a failing
+  `git status` reports `LEARN: CANNOT CHECK` and alerts as such. It never reports clean.
+- Disable with `-SkipLearn`, which carries the previous state forward untouched.
+
+Regression suite: `deploy/tests/factory-watchdog-learn.tests.ps1` (hermetic: scratch
+repo, scratch junctioned worktree, `-SlackOutbox` interception).
+
 An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is an
 UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
 the disease it treats.

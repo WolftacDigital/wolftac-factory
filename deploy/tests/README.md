@@ -4,6 +4,7 @@ Run from the repo root:
 
 ```
 pwsh -NoProfile -File deploy/tests/factory-watchdog-drift.tests.ps1
+pwsh -NoProfile -File deploy/tests/factory-watchdog-learn.tests.ps1
 ```
 
 The suite prints `PASS`/`FAIL` per assertion and a final `RESULT pass=N fail=N`, and
@@ -12,6 +13,7 @@ exits non-zero if anything failed.
 | File | What it holds down |
 |---|---|
 | `factory-watchdog-drift.tests.ps1` | `factory-watchdog.ps1` drift alerting: truthful magnitude on any kind of edit, no false "running normally" while liveness is failing, and `cannot compare` for a deployed copy that is absent. Plus the alert state machine — transition, cooldown, 12h nag, recovery — and agreement with `deploy.ps1 -Check` on which targets are drifted. |
+| `factory-watchdog-learn.tests.ps1` | `factory-watchdog.ps1` pending `/learn` edits (WD-362): clean is silent, a modified or untracked file in the junctioned live worktree alerts once by path and line count (never content), is snapshotted byte-exact, and survives `git restore .`; cooldown, 12h nag, single recovery, 30-day retention keeping the newest, and "cannot check" for an unresolvable worktree or failed `git status`. Hermetic: scratch repo, scratch junctioned worktree, `-SlackOutbox` interception. |
 
 ## Hermetic by construction
 

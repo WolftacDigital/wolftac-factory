@@ -29,6 +29,14 @@ And once per run, independent of the cron directories:
      docs-drift message. Alerts carry paths and line counts only, never file content
      — a /learn edit can pick up anything, and this goes to a Slack channel.
      Disable with -SkipDrift.
+  6. pending /learn edits (WD-362) — `git status` of the junctioned live worktree.
+     Junctioned skills are exempt from drift (the repo IS the deployed copy), so
+     uncommitted /learn work there was invisible and its destruction silent. Changed
+     and untracked files are reported by path and line count only, and snapshotted
+     byte-exact to -LearnBackupRoot\<UTC-timestamp>\ whenever the pending content
+     changes (30-day retention, newest always kept). Its own transition, cooldown and
+     recovery message; never affects the exit code. An unresolvable worktree or a
+     failed `git status` is "cannot check", never clean. Disable with -SkipLearn.
 
 Alert discipline: post on the healthy -> unhealthy transition, re-ping at most every
 -NagHours while it stays unhealthy, and post exactly one recovery message on the
@@ -69,7 +77,17 @@ param(
     # scheduled task is C:\WINDOWS\system32\config\systemprofile -- where nothing is
     # deployed, so every pair read as "cannot compare". Defaults to the profile that
     # owns -EnvFile (the task already passes the operator's .env), else the current one.
-    [string]$UserProfile = ""
+    [string]$UserProfile = "",
+    # Pending /learn edits (WD-362). The junctioned live worktree is invisible to the
+    # drift check by design, so uncommitted /learn work there is watched separately and
+    # snapshotted locally. Snapshots default under the operator profile's Hermes
+    # backups root, for the same SYSTEM-account reason as -UserProfile.
+    [string]$LearnBackupRoot = "",
+    [int]$LearnRetentionDays = 30,
+    [switch]$SkipLearn,
+    # Test seam: write each alert payload to a file here instead of posting it, so the
+    # regression suite can assert on exact message text without touching Slack.
+    [string]$SlackOutbox = ""
 )
 
 Set-StrictMode -Version Latest
@@ -93,6 +111,7 @@ if ($CronDir.Count -eq 0) { throw "No cron directory given (-CronDir)." }
 $DriftProfile = $UserProfile
 if (-not $DriftProfile -and $EnvFile -match '^(.+)\\AppData\\Local\\hermes\\') { $DriftProfile = $Matches[1] }
 if (-not $DriftProfile) { $DriftProfile = $env:USERPROFILE }
+if (-not $LearnBackupRoot) { $LearnBackupRoot = Join-Path $DriftProfile "AppData\Local\hermes\backups\learn-edits" }
 
 # Findings accumulate here; each is one failed check, already human-readable.
 $findings = New-Object System.Collections.Generic.List[string]
@@ -113,6 +132,16 @@ $driftUnreadable = New-Object System.Collections.Generic.List[string]
 $driftChecked = 0
 $driftSkipped = 0
 $driftAvailable = $false
+
+# ── pending /learn edits (WD-362) ────────────────────────────────────────────────
+# A third concern, separate from liveness and drift. Junctioned skills ARE the live
+# worktree, so drift never looks at them; uncommitted /learn work there was invisible
+# and its destruction silent. Paths and line counts only, never content.
+$learnPending = New-Object System.Collections.Generic.List[object]
+$learnUnreadable = New-Object System.Collections.Generic.List[string]
+$learnWorktrees = New-Object System.Collections.Generic.List[string]
+$junctionRoots = $null
+$learnSnapshot = $null
 
 function Add-Drift([string]$Text) { $script:driftFindings.Add($Text) }
 function Add-DriftUnreadable([string]$Text) { $script:driftUnreadable.Add($Text) }
@@ -258,6 +287,13 @@ function Test-CronDirectory([string]$Dir) {
 function Get-StatePath([string]$Dir) { Join-Path $Dir "watchdog-state.json" }
 
 function Send-SlackAlert([string]$Text, $Policy) {
+    if ($SlackOutbox) {
+        New-Item -ItemType Directory -Force -Path $SlackOutbox | Out-Null
+        $file = Join-Path $SlackOutbox ("{0:yyyyMMddTHHmmssfff}-{1}.txt" -f (Get-Date), [guid]::NewGuid().ToString('N').Substring(0, 6))
+        Set-Content -LiteralPath $file -Value $Text -Encoding utf8 -NoNewline
+        Write-Host "SLACK: intercepted to $file (-SlackOutbox)"
+        return $true
+    }
     $token = Get-SlackToken
     if (-not $token) {
         # Write-Host keeps diagnostics visible without adding them to the function's
@@ -318,6 +354,8 @@ function Measure-Drift {
     }
     # Dot-sourcing inside a function lands the definitions in THIS scope, not the
     # script scope, which is why $Pairs is looked up here without -Scope Script.
+    # Hand the junction roots to the /learn check so deploy.ps1 is loaded once per run.
+    $script:junctionRoots = @(if (Get-Variable -Name JunctionedRoots -ErrorAction SilentlyContinue) { $JunctionedRoots })
     if (-not (Get-Variable -Name Pairs -ErrorAction SilentlyContinue)) {
         Add-DriftUnreadable "cannot compare: $DeployScript defined no pair list"
         return
@@ -387,9 +425,155 @@ function Measure-Drift {
     }
 }
 
+function Add-LearnUnreadable([string]$Text) { $script:learnUnreadable.Add($Text) }
+
+function Get-LineCount([string]$Path) {
+    try {
+        $text = [IO.File]::ReadAllText($Path)
+    } catch { return -1 }
+    if ($text.Length -eq 0) { return 0 }
+    $n = ($text -split "`n").Count
+    if ($text.EndsWith("`n")) { $n-- }
+    return $n
+}
+
+function Measure-Learn {
+    # Resolve the live worktree from deploy.ps1's own junction list, so this check and
+    # the drift exemption can never disagree about what is junctioned.
+    if ($null -eq $script:junctionRoots) {
+        # -SkipDrift means Measure-Drift never loaded deploy.ps1; load it here instead.
+        if (-not (Test-Path -LiteralPath $DeployScript)) {
+            Add-LearnUnreadable "cannot check: deploy script not found at $DeployScript"
+            return
+        }
+        $savedProfile = $env:USERPROFILE
+        $savedLocal = $env:LOCALAPPDATA
+        try {
+            $env:USERPROFILE = $script:DriftProfile
+            $env:LOCALAPPDATA = Join-Path $script:DriftProfile "AppData\Local"
+            . $DeployScript *> $null
+        } catch {
+            Add-LearnUnreadable "cannot check: unable to load junction definitions from ${DeployScript}: $($_.Exception.Message)"
+            return
+        } finally {
+            $env:USERPROFILE = $savedProfile
+            $env:LOCALAPPDATA = $savedLocal
+        }
+        $script:junctionRoots = @(if (Get-Variable -Name JunctionedRoots -ErrorAction SilentlyContinue) { $JunctionedRoots })
+    }
+    # No junctions is "cannot check", not clean: silence must mean "checked and clean".
+    if ($script:junctionRoots.Count -eq 0) {
+        Add-LearnUnreadable "cannot check: $DeployScript resolved no junctioned skill roots, so the live worktree is unknown"
+        return
+    }
+
+    $tops = [ordered]@{}
+    foreach ($root in $script:junctionRoots) {
+        $top = & git -C $root rev-parse --show-toplevel 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $top) {
+            Add-LearnUnreadable "cannot check: junction $root does not resolve to a git worktree"
+            continue
+        }
+        $tops[[IO.Path]::GetFullPath("$top".Trim())] = $true
+    }
+
+    foreach ($wt in $tops.Keys) {
+        $script:learnWorktrees.Add($wt)
+        # -uall: Hermes /learn creates reference docs unversioned, so untracked files
+        # are the common case, not an edge case.
+        $lines = & git -C $wt -c core.quotepath=off status --porcelain=v1 -uall 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Add-LearnUnreadable "cannot check: git status failed in $wt (exit $LASTEXITCODE)"
+            continue
+        }
+        foreach ($l in @($lines)) {
+            if (-not $l -or $l.Length -lt 4) { continue }
+            $code = $l.Substring(0, 2)
+            $path = $l.Substring(3)
+            if ($path -match ' -> ') { $path = ($path -split ' -> ')[-1] }
+            $path = $path.Trim('"')
+            $full = Join-Path $wt $path
+            if ($code -eq '??') {
+                $kind = 'untracked'
+                $added = Get-LineCount $full
+                $removed = 0
+            } else {
+                $kind = if ($code -match 'D') { 'deleted' } else { 'modified' }
+                $added = -1
+                $removed = -1
+                $ns = & git -C $wt diff --numstat HEAD -- $path 2>$null
+                if ($LASTEXITCODE -eq 0 -and $ns) {
+                    $parts = "$(@($ns)[0])" -split "`t"
+                    # numstat prints "-" for binary files; report that as unknown.
+                    if ($parts[0] -match '^\d+$') { $added = [int]$parts[0] }
+                    if ($parts[1] -match '^\d+$') { $removed = [int]$parts[1] }
+                }
+            }
+            $script:learnPending.Add([pscustomobject]@{
+                Worktree = $wt; Path = $path; Full = $full; Kind = $kind; Added = $added; Removed = $removed
+            })
+        }
+    }
+}
+
+function Format-LearnLine($p) {
+    $a = if ($p.Added -lt 0) { '?' } else { $p.Added }
+    $r = if ($p.Removed -lt 0) { '?' } else { $p.Removed }
+    # Paths and counts only. A /learn edit can pick up anything; this goes to Slack.
+    "PENDING  {0} (+{1}/-{2}, {3})" -f $p.Path, $a, $r, $p.Kind
+}
+
+function Get-LearnFingerprint {
+    # Identity of the pending content, so an unchanged re-run takes no new snapshot.
+    $parts = foreach ($p in ($learnPending | Sort-Object Worktree, Path)) {
+        $h = if ($p.Kind -eq 'deleted') { 'deleted' } else {
+            try { (Get-FileHash -LiteralPath $p.Full -Algorithm SHA256).Hash } catch { 'unreadable' }
+        }
+        "$($p.Worktree)|$($p.Path)|$($p.Kind)|$h"
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($parts -join "`n"))
+    $sha = [Security.Cryptography.SHA256]::Create()
+    return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace("-", "")
+}
+
+function New-LearnSnapshot {
+    # Byte-exact copies under <root>\<UTC-timestamp>\<repo-relative-path>. Copies are
+    # verified by hash: a snapshot that silently differs is the failure this exists for.
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+    $dir = Join-Path $LearnBackupRoot $stamp
+    $i = 1
+    while (Test-Path -LiteralPath $dir) { $dir = Join-Path $LearnBackupRoot "$stamp-$i"; $i++ }
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    foreach ($p in $learnPending) {
+        if ($p.Kind -eq 'deleted') { continue }   # nothing left to copy
+        $rel = if ($learnWorktrees.Count -gt 1) { Join-Path (Split-Path $p.Worktree -Leaf) $p.Path } else { $p.Path }
+        $dest = Join-Path $dir $rel
+        New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
+        Copy-Item -LiteralPath $p.Full -Destination $dest -Force
+        if ((Get-FileHash -LiteralPath $p.Full).Hash -ne (Get-FileHash -LiteralPath $dest).Hash) {
+            throw "snapshot copy of $($p.Path) does not match the working file"
+        }
+    }
+    return $dir
+}
+
+function Invoke-LearnRetention {
+    # Prune snapshots older than -LearnRetentionDays, never the most recent one.
+    if (-not (Test-Path -LiteralPath $LearnBackupRoot)) { return }
+    $dirs = @(Get-ChildItem -LiteralPath $LearnBackupRoot -Directory | Sort-Object Name -Descending)
+    $cutoff = (Get-Date).AddDays(-$LearnRetentionDays)
+    foreach ($d in ($dirs | Select-Object -Skip 1)) {
+        if ($d.LastWriteTime -lt $cutoff) {
+            Remove-Item -LiteralPath $d.FullName -Recurse -Force
+            Write-Output "LEARN RETENTION: pruned $($d.Name) (older than $LearnRetentionDays days)"
+        }
+    }
+}
+
 # ── run the checks ───────────────────────────────────────────────────────────────
 foreach ($dir in $CronDir) { Test-CronDirectory $dir }
 if (-not $SkipDrift) { Measure-Drift }
+if (-not $SkipLearn) { Measure-Learn }
 
 $policy = Get-Policy
 # Alert delivery is part of watchdog health, not a capability to discover only after
@@ -428,8 +612,22 @@ if ($SkipDrift) {
     foreach ($d in $driftUnreadable) { Write-Output "  - $d" }
 }
 
+# Pending /learn edits get their own line: neither an outage nor drift.
+if ($SkipLearn) {
+    Write-Output "LEARN: skipped (-SkipLearn)"
+} elseif ($learnUnreadable.Count -gt 0) {
+    Write-Output "LEARN: CANNOT CHECK - $($learnUnreadable.Count) condition(s)"
+    foreach ($u in $learnUnreadable) { Write-Output "  - $u" }
+    foreach ($p in $learnPending) { Write-Output "  - $(Format-LearnLine $p)" }
+} elseif ($learnPending.Count -eq 0) {
+    Write-Output "LEARN CLEAN: no uncommitted /learn edits in $($learnWorktrees -join ', ')"
+} else {
+    Write-Output "LEARN: $($learnPending.Count) uncommitted file(s) in the live skill worktree $($learnWorktrees -join ', ')"
+    foreach ($p in $learnPending) { Write-Output "  - $(Format-LearnLine $p)" }
+}
+
 if ($DryRun) {
-    Write-Output "DRY RUN: no Slack post, no state written."
+    Write-Output "DRY RUN: no Slack post, no snapshot, no state written."
     exit ($healthy ? 0 : 1)
 }
 
@@ -536,6 +734,85 @@ if ($driftShouldPost) {
     $driftDelivered = Send-SlackAlert $driftMessage $policy
 }
 
+# ── pending /learn edits, on their own transition (WD-362) ───────────────────────
+# Same post-on-transition / nag / one-recovery discipline, a third state machine and
+# wording that cannot be mistaken for an outage or for drift. Old sidecars lack these
+# keys; that is "no prior state", never an error.
+$prevLearnStatus = if ($prev) { Get-Prop $prev 'learn_status' } else { $null }
+if (-not $prevLearnStatus) { $prevLearnStatus = 'clean' }
+$prevLearnAlert = if ($prev) { Get-Prop $prev 'learn_last_alert_at' } else { $null }
+$prevLearnFingerprint = if ($prev) { Get-Prop $prev 'learn_fingerprint' } else { $null }
+$prevLearnSnapshot = if ($prev) { Get-Prop $prev 'learn_snapshot' } else { $null }
+
+$learnStatus = $prevLearnStatus
+$learnFingerprint = $prevLearnFingerprint
+$learnSnapshot = $prevLearnSnapshot
+$learnShouldPost = $false
+$learnMessage = $null
+$snapshotError = $null
+
+if (-not $SkipLearn) {
+    $learnStatus = if ($learnUnreadable.Count -gt 0) { 'cannot-check' }
+                   elseif ($learnPending.Count -gt 0) { 'pending' }
+                   else { 'clean' }
+    if ($learnPending.Count -gt 0) {
+        # Snapshot whenever the pending content changes, alert or not: the snapshot is
+        # the recovery path, and unchanged content needs no second copy.
+        $fp = Get-LearnFingerprint
+        if ($fp -ne $prevLearnFingerprint) {
+            try {
+                $learnSnapshot = New-LearnSnapshot
+                $learnFingerprint = $fp
+                Write-Output "LEARN SNAPSHOT: $learnSnapshot"
+            } catch {
+                $snapshotError = $_.Exception.Message
+                Write-Output "LEARN SNAPSHOT FAILED: $snapshotError"
+            }
+        } else {
+            Write-Output "LEARN SNAPSHOT: content unchanged since $learnSnapshot - not re-snapshotting."
+        }
+    } else {
+        $learnFingerprint = $null
+    }
+
+    if ($learnStatus -ne 'clean') {
+        $lines = @($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ })
+        if ($snapshotError) { $lines += "SNAPSHOT FAILED: $snapshotError" }
+        $detail = ($lines | ForEach-Object { "- $_" }) -join "`n"
+        $where = $learnWorktrees -join ', '
+        $headline = if ($learnStatus -eq 'pending') {
+            "*Uncommitted /learn edits in the live skill worktree* ($($learnPending.Count) file(s), committed nowhere yet)"
+        } else {
+            "*Pending /learn edits: cannot check the live skill worktree* - uncommitted /learn work is currently unmonitored"
+        }
+        $footer = if ($learnStatus -eq 'pending') {
+            "Snapshot: ``$learnSnapshot```nReview with ``git -C $where diff``, commit what belongs, push. (Not a worker outage; not a copy-deploy mismatch.)"
+        } else { "(Not a worker outage; not a copy-deploy mismatch.)" }
+        if ($prevLearnStatus -ne $learnStatus) {
+            $learnShouldPost = $true
+            $learnMessage = ":pencil2: $headline`n$detail`n$footer"
+        } else {
+            $hoursSinceLearn = if ($prevLearnAlert) { ($now - [datetime]::Parse($prevLearnAlert)).TotalHours } else { [double]::MaxValue }
+            if ($hoursSinceLearn -ge $NagHours) {
+                $learnShouldPost = $true
+                $learnMessage = (":pencil2: *Still uncommitted after {0:N0}h:* {1}`n{2}`n{3}" -f $hoursSinceLearn, $headline, $detail, $footer)
+            } else {
+                Write-Output "LEARN COOLDOWN: last /learn alert $([math]::Round($hoursSinceLearn,1))h ago (nag every ${NagHours}h) - not posting."
+            }
+        }
+    } elseif ($prevLearnStatus -ne 'clean') {
+        $learnShouldPost = $true
+        $learnMessage = ":white_check_mark: */learn edits resolved* - the live skill worktree is clean again."
+    }
+    Invoke-LearnRetention
+}
+
+$learnDelivered = $true
+if ($learnShouldPost) {
+    if ($AlertPrefix) { $learnMessage = "$AlertPrefix`n$learnMessage" }
+    $learnDelivered = Send-SlackAlert $learnMessage $policy
+}
+
 # Persist AFTER the attempt. A failed delivery leaves last_alert_at untouched so the
 # next tick retries rather than silently swallowing the alert.
 $newState = [ordered]@{
@@ -549,6 +826,11 @@ $newState = [ordered]@{
     drift_status        = $driftStatus
     drift_findings      = @(@($driftFindings) + @($driftUnreadable))
     drift_last_alert_at = if ($driftShouldPost -and $driftDelivered) { $now.ToString('o') } else { $prevDriftAlert }
+    learn_status        = $learnStatus
+    learn_findings      = @(@($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ }))
+    learn_last_alert_at = if ($learnShouldPost -and $learnDelivered) { $now.ToString('o') } else { $prevLearnAlert }
+    learn_fingerprint   = $learnFingerprint
+    learn_snapshot      = $learnSnapshot
 }
 try {
     $newState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath -Encoding utf8
@@ -557,7 +839,7 @@ try {
     Write-Output "STATE: could not write $statePath - $($_.Exception.Message)"
 }
 
-if (-not $delivered -or -not $driftDelivered) { exit 3 }
-# Drift deliberately does NOT change the exit code: a drifted-but-running factory is
+if (-not $delivered -or -not $driftDelivered -or -not $learnDelivered) { exit 3 }
+# Drift and pending /learn edits deliberately do NOT change the exit code: a drifted-but-running factory is
 # not an outage, and Task Scheduler's Last Result is the liveness signal (AC-3).
 exit ($healthy ? 0 : 1)
