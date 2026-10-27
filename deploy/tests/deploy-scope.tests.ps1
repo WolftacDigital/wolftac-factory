@@ -213,7 +213,26 @@ Ok 'AC-9 typo scope prints NO-MATCH and scopes' (($r.out -match 'NO-MATCH') -and
 foreach ($verb in @('-Check', '-Deploy', '-Reconcile')) {
   $r = Run @($verb, '-Only', 'ports\codex\wolftac-build.md')
   Ok "AC-9 $verb honours -Only (1 pair)" ($r.out -match 'SCOPED') "out=$($r.out)"
+  # Assert the NUMBER: a one-element scope used to unwrap to a bare hashtable whose
+  # .Count is its key count, so the line read "-> 2 of N" for one pair.
+  Ok "AC-9 $verb reports exactly one scoped pair" ($r.out -match 'SCOPED\s+-Only .* -> 1 of \d+ pair') "out=$($r.out)"
 }
+RepoClean
+
+Write-Host '=== AC-1 regression: -Reconcile discovers the same targets as -Check (WSL included) ==='
+# A non-blank zero-match scope exits at NO-MATCH before anything is read or written,
+# so this is safe without the shim, and it is the one place the real WSL probe runs:
+# -Reconcile used to skip WSL discovery entirely and see fewer pairs than -Check.
+ResetScratch
+AssertPatched
+$totals = @{}
+foreach ($verb in @('-Check', '-Reconcile')) {
+  $r = Run @($verb, '-Only', 'zzz-no-such-pair')
+  $m = [regex]::Match($r.out, 'none of the (\d+) deploy pairs')
+  $totals[$verb] = if ($m.Success) { [int]$m.Groups[1].Value } else { -1 }
+}
+Write-Host "  pair totals: -Check=$($totals['-Check']) -Reconcile=$($totals['-Reconcile'])"
+Ok 'AC-1 -Check and -Reconcile see the same pair total' ($totals['-Check'] -gt 0 -and $totals['-Check'] -eq $totals['-Reconcile']) "check=$($totals['-Check']) reconcile=$($totals['-Reconcile'])"
 RepoClean
 
 Write-Host '=== AC-8 regression: missing deployed copy still reported, repo untouched ==='

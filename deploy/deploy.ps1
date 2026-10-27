@@ -100,7 +100,8 @@ foreach ($tree in $trees) {
 # measured 41-48s on a working machine.
 $wslHome = $null
 $WslProbeTimedOut = $false
-if ($Check -or $Deploy) {
+# -Reconcile reads the same deployed targets -Check compares, WSL included (WD-347 review defect 1).
+if ($Check -or $Deploy -or $Reconcile) {
     try {
         $psi = [Diagnostics.ProcessStartInfo]::new("wsl.exe")
         foreach ($a in @("-d", "Ubuntu", "--", "sh", "-c", 'echo $HOME')) { $psi.ArgumentList.Add($a) }
@@ -241,11 +242,13 @@ if ($ScopeFilterActive) {
     # as a substring of every path, so matching it directly would turn `-Only ''`
     # into a wildcard selecting all pairs -- and, worse, satisfy the scoped-force
     # guard. Resolve it to an explicit zero match instead.
-    $scoped = if ([string]::IsNullOrWhiteSpace($Only)) {
+    # @( ) around the whole if: an if-expression unrolls a one-element result into the bare
+    # hashtable, whose .Count is its key count, not 1 (WD-347 review defect 2).
+    $scoped = @(if ([string]::IsNullOrWhiteSpace($Only)) {
         @()
     } else {
         @($Pairs | Where-Object { Test-ScopeMatch $_.Src $Only })
-    }
+    })
     if ($scoped.Count -eq 0) {
         # A zero-match scope must never read as success. Silently matching nothing
         # would make `-Deploy -Force -Only typo` look like a clean run while shipping
