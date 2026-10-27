@@ -83,6 +83,17 @@ Operational rule that follows: **the live worktree is not a workspace.** Nobody
 switches it, cleans it, or builds in it. It is fast-forwarded deliberately, after
 its working tree is confirmed clean.
 
+A rule alone did not hold: on 2026-08-30 all four junctioned `SKILL.md` files were
+rewritten, ~5 uncommitted `/learn` lines were lost, and no check noticed, because
+junctioned pairs are exempt from drift. The mechanism behind the rule is now the
+watchdog's pending-`/learn` check (WD-362, `docs/watchdog.md`). Every 15 minutes it
+runs `git status` on this worktree, alerts by path and line count when anything is
+uncommitted (untracked files included), and snapshots the changed files byte-exact to
+`%LOCALAPPDATA%\hermes\backups\learn-edits\<UTC-timestamp>\`. A destroyed edit is
+then recoverable from the newest snapshot. Nothing is auto-committed, and git
+operations here are still not blocked: there is no hook for `restore` or
+`checkout -- <file>`, so a block would only be partial.
+
 ### 2. Does `git checkout` swap files under a live Hermes, and what is the blast radius?
 
 **Yes it does, and the blast radius is one turn wide, not a restart.** Established

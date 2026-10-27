@@ -41,7 +41,16 @@ class WatchdogTests(unittest.TestCase):
         # Both the extracted main script and the branch use the SAME drift input.
         # A default relative DeployScript would differ with the script's location.
         self.deploy = self.root / "fixture-deploy.ps1"
-        self.deploy.write_text("$Pairs = @()\n", encoding="utf-8", newline="\n")
+        # An actual clean scratch repo keeps /learn enabled, rather than suppressing
+        # the new current-main check or treating an unknown worktree as clean.
+        self.live = self.root / "live-skills"
+        subprocess.run(["git", "init", "-q", str(self.live)], check=True,
+                       capture_output=True, timeout=10)
+        live_path = self.live.as_posix().replace("'", "''")
+        self.deploy.write_text(f"$Pairs = @()\n$JunctionedRoots = @('{live_path}')\n",
+                               encoding="utf-8", newline="\n")
+        self.backups = self.root / "learn-backups"
+        self.outbox = self.root / "slack-outbox"
         self.policy = self.root / "policy.json"
         self.policy.write_text(json.dumps({"slack_channel_id": "fixture", "approver_slack_user_id": "fixture",
                                           "fallback_identity": {"username": "fixture", "icon_emoji": ":test_tube:"}}))
@@ -83,14 +92,18 @@ class WatchdogTests(unittest.TestCase):
                                  "-DryRun", "-CronDir", str(cron or self.cron),
                                  "-EnvFile", str(self.envfile), "-PolicyPath", str(self.policy),
                                  "-UserProfile", str(Path.home()),
+                                 "-LearnBackupRoot", str(self.backups),
+                                 "-SlackOutbox", str(self.outbox),
                                  "-DeployScript", str(deploy or self.deploy), *extra],
                                 env=self.env, capture_output=True, encoding="utf-8", timeout=30)
         text = result.stdout + result.stderr
         for fake in (*FAKES, "fixture-only-slack-549"):
             self.assertNotIn(fake, text)
-        self.assertIn("DRY RUN: no Slack post, no state written.", text)
+        self.assertIn("DRY RUN: no Slack post, no snapshot, no state written.", text)
         self.assertEqual(before, self.envfile.read_bytes() if self.envfile.exists() else None)
         self.assertFalse((self.cron / "watchdog-state.json").exists())
+        self.assertFalse(self.backups.exists(), "DryRun must not create snapshots")
+        self.assertFalse(self.outbox.exists(), "DryRun must not attempt alert delivery")
         return result.returncode, text
 
     def test_expiry_matrix(self):
@@ -211,8 +224,35 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(before[0], after[0])
         self.assertEqual(findings(before[1]), findings(after[1]))
         self.assertIn("DRIFT: CANNOT COMPARE", after[1])
+        self.assertIn("LEARN: CANNOT CHECK", after[1])
+        self.assertEqual(len(findings(after[1])), 2)
+        for row in findings(after[1]):
+            self.assertIn("deploy script not found", row)
+
+    def test_pending_learn_edits_match_main_without_snapshotting(self):
+        basepath, _ = self.baseline()
+        pending = self.live / "pending.txt"
+        pending.write_text("fixture line one\nfixture line two\n", encoding="utf-8", newline="\n")
+        before_bytes = pending.read_bytes()
+        before = self.run_watchdog(script=basepath)
+        after = self.run_watchdog()
+        self.assertEqual(before[0], 0)
+        self.assertEqual(before[0], after[0])
+        self.assertEqual(findings(before[1]), findings(after[1]))
+        self.assertEqual(findings(after[1]), ["- PENDING  pending.txt (+2/-0, untracked)"])
+        self.assertIn("LEARN: 1 uncommitted file(s)", after[1])
+        self.assertEqual(before_bytes, pending.read_bytes())
+
+    def test_unknown_learn_worktree_is_not_silenced(self):
+        basepath, _ = self.baseline()
+        self.deploy.write_text("$Pairs = @()\n", encoding="utf-8", newline="\n")
+        before = self.run_watchdog(script=basepath)
+        after = self.run_watchdog()
+        self.assertEqual(before[0], after[0])
+        self.assertEqual(findings(before[1]), findings(after[1]))
         self.assertEqual(len(findings(after[1])), 1)
-        self.assertIn("deploy script not found", findings(after[1])[0])
+        self.assertIn("LEARN: CANNOT CHECK", after[1])
+        self.assertIn("resolved no junctioned skill roots", findings(after[1])[0])
 
     def test_fixture_drift_does_not_require_windows_profile_environment(self):
         # Ubuntu Actions has HOME, not USERPROFILE. Supply the same explicit
@@ -226,6 +266,7 @@ class WatchdogTests(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertEqual(findings(text), [])
                 self.assertIn("DRIFT CLEAN:", text)
+                self.assertIn("LEARN CLEAN:", text)
 
     @unittest.skipUnless(os.getenv("WD549_REAL_CRON"), "TP4 opt-in real cron read-only comparison")
     def test_real_cron_findings_match_main(self):
@@ -239,6 +280,12 @@ class WatchdogTests(unittest.TestCase):
         after = self.run_watchdog(cron=cron, deploy=deploy)
         self.assertEqual(before[0], after[0])
         self.assertEqual(findings(before[1]), findings(after[1]))
+        # Compare entire drift/learn diagnostics too, including clean/unknown states.
+        # Do not filter PENDING rows away to make current-main preservation pass.
+        def diagnostics(text):
+            return text[text.index("DRIFT"):text.index("DRY RUN:")]
+        self.assertEqual(diagnostics(before[1]), diagnostics(after[1]))
+        self.assertIn("LEARN", diagnostics(after[1]))
         self.assertEqual(before_state, state.read_bytes() if state.exists() else None)
         print(f"TP4 real-cron comparison: identical findings ({len(findings(after[1]))}); state unchanged")
 
