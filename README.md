@@ -174,7 +174,8 @@ that file; stage skills record the actual model but never pretend to switch it m
 - Every spec has a mandatory **`Repo:`** header naming where the work happens; every
   build/review report opens with **`Agent: <platform / model>`** so you can always
   tell who did what.
-- Agents write to Linear through the factory bot identity; you approve merges from
+- Build and review write to Linear as you, through the platform's Linear tool;
+  only integrate writes through the factory bot identity. You approve merges from
   your own account. Integrate refuses same-identity approvals, so nothing merges on
   an approval a worker could have minted itself.
 - Model economics: spec on your strongest model or (Hermes only) the

@@ -48,7 +48,8 @@ After the in-flight guard:
 | No valid baseline (new/missing/corrupt state) | `no-baseline -> dispatched(pid=...)` |
 | Fingerprint differs | `changed -> dispatched(pid=...)` |
 | Fingerprint equal | `unchanged (skip)`; integrate first checks Slack |
-| Linear probe or env failure | Loud `FAIL-OPEN` dispatch for that lane |
+| Linear HTTP 401 on any ready lane | Skip build/review; dispatch integrate only for re-mint (subject to in-flight guard) |
+| Other Linear probe or env failure | Loud `FAIL-OPEN` dispatch for that lane |
 
 The baseline is recorded **at successful dispatch**, not when a run is later
 confirmed. A human's change during a run therefore causes another dispatch.
@@ -62,6 +63,29 @@ lane's dispatched fingerprint, so removing a confirmed marker cannot erase the
 baseline. Top-level `approval_dispatched` maps issue identifiers to Slack message
 timestamps. Missing/unknown keys need no migration; the old script ignores the
 new keys. Do not confuse a dispatch with a completed worker run.
+
+### Linear authentication failure exception
+
+All non-in-flight lanes are probed before any worker is dispatched. An HTTP 401
+from any Linear probe rejects the shared token for the whole tick, even if the
+build or review probe succeeded earlier. The output is:
+
+```text
+build: linear-auth-failed (401) -> skipped
+review: linear-auth-failed (401) -> skipped
+integrate: linear-auth-failed (401) -> dispatched(pid=...) for re-mint
+```
+
+Integrate uses the normal detached dispatch path. A live integrate marker still
+prints `integrate: in-flight (skip)` and prevents a second launch. Skipped ready
+lanes record no fingerprint and clear any old baseline, so the first healthy
+tick re-evaluates them. No approval is consumed by this recovery dispatch.
+
+The gatekeeper never mints or writes credentials. WD-547 supplies re-minting in
+the integrate preflight; until that change is deployed, dispatching integrate
+does not itself repair the token. Network errors, timeouts, HTTP 500 and invalid
+responses still fail open independently for each non-in-flight lane. A Slack
+HTTP 401 remains a Slack-check failure, not a Linear authentication failure.
 
 ### Slack approval check and its deliberate fail-open exception
 
@@ -85,7 +109,7 @@ comments already change the Linear fingerprint and need no Slack check.
 Missing `SLACK_FACTORY_BOT_TOKEN`, missing/invalid policy, HTTP errors and
 `ok:false` print `integrate: slack-check-failed (<reason>)` every affected tick,
 **do not dispatch on that account**, and do not stop other lanes. This is the
-one deliberate exception to fail-open: failing open on Slack outages would
+separate exception to fail-open: failing open on Slack outages would
 restore the very per-tick cost this change eliminates. The two-hour safety net
 and typed-comment path bound the approval delay. Error diagnostics exclude
 remote response bodies and exception text that might echo credentials.
@@ -97,6 +121,24 @@ remote response bodies and exception text that might echo credentials.
 `start_new_session` elsewhere), never waits, and never kills it on a timeout.
 Child output goes to `cron\gatekeeper-logs\<lane>-<timestamp>.log` under Hermes
 home. Each lane has its own exception boundary; one failure cannot starve others.
+
+### Per-lane worker profiles (exec team, 2026-10-20)
+
+Each lane's job lives in its own Hermes profile, one bot per stage:
+
+| Lane | Linear state | Job | Profile (bot) |
+|---|---|---|---|
+| build | Todo | `9b7b5987bcd6` | `builder` (Mason) |
+| review | In Review | `8e5c37a23b91` | `reviewer` (Quinn) |
+| integrate | Approved | `4e7a4d9c5fa4` | `integrator` (Harper) |
+
+The gatekeeper dispatches `hermes -p <profile> cron run <job>` and reads that
+lane's `last_run_at` from `profiles\<profile>\cron\jobs.json`. The gatekeeper job
+itself, its state file and the factory bot token stay in the default profile.
+A `--job-map` entry may be `[state, jobId]` (default profile) or
+`[state, jobId, profile]`; profile names must match `[a-z0-9][a-z0-9_-]*`, and a
+bad entry is a `LANE-ERROR` for that lane only. `--jobs-path`, when given,
+overrides the jobs file for every lane (scratch testing).
 
 A live in-flight marker produces `in-flight (skip)` before any Linear or Slack
 probe for that lane, regardless of queue changes. As before, a changed job
