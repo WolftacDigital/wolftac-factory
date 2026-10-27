@@ -82,6 +82,7 @@ class WatchdogTests(unittest.TestCase):
         result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(script),
                                  "-DryRun", "-CronDir", str(cron or self.cron),
                                  "-EnvFile", str(self.envfile), "-PolicyPath", str(self.policy),
+                                 "-UserProfile", str(Path.home()),
                                  "-DeployScript", str(deploy or self.deploy), *extra],
                                 env=self.env, capture_output=True, encoding="utf-8", timeout=30)
         text = result.stdout + result.stderr
@@ -212,6 +213,19 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("DRIFT: CANNOT COMPARE", after[1])
         self.assertEqual(len(findings(after[1])), 1)
         self.assertIn("deploy script not found", findings(after[1])[0])
+
+    def test_fixture_drift_does_not_require_windows_profile_environment(self):
+        # Ubuntu Actions has HOME, not USERPROFILE. Supply the same explicit
+        # operator profile to both scripts instead of depending on host defaults.
+        self.env.pop("USERPROFILE", None)
+        self.env.pop("LOCALAPPDATA", None)
+        basepath, _ = self.baseline()
+        for script in (basepath, SCRIPT):
+            with self.subTest(script=script.name):
+                code, text = self.run_watchdog(script=script)
+                self.assertEqual(code, 0)
+                self.assertEqual(findings(text), [])
+                self.assertIn("DRIFT CLEAN:", text)
 
     @unittest.skipUnless(os.getenv("WD549_REAL_CRON"), "TP4 opt-in real cron read-only comparison")
     def test_real_cron_findings_match_main(self):

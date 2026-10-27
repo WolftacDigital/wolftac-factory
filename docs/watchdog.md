@@ -221,7 +221,9 @@ Factory Checks uses `actions/checkout` with `fetch-depth: 0` so the baseline ref
 exists even in a fresh Actions checkout. A missing baseline remains an error, not
 a skipped test or a fallback comparison against the branch itself. Both script
 versions receive the same explicit drift input: a scratch pair list for isolated
-cases, or the repo's `deploy.ps1` for TP4. Drift checks remain enabled.
+cases, or the repo's `deploy.ps1` for TP4. Both also receive an explicit operator
+profile, since Ubuntu runners do not define Windows' `USERPROFILE`. Drift checks
+remain enabled.
 
 ```powershell
 python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v
