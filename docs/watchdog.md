@@ -16,8 +16,10 @@ that same incident). From Slack, a dead factory and an idle factory are both sil
 
 So this watchdog runs under **Windows Task Scheduler**, and reads only files:
 `jobs.json`, `ticker_heartbeat`, the newest Gatekeeper output, and the Linear bot
-expiry date from `-EnvFile`. No Hermes CLI, no gateway API. It keeps working
-when Hermes is entirely down — which is exactly when it matters.
+expiry date from `-EnvFile`. Health checks do not need a gateway API or CLI.
+Delivery uses the supported `hermes send` CLI. Checks still run when Hermes is
+down; if the CLI cannot deliver, exit 3 and the pending sidecar record expose the
+failure to Task Scheduler. Delivery is not independent of the Hermes installation.
 
 ## What it checks
 
@@ -44,8 +46,7 @@ It reads only the newest file in `output\<job-id>\`, ordered by last-write time 
 newest output unhealthy. A missing Gatekeeper job, output directory or output file
 adds no finding; other checks cover scheduler liveness. An unreadable existing
 output produces an unhealthy read finding. Output contents are never included in
-alerts. Both checks feed the existing transition/nag/recovery path, with no new
-Slack sender or channel.
+alerts. Both checks feed the existing transition/nag/recovery path to Discord.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
@@ -102,7 +103,7 @@ points at the separate worker alert instead. Asserting normal operation in the s
 as an outage alert can mask the failure the watchdog exists to surface.
 
 Alerts carry **paths and line counts only, never file content**: a `/learn` edit can
-pick up anything, and this goes to a Slack channel.
+pick up anything, and this goes to the private Discord #approvals channel.
 
 Drift has its own transition, its own 12h nag, and its own single recovery message,
 tracked in `watchdog-state.json` under `drift_status` / `drift_last_alert_at`. A sidecar
@@ -142,10 +143,10 @@ separate from liveness and drift.
 - Disable with `-SkipLearn`, which carries the previous state forward untouched.
 
 Regression suite: `deploy/tests/factory-watchdog-learn.tests.ps1` (hermetic: scratch
-repo, scratch junctioned worktree, `-SlackOutbox` interception).
+repo, scratch junctioned worktree, `-AlertOutbox` interception).
 
-An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is an
-UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
+An unreadable `jobs.json`, missing heartbeat, or unreadable expiry input is an
+UNHEALTHY finding that alerts. Approval policy is no longer a delivery dependency. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
 
 ### Deployment order
@@ -160,22 +161,64 @@ modifies nor deploys those components.
 
 ## Alerts
 
-On a healthy → unhealthy transition it posts to the channel in
-`deploy/approval-policy.json` (`slack_channel_id`), @-mentioning `approver_slack_user_id`,
+On a healthy → unhealthy transition it posts to Discord **#approvals**
+(`discord:1562236246158221323`), @-mentioning Jonathan (`<@1022999767753691186>`),
 naming the job, the failing check, and the observed value. While it stays unhealthy it
 re-pings at most every `-NagHours` (default 12) so a dead factory cannot decay into
 normalized silence. On unhealthy → healthy it posts exactly one recovery message.
 
-Alerts post as the policy's `fallback_identity` (**Wolftac Factory** / `:factory:`) —
-deliberately not any worker's face, and never as Jonathan.
+Alerts use Harper's Hermes profile `integrator` (expected bot user
+`1562178628211449966`), never a human session. `-DiscordTarget` and
+`-HermesProfile` override the destination and profile. The watchdog invokes:
+
+```text
+hermes -p integrator send --to discord:1562236246158221323 --file <temporary-file> --json
+```
+
+It prefers `%LOCALAPPDATA%\hermes\bin\hermes.exe` when present, else `hermes`
+on PATH. Message files are ASCII text encoded as UTF-8 without a BOM, removed
+in `finally` after every attempt. The temp root is `TMPDIR` when set, else the
+OS temp directory. Success requires exit zero, JSON `success: true`, and a
+nonempty numeric `message_id`; raw CLI output/errors are never logged.
+`-PolicyPath` remains accepted but unused for old task invocations.
+`-AlertOutbox` intercepts delivery to local files for tests; `-SlackOutbox` is a
+compatibility alias only, not a messaging transport.
 
 State lives in `watchdog-state.json` **inside the watched cron directory**, so a
 fault-injection run against a scratch dir can never read or clobber the live
 watchdog's memory.
 
-`SLACK_FACTORY_BOT_TOKEN` is read at runtime from `%LOCALAPPDATA%\hermes\.env` (or the
-environment). The value never appears in the script, the task definition, the sidecar,
-logs, or any alert.
+No messaging token is read by this script. Hermes handles its own credentials.
+`-EnvFile` remains solely for the existing Linear expiry-date check.
+
+The optional `delivery_failure` object in the sidecar holds pending messages by
+concern (`liveness`, `drift`, `learn`) and a bounded error code. A nonzero CLI exit,
+missing id, malformed response or command failure returns exit 3, preserves the
+last delivered timestamp and retries on the next run. A pending unhealthy alert
+is delivered even if checks have since recovered, then the recovery is delivered.
+A failed recovery is also retried. A same-state retry does not produce a duplicate
+nag. Each concern is independent; skipped concerns retain their pending records.
+Missing, malformed or old-format sidecars start with no pending delivery.
+`-DryRun` returns before any send, replay, snapshot or state write.
+
+### Operator-only cutover and rollback
+
+Do not retire credentials or change the running service during build/review.
+After WD-551 and WD-546 are both deployed, Jonathan or an authorized interactive
+operator backs up the live default `.env` and `config.yaml`, removes the retired
+Slack factory credential from default and integrator, disables Logan's Slack
+platform by removing its Slack token/allowlist keys, and updates his SOUL wording.
+Any gateway restart and verification belongs to that operator step, never this
+watchdog or a build tick. Do not delete the workspace, apps, channels or history.
+Approval-path removal belongs to WD-546; this change does not retire that path.
+Reverting the code restores the old delivery path only while its credential is
+still available. Keep credential backups private and do not delete rollback data.
+
+### History
+
+The old watchdog used `SLACK_FACTORY_BOT_TOKEN` and `chat.postMessage`.
+These names are retained here only to identify the credentials the operator
+removes after cutover. There is no Slack API or credential read in the watchdog.
 
 ## Exit codes
 
@@ -183,11 +226,11 @@ logs, or any alert.
 |---|---|
 | 0 | healthy |
 | 1 | unhealthy |
-| 3 | Slack delivery failed |
+| 3 | Discord delivery failed |
 | 4 | watchdog could not read what it needs |
 
 Non-zero is deliberate: Task Scheduler's **Last Result** column becomes a health signal
-on its own, readable without opening Slack.
+on its own, readable without opening Discord.
 
 ## Install
 
@@ -208,7 +251,7 @@ Register-ScheduledTask -TaskName "WolftacFactoryWatchdog" `
     -Description "Out-of-band liveness watchdog for the Wolftac factory worker loops (WD-345)."
 ```
 
-`-MultipleInstances IgnoreNew` keeps a slow Slack call from stacking runs.
+`-MultipleInstances IgnoreNew` keeps a slow CLI send from stacking runs.
 
 Two mechanics that will bite if you change this command:
 
@@ -243,6 +286,13 @@ schtasks /query /tn WolftacFactoryWatchdog /v /fo LIST
 
 Expected: `UserId: SYSTEM`, `LogonType: ServiceAccount`, interval `PT15M`, and
 `Last Result: 0` after a scheduled tick.
+
+The historical SYSTEM task registration above is unchanged by WD-551. Before
+cutover, verify that its execution account resolves the intended Hermes executable
+and Harper profile. The CLI selects profiles from its own environment; `-EnvFile`
+and `-UserProfile` do not redirect Hermes credentials. A successful interactive
+stub test does not establish that SYSTEM can deliver as Harper. Missing CLI/profile
+access is a delivery failure, not permission to copy tokens or run as another bot.
 
 ## Verify
 
@@ -284,6 +334,17 @@ The sidecar's `LastWriteTime` should advance every 15 minutes. That file is the 
 the task is really executing — a registered task that never runs looks identical to a
 healthy factory, which is the failure mode this whole issue exists to kill.
 
+Hermetic Discord transport regression (synthetic CLI response, not live proof):
+
+```powershell
+python -B -m unittest discover -s deploy/tests -p test_watchdog_discord.py -v
+```
+
+It executes the real watchdog against a scratch paused job, asserts exact CLI
+arguments, UTF-8/no-BOM payload and deletion, transition/cooldown/nag/recovery,
+nonzero/missing-id/malformed responses, pending retry after recovery, and DryRun
+byte-for-byte state preservation. No real Hermes process or messaging API runs.
+
 ## Silence test (does it actually alert?)
 
 Never doctor the live cron directory — the workers read it. Use a scratch copy:
@@ -304,8 +365,10 @@ recovery message after restoring `enabled: true`.
 
 **Always pass `-AlertPrefix` for drills.** An unmarked test alert that @-mentions
 Jonathan is indistinguishable from the real outage this watchdog exists to announce.
-Delete drill messages afterwards (`chat.delete` with the same bot token) and leave the
-channel clean — a channel that cries wolf trains people to ignore it.
+An authorized operator must read back the returned message ids in #approvals,
+verify Harper's author id and Jonathan's mention, and delete the drill messages
+through the supported Discord surface. Never use a human account or a different
+bot as a substitute. A local intercepted/stub run does not prove live delivery.
 
 Use `-DryRun` to see findings with no post and no state write.
 

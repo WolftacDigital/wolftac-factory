@@ -2,8 +2,8 @@
 Out-of-band factory watchdog (WD-345).
 
 Watches the Hermes cron scheduler that runs the factory worker loops, from OUTSIDE
-Hermes: pure filesystem reads of `jobs.json` and `ticker_heartbeat`, no CLI, no
-gateway API. That is the whole point — on 2026-07-27 the Build and Review workers
+Hermes: filesystem health checks with no gateway API. Delivery alone uses the Hermes send
+CLI; checks do not need a live gateway. That is the whole point — on 2026-07-27 the Build and Review workers
 died, the 2026-08-02 Hermes update left them disabled, and nobody noticed for twelve
 days, because every health signal lived inside the thing that had failed. A watchdog
 scheduled through Hermes cron would have died with it.
@@ -31,7 +31,7 @@ And once per run, independent of the cron directories:
      message: a drifted-but-running factory is not an outage, and conflating the two
      would either cry wolf about a healthy factory or bury a worker death under a
      docs-drift message. Alerts carry paths and line counts only, never file content
-     — a /learn edit can pick up anything, and this goes to a Slack channel.
+     — a /learn edit can pick up anything, and this goes to a Discord channel.
      Disable with -SkipDrift.
   6. pending /learn edits (WD-362) — `git status` of the junctioned live worktree.
      Junctioned skills are exempt from drift (the repo IS the deployed copy), so
@@ -47,11 +47,11 @@ Alert discipline: post on the healthy -> unhealthy transition, re-ping at most e
 unhealthy -> healthy transition. A dead factory must not decay into normalized
 silence, and a flapping check must not spam the channel.
 
-Exit codes: 0 healthy - 1 unhealthy - 3 Slack delivery failed - 4 watchdog could not
+Exit codes: 0 healthy - 1 unhealthy - 3 Discord delivery failed - 4 watchdog could not
 read what it needs. A watchdog that fails quiet has the disease it treats, so an
 unreadable jobs.json or .env is an UNHEALTHY finding that alerts, never a silent exit.
 
-The Slack bot token is read at runtime and never printed, logged, or persisted.
+Delivery uses the supported Hermes send CLI; the script never reads a messaging token.
 #>
 [CmdletBinding()]
 param(
@@ -60,7 +60,12 @@ param(
     # dir is NOT the default one — see docs\watchdog.md.
     [string[]]$CronDir = @("$env:LOCALAPPDATA\hermes\cron"),
     [switch]$DryRun,
-    [string]$PolicyPath = (Join-Path $PSScriptRoot "approval-policy.json"),
+    # Retained for older invocations; delivery no longer uses the approval policy.
+    [string]$PolicyPath = "",
+    [ValidatePattern('^discord:[0-9]+$')]
+    [string]$DiscordTarget = "discord:1562236246158221323",
+    [ValidateNotNullOrEmpty()]
+    [string]$HermesProfile = "integrator",
     [string]$EnvFile = "$env:LOCALAPPDATA\hermes\.env",
     [string]$JobNamePattern = "Wolftac Factory *",
     [int]$HeartbeatMaxAgeMinutes = 5,
@@ -90,8 +95,9 @@ param(
     [int]$LearnRetentionDays = 30,
     [switch]$SkipLearn,
     # Test seam: write each alert payload to a file here instead of posting it, so the
-    # regression suite can assert on exact message text without touching Slack.
-    [string]$SlackOutbox = ""
+    # regression suite can assert on exact message text without touching Discord.
+    [Alias("SlackOutbox")]
+    [string]$AlertOutbox = ""
 )
 
 Set-StrictMode -Version Latest
@@ -156,17 +162,6 @@ function Add-Report([string]$Scope, [string]$Check, [string]$Result, [string]$Ob
     })
 }
 
-function Get-SlackToken {
-    # Runtime read only. The value is never echoed, written to the sidecar, or
-    # embedded in the scheduled-task definition.
-    if ($env:SLACK_FACTORY_BOT_TOKEN) { return $env:SLACK_FACTORY_BOT_TOKEN }
-    if (-not (Test-Path -LiteralPath $EnvFile)) { return $null }
-    foreach ($line in Get-Content -LiteralPath $EnvFile) {
-        if ($line -match '^\s*SLACK_FACTORY_BOT_TOKEN\s*=\s*(.+?)\s*$') { return $Matches[1] }
-    }
-    return $null
-}
-
 function Test-LinearTokenExpiry {
     # Match only the date key, never the bot token or app credentials. Do not print
     # raw values or exceptions: a malformed value could itself contain a secret.
@@ -209,20 +204,6 @@ function Test-LinearTokenExpiry {
     }
 }
 
-function Get-Policy {
-    if (-not (Test-Path -LiteralPath $PolicyPath)) {
-        Add-Finding "watchdog cannot read approval policy at $PolicyPath"
-        $script:readFailure = $true
-        return $null
-    }
-    try { return Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json }
-    catch {
-        Add-Finding "watchdog cannot parse approval policy at ${PolicyPath}: $($_.Exception.Message)"
-        $script:readFailure = $true
-        return $null
-    }
-}
-
 function Get-Jobs([string]$Path) {
     # Returns $null on any read/parse failure — the caller turns that into a finding.
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
@@ -245,7 +226,8 @@ function Get-Jobs([string]$Path) {
 
 function Get-Prop($Object, [string]$Name) {
     if ($null -eq $Object) { return $null }
-    if ($Object.PSObject.Properties.Name -contains $Name) { return $Object.$Name }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -ne $property) { return $property.Value }
     return $null
 }
 
@@ -360,45 +342,76 @@ function Test-CronDirectory([string]$Dir) {
 
 function Get-StatePath([string]$Dir) { Join-Path $Dir "watchdog-state.json" }
 
-function Send-SlackAlert([string]$Text, $Policy) {
-    if ($SlackOutbox) {
-        New-Item -ItemType Directory -Force -Path $SlackOutbox | Out-Null
-        $file = Join-Path $SlackOutbox ("{0:yyyyMMddTHHmmssfff}-{1}.txt" -f (Get-Date), [guid]::NewGuid().ToString('N').Substring(0, 6))
-        Set-Content -LiteralPath $file -Value $Text -Encoding utf8 -NoNewline
-        Write-Host "SLACK: intercepted to $file (-SlackOutbox)"
+function Send-DiscordAlert([string]$Text) {
+    # One Boolean on the success pipeline. Never echo CLI output/errors, which may
+    # include private diagnostics. The CLI owns credentials; this script does not.
+    $script:deliveryError = 'send-failed'
+    $file = $null
+    try {
+        $Text = $Text -replace '[^\x00-\x7F]', '?'
+        if ($AlertOutbox) {
+            New-Item -ItemType Directory -Force -Path $AlertOutbox | Out-Null
+            $file = Join-Path $AlertOutbox ([guid]::NewGuid().ToString('N') + '.txt')
+            [IO.File]::WriteAllText($file, $Text, [Text.UTF8Encoding]::new($false))
+            $file = $null # intercepted payload is retained for assertions
+            Write-Host "DISCORD: intercepted (-AlertOutbox)"
+            return $true
+        }
+        $hermes = 'hermes'
+        if ($env:LOCALAPPDATA) {
+            $installed = Join-Path $env:LOCALAPPDATA 'hermes/bin/hermes.exe'
+            if (Test-Path -LiteralPath $installed -PathType Leaf) { $hermes = $installed }
+        }
+        $tempRoot = if ($env:TMPDIR) { $env:TMPDIR } else { [IO.Path]::GetTempPath() }
+        $file = Join-Path $tempRoot ('watchdog-' + [guid]::NewGuid().ToString('N') + '.txt')
+        [IO.File]::WriteAllText($file, $Text, [Text.UTF8Encoding]::new($false))
+        $result = & $hermes -p $HermesProfile send --to $DiscordTarget --file $file --json 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $script:deliveryError = 'cli-nonzero'
+            Write-Host 'DISCORD: CLI returned non-zero; delivery pending.'
+            return $false
+        }
+        $response = ($result -join "`n") | ConvertFrom-Json -ErrorAction Stop
+        $id = Get-Prop $response 'message_id'
+        if ((Get-Prop $response 'success') -ne $true -or "$id" -notmatch '^[0-9]+$') {
+            $script:deliveryError = 'missing-message-id'
+            Write-Host 'DISCORD: no successful message id; delivery pending.'
+            return $false
+        }
+        Write-Host "DISCORD: accepted message $id via profile $HermesProfile to $DiscordTarget"
+        return $true
+    } catch {
+        Write-Host 'DISCORD: command or JSON response failed; delivery pending.'
+        return $false
+    } finally {
+        if ($file -and (Test-Path -LiteralPath $file)) { Remove-Item -LiteralPath $file -Force }
+    }
+}
+
+function Send-Concern([string]$Key, [bool]$ShouldPost, [string]$Message, [string]$Status) {
+    # Retain undelivered messages, including recoveries, in one optional sidecar
+    # field. Retry before the current transition even if checks have become healthy.
+    $pending = $script:deliveryFailures[$Key]
+    if ($pending) {
+        if (-not (Send-DiscordAlert $pending.message)) {
+            $script:deliveryFailures[$Key].error = $script:deliveryError
+            return $false
+        }
+        $script:lastDelivery[$Key] = (Get-Date).ToString('o')
+        $script:deliveryFailures.Remove($Key)
+        # Same state: replay is the alert, not replay plus a duplicate/new nag.
+        if ($pending.status -eq $Status) { return $true }
+    }
+    if (-not $ShouldPost) { return $true }
+    if ($AlertPrefix) { $Message = "$AlertPrefix`n$Message" }
+    if (Send-DiscordAlert $Message) {
+        $script:lastDelivery[$Key] = (Get-Date).ToString('o')
         return $true
     }
-    $token = Get-SlackToken
-    if (-not $token) {
-        # Write-Host keeps diagnostics visible without adding them to the function's
-        # success-output pipeline. The caller must receive exactly one Boolean;
-        # otherwise PowerShell returns [diagnostic, Boolean], a truthy array that
-        # falsely records failed delivery as success and suppresses retries for 12h.
-        Write-Host "SLACK: no SLACK_FACTORY_BOT_TOKEN available (checked env and $EnvFile) - cannot deliver"
-        return $false
+    $script:deliveryFailures[$Key] = @{
+        message = $Message; status = $Status; error = $script:deliveryError
     }
-    $identity = $Policy.fallback_identity   # watchdog alerts are never a worker's face
-    $body = @{
-        channel    = $Policy.slack_channel_id
-        text       = $Text
-        username   = $identity.username
-        icon_emoji = $identity.icon_emoji
-    } | ConvertTo-Json -Depth 5
-    try {
-        $resp = Invoke-RestMethod -Uri "https://slack.com/api/chat.postMessage" -Method Post `
-            -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json; charset=utf-8" } `
-            -Body ([Text.Encoding]::UTF8.GetBytes($body))
-    } catch {
-        Write-Host "SLACK: delivery failed - $($_.Exception.Message)"
-        return $false
-    }
-    if (-not $resp.ok) {
-        # $resp.error is a Slack error code (e.g. channel_not_found), never a credential.
-        Write-Host "SLACK: API returned not-ok - $($resp.error)"
-        return $false
-    }
-    Write-Host "SLACK: posted as '$($identity.username)' to $($Policy.slack_channel_id) (ts $($resp.ts))"
-    return $true
+    return $false
 }
 
 function Measure-Drift {
@@ -465,7 +478,7 @@ function Measure-Drift {
         $script:driftChecked++
         if ($srcHash -ne $dstHash) {
             # Line counts only -- never file content. A /learn edit can pick up
-            # anything, and this message goes to a Slack channel.
+            # anything, and this message goes to a Discord channel.
             # Parenthesise the call: `Get-LfText $p -split "..."` binds -split as an
             # argument to the function instead of operating on its result, and every
             # count silently comes back 0 -- an alert that names a drifted target and
@@ -593,7 +606,7 @@ function Measure-Learn {
 function Format-LearnLine($p) {
     $a = if ($p.Added -lt 0) { '?' } else { $p.Added }
     $r = if ($p.Removed -lt 0) { '?' } else { $p.Removed }
-    # Paths and counts only. A /learn edit can pick up anything; this goes to Slack.
+    # Paths and counts only. A /learn edit can pick up anything; this goes to Discord.
     "PENDING  {0} (+{1}/-{2}, {3})" -f $p.Path, $a, $r, $p.Kind
 }
 
@@ -650,14 +663,6 @@ Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
 if (-not $SkipLearn) { Measure-Learn }
 
-$policy = Get-Policy
-# Alert delivery is part of watchdog health, not a capability to discover only after
-# the factory is already down. If the token cannot be read, surface that loss now so
-# Task Scheduler never records a false healthy result while Slack alerting is dead.
-if (-not (Get-SlackToken)) {
-    Add-Finding "watchdog cannot read SLACK_FACTORY_BOT_TOKEN (checked environment and $EnvFile)"
-    $readFailure = $true
-}
 $healthy = ($findings.Count -eq 0)
 
 Write-Output "Factory watchdog $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - watching: $($CronDir -join ', ')"
@@ -702,15 +707,8 @@ if ($SkipLearn) {
 }
 
 if ($DryRun) {
-    Write-Output "DRY RUN: no Slack post, no snapshot, no state written."
+    Write-Output "DRY RUN: no Discord post, no snapshot, no state written."
     exit ($healthy ? 0 : 1)
-}
-
-if ($null -eq $policy) {
-    # Without the policy we cannot address a message; say so on stdout so the task's
-    # Last Result and transcript still carry the signal.
-    Write-Output "Cannot alert: approval policy unreadable."
-    exit 4
 }
 
 # ── transition-based alerting ────────────────────────────────────────────────────
@@ -721,19 +719,35 @@ $prev = $null
 if (Test-Path -LiteralPath $statePath) {
     try { $prev = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { $prev = $null }
 }
+$deliveryFailures = @{}
+$lastDelivery = @{}
+$oldFailures = Get-Prop $prev 'delivery_failure'
+if ($oldFailures) {
+    foreach ($key in @('liveness', 'drift', 'learn')) {
+        $entry = Get-Prop $oldFailures $key
+        if ($entry -and (Get-Prop $entry 'message') -and (Get-Prop $entry 'status')) {
+            $deliveryFailures[$key] = @{
+                message = $entry.message; status = $entry.status; error = 'pending'
+            }
+        }
+    }
+}
 $prevStatus = if ($prev) { Get-Prop $prev 'status' } else { 'healthy' }
+# Pending delivery defines the transition still owed to the recipient.
+if ($deliveryFailures['liveness']) { $prevStatus = $deliveryFailures['liveness'].status }
 $prevAlert = if ($prev) { Get-Prop $prev 'last_alert_at' } else { $null }
 # A sidecar written before WD-348 has no drift keys. Missing or old-format state is
 # "no prior state", never an error -- that is what makes rollback and roll-forward
 # both work with no migration step.
 $prevDriftStatus = if ($prev) { Get-Prop $prev 'drift_status' } else { $null }
 if (-not $prevDriftStatus) { $prevDriftStatus = 'clean' }
+if (-not $SkipDrift -and $deliveryFailures['drift']) { $prevDriftStatus = $deliveryFailures['drift'].status }
 $prevDriftAlert = if ($prev) { Get-Prop $prev 'drift_last_alert_at' } else { $null }
 
 $now = Get-Date
 $shouldPost = $false
 $message = $null
-$mention = "<@$($policy.approver_slack_user_id)>"
+$mention = "<@1022999767753691186>"
 
 if (-not $healthy) {
     $detail = ($findings | ForEach-Object { "- $_" }) -join "`n"
@@ -754,11 +768,7 @@ if (-not $healthy) {
     $message = ":white_check_mark: *Factory watchdog: recovered* - all checks passing again."
 }
 
-$delivered = $true
-if ($shouldPost) {
-    if ($AlertPrefix) { $message = "$AlertPrefix`n$message" }
-    $delivered = Send-SlackAlert $message $policy
-}
+$delivered = Send-Concern 'liveness' $shouldPost $message $(if ($healthy) { 'healthy' } else { 'unhealthy' })
 
 # ── drift alerting, on its own transition ────────────────────────────────────────
 # Same discipline as liveness (post on transition, nag at most every -NagHours, one
@@ -804,10 +814,7 @@ if (-not $SkipDrift) {
 }
 
 $driftDelivered = $true
-if ($driftShouldPost) {
-    if ($AlertPrefix) { $driftMessage = "$AlertPrefix`n$driftMessage" }
-    $driftDelivered = Send-SlackAlert $driftMessage $policy
-}
+if (-not $SkipDrift) { $driftDelivered = Send-Concern 'drift' $driftShouldPost $driftMessage $driftStatus }
 
 # ── pending /learn edits, on their own transition (WD-362) ───────────────────────
 # Same post-on-transition / nag / one-recovery discipline, a third state machine and
@@ -815,6 +822,7 @@ if ($driftShouldPost) {
 # keys; that is "no prior state", never an error.
 $prevLearnStatus = if ($prev) { Get-Prop $prev 'learn_status' } else { $null }
 if (-not $prevLearnStatus) { $prevLearnStatus = 'clean' }
+if (-not $SkipLearn -and $deliveryFailures['learn']) { $prevLearnStatus = $deliveryFailures['learn'].status }
 $prevLearnAlert = if ($prev) { Get-Prop $prev 'learn_last_alert_at' } else { $null }
 $prevLearnFingerprint = if ($prev) { Get-Prop $prev 'learn_fingerprint' } else { $null }
 $prevLearnSnapshot = if ($prev) { Get-Prop $prev 'learn_snapshot' } else { $null }
@@ -883,10 +891,7 @@ if (-not $SkipLearn) {
 }
 
 $learnDelivered = $true
-if ($learnShouldPost) {
-    if ($AlertPrefix) { $learnMessage = "$AlertPrefix`n$learnMessage" }
-    $learnDelivered = Send-SlackAlert $learnMessage $policy
-}
+if (-not $SkipLearn) { $learnDelivered = Send-Concern 'learn' $learnShouldPost $learnMessage $learnStatus }
 
 # Persist AFTER the attempt. A failed delivery leaves last_alert_at untouched so the
 # next tick retries rather than silently swallowing the alert.
@@ -894,24 +899,26 @@ $newState = [ordered]@{
     status              = if ($healthy) { 'healthy' } else { 'unhealthy' }
     checked_at          = $now.ToString('o')
     findings            = @($findings)
-    last_alert_at       = if ($shouldPost -and $delivered) { $now.ToString('o') } else { $prevAlert }
+    last_alert_at       = if ($lastDelivery.ContainsKey('liveness')) { $lastDelivery['liveness'] } else { $prevAlert }
     # Drift state rides alongside liveness state in the same disposable sidecar.
     # -SkipDrift carries the previous drift state forward untouched rather than
     # asserting "clean" for a check that never ran.
     drift_status        = $driftStatus
     drift_findings      = @(@($driftFindings) + @($driftUnreadable))
-    drift_last_alert_at = if ($driftShouldPost -and $driftDelivered) { $now.ToString('o') } else { $prevDriftAlert }
+    drift_last_alert_at = if ($lastDelivery.ContainsKey('drift')) { $lastDelivery['drift'] } else { $prevDriftAlert }
     learn_status        = $learnStatus
     learn_findings      = @(@($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ }))
-    learn_last_alert_at = if ($learnShouldPost -and $learnDelivered) { $now.ToString('o') } else { $prevLearnAlert }
+    learn_last_alert_at = if ($lastDelivery.ContainsKey('learn')) { $lastDelivery['learn'] } else { $prevLearnAlert }
     learn_fingerprint   = $learnFingerprint
     learn_snapshot      = $learnSnapshot
+    delivery_failure    = $deliveryFailures
 }
 try {
     $newState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath -Encoding utf8
     Write-Output "STATE: $statePath -> $($newState.status)"
 } catch {
-    Write-Output "STATE: could not write $statePath - $($_.Exception.Message)"
+    Write-Output "STATE: could not write $statePath"
+    exit 4
 }
 
 if (-not $delivered -or -not $driftDelivered -or -not $learnDelivered) { exit 3 }
