@@ -15,7 +15,8 @@ scheduler it is supposed to be watching (the old `agentic-os-watchdog` job vanis
 that same incident). From Slack, a dead factory and an idle factory are both silence.
 
 So this watchdog runs under **Windows Task Scheduler**, and reads only files:
-`jobs.json` and `ticker_heartbeat`. No Hermes CLI, no gateway API. It keeps working
+`jobs.json`, `ticker_heartbeat`, the newest Gatekeeper output, and the Linear bot
+expiry date from `-EnvFile`. No Hermes CLI, no gateway API. It keeps working
 when Hermes is entirely down — which is exactly when it matters.
 
 ## What it checks
@@ -28,6 +29,23 @@ Per cron directory, every run:
 | `enabled-not-paused` | a `Wolftac Factory *` job has `enabled: false` or `paused: true` |
 | `last-status` | a job's `last_status` is `error` |
 | `next-run-fresh` | `next_run_at` is more than `-StaleIntervals` (default 3) scheduling intervals in the past |
+| `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
+
+Once per run, `linear-token-expiry` checks only
+`LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` in `-EnvFile`. It adds one finding if the date
+is missing, unparseable, expired, or **less than 3 days away**. Valid dates are
+ISO-8601 timestamps with a timezone; comparisons and reported dates use UTC. The
+expiry key may be quoted. Invalid raw values are never echoed. The watchdog does
+not extract, validate, or re-mint a Linear token, and never writes an `.env` file.
+
+The Gatekeeper check runs for each `-CronDir`, independently of `-JobNamePattern`.
+It reads only the newest file in `output\<job-id>\`, ordered by last-write time UTC
+(descending filename breaks ties). An older rejection does not keep a healthy
+newest output unhealthy. A missing Gatekeeper job, output directory or output file
+adds no finding; other checks cover scheduler liveness. An unreadable existing
+output produces an unhealthy read finding. Output contents are never included in
+alerts. Both checks feed the existing transition/nag/recovery path, with no new
+Slack sender or channel.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
@@ -130,6 +148,16 @@ An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is a
 UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
 
+### Deployment order
+
+WD-547's automatic re-mint starts within 5 days of expiry; the 3-day watchdog
+threshold allows that process a 2-day recovery window. Prefer deploying WD-547
+first. If this check is deployed before WD-547's first mint writes the date, the
+**expiry date missing** alert is intentional and remains until the date exists.
+Any manual date seeding is WD-547's post-merge operator step, not a build/review
+action. WD-548 supplies the `linear-auth-failed` output marker. This change neither
+modifies nor deploys those components.
+
 ## Alerts
 
 On a healthy → unhealthy transition it posts to the channel in
@@ -217,6 +245,35 @@ Expected: `UserId: SYSTEM`, `LogonType: ServiceAccount`, interval `PT15M`, and
 `Last Result: 0` after a scheduled tick.
 
 ## Verify
+
+The WD-549 regression suite invokes PowerShell with `-DryRun` only, using scratch
+files and fake credentials. It covers expiry thresholds, invalid/missing dates,
+newest-output selection, secret suppression, multiple cron directories and unchanged
+existing checks/alert routing:
+
+The comparison requires `origin/main`; run `git fetch origin` first locally.
+Factory Checks uses `actions/checkout` with `fetch-depth: 0` so the baseline ref
+exists even in a fresh Actions checkout. A missing baseline remains an error, not
+a skipped test or a fallback comparison against the branch itself. Both script
+versions receive the same explicit drift input: a scratch pair list for isolated
+cases, or the repo's `deploy.ps1` for TP4. Both also receive an explicit operator
+profile, since Ubuntu runners do not define Windows' `USERPROFILE`. Drift and
+`/learn` checks remain enabled. Isolated cases provide a real clean scratch Git
+repository as the junction root, not an empty root list that means "cannot check".
+The suite also compares pending untracked edits, missing deploy inputs and unknown
+junction roots against current main, and asserts DryRun creates no snapshot,
+alert-outbox file or watchdog state. TP4 compares all finding rows and the complete
+drift/learn diagnostics, including `PENDING` rows, without filtering them away.
+
+```powershell
+python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v
+```
+
+For the optional read-only comparison against the current `origin/main` script,
+set `WD549_REAL_CRON` to the real cron directory before that command. The test still
+uses a scratch credential file and asserts that watchdog state is unchanged. It
+compares findings, not timestamps in the report header. Never remove `-DryRun`
+from the test runner.
 
 ```powershell
 schtasks /query /tn WolftacFactoryWatchdog /v /fo LIST | Select-String "TaskName|Status|Last Run|Last Result|Next Run"

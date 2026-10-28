@@ -19,6 +19,10 @@ Checks, per cron directory:
   2. job enabled       — every job matching -JobNamePattern is enabled and not paused
   3. job last_status   — not "error"
   4. job next_run_at   — not more than -StaleIntervals scheduling intervals in the past
+  5. gatekeeper auth  — newest Gatekeeper output does not contain linear-auth-failed
+
+Once per run: the Linear bot expiry date in -EnvFile is valid and at least 3 days away.
+Only the expiry key is extracted; no Linear credentials are used or validated.
 
 And once per run, independent of the cron directories:
   5. deploy drift (WD-348) — repo vs deployed content for every pair deploy.ps1 owns,
@@ -163,6 +167,48 @@ function Get-SlackToken {
     return $null
 }
 
+function Test-LinearTokenExpiry {
+    # Match only the date key, never the bot token or app credentials. Do not print
+    # raw values or exceptions: a malformed value could itself contain a secret.
+    $value = $null
+    try {
+        foreach ($line in Get-Content -LiteralPath $EnvFile -ErrorAction Stop) {
+            if ($line -match '^\s*LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT\s*=\s*(.*?)\s*$') {
+                $value = $Matches[1].Trim()
+                if ($value -match '^(["''])(.*)\1$') { $value = $Matches[2] }
+                break
+            }
+        }
+    } catch {
+        Add-Finding "linear-token-expiry: watchdog cannot read expiry date from $EnvFile"
+        Add-Report $EnvFile "linear-token-expiry" "FAIL" "expiry file unreadable"
+        $script:readFailure = $true
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        Add-Finding "linear-token-expiry: expiry date missing (LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT)"
+        Add-Report $EnvFile "linear-token-expiry" "FAIL" "expiry date missing"
+        return
+    }
+    $expires = [datetimeoffset]::MinValue
+    # Require an ISO-8601 timestamp with a timezone, not a locale-dependent date.
+    $iso = '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$'
+    if ($value -cnotmatch $iso -or -not [datetimeoffset]::TryParse(
+            $value, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$expires)) {
+        Add-Finding "linear-token-expiry: expiry date unparseable (expected ISO-8601 timestamp with timezone)"
+        Add-Report $EnvFile "linear-token-expiry" "FAIL" "expiry date unparseable"
+        return
+    }
+    $date = $expires.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'")
+    if ($expires -lt [datetimeoffset]::UtcNow.AddDays(3)) {
+        Add-Finding "linear-token-expiry: expires $date (expired or less than 3 days away); automatic re-mint needs attention"
+        Add-Report $EnvFile "linear-token-expiry" "FAIL" "expires $date"
+    } else {
+        Add-Report $EnvFile "linear-token-expiry" "ok" "expires $date"
+    }
+}
+
 function Get-Policy {
     if (-not (Test-Path -LiteralPath $PolicyPath)) {
         Add-Finding "watchdog cannot read approval policy at $PolicyPath"
@@ -203,6 +249,33 @@ function Get-Prop($Object, [string]$Name) {
     return $null
 }
 
+function Test-GatekeeperAuth([string]$Dir, $Jobs) {
+    foreach ($job in @($Jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        # Job ids must be single path components; never follow a jobs.json path out
+        # of its output directory. Missing jobs/output have no finding by contract.
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) { continue }
+        try {
+            $newest = Get-ChildItem -LiteralPath $outputDir -File |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending | Select-Object -First 1
+            if ($null -eq $newest) { continue }
+            $output = Get-Content -LiteralPath $newest.FullName -Raw -ErrorAction Stop
+            if ($output -cmatch 'linear-auth-failed') {
+                Add-Finding "[$Dir] gatekeeper-linear-auth: newest Gatekeeper output reports linear-auth-failed"
+                Add-Report $Dir "gatekeeper-linear-auth" "FAIL" "linear-auth-failed in newest output"
+            } else {
+                Add-Report $Dir "gatekeeper-linear-auth" "ok" "no rejection marker in newest output"
+            }
+        } catch {
+            Add-Finding "[$Dir] gatekeeper-linear-auth: watchdog cannot read newest Gatekeeper output"
+            Add-Report $Dir "gatekeeper-linear-auth" "FAIL" "output unreadable"
+            $script:readFailure = $true
+        }
+    }
+}
+
 function Test-CronDirectory([string]$Dir) {
     # --- check 1: ticker liveness -------------------------------------------------
     $hb = Join-Path $Dir "ticker_heartbeat"
@@ -228,6 +301,7 @@ function Test-CronDirectory([string]$Dir) {
         return
     }
 
+    Test-GatekeeperAuth $Dir $jobs
     $matched = @($jobs | Where-Object { (Get-Prop $_ 'name') -like $JobNamePattern })
     if ($matched.Count -eq 0) {
         # Zero matches is itself a failure: the workers were deleted, renamed, or this
@@ -572,6 +646,7 @@ function Invoke-LearnRetention {
 
 # ── run the checks ───────────────────────────────────────────────────────────────
 foreach ($dir in $CronDir) { Test-CronDirectory $dir }
+Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
 if (-not $SkipLearn) { Measure-Learn }
 
@@ -590,7 +665,7 @@ foreach ($r in $report) {
     Write-Output ("  {0,-6} {1,-20} {2}  [{3}]" -f $r.Result, $r.Check, $r.Observed, $r.Scope)
 }
 if ($healthy) {
-    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at)"
+    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, Linear expiry, Gatekeeper auth)"
 } else {
     Write-Output "UNHEALTHY: $($findings.Count) finding(s)"
     foreach ($f in $findings) { Write-Output "  - $f" }
