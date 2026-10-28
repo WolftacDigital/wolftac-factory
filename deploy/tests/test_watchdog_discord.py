@@ -156,7 +156,10 @@ if ($env:WD551_TARGET) { $options.DiscordTarget = $env:WD551_TARGET }
         previous_alert = self.saved()["last_alert_at"]
         self.jobs(paused=False)
         self.assertEqual(self.run_watchdog("missing").returncode, 3)
-        self.assertEqual(self.saved()["last_alert_at"], previous_alert)
+        # PowerShell JSON round-trips can omit a trailing fractional zero on Linux.
+        # The delivery instant must not advance; textual precision is immaterial.
+        self.assertEqual(datetime.fromisoformat(self.saved()["last_alert_at"]),
+                         datetime.fromisoformat(previous_alert))
         self.assertEqual(self.run_watchdog().returncode, 0)
         self.assertEqual(len(self.posted()), 3)
         self.assertEqual(self.posted()[1]["body"], self.posted()[2]["body"])
