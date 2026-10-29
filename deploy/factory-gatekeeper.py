@@ -50,9 +50,11 @@ from datetime import datetime, timedelta, timezone
 # A 2-item entry (no profile) means the default profile, for older --job-map overrides.
 DEFAULT_JOB_MAP = {
     "build": ("Todo", "9b7b5987bcd6", "builder"),
+    "build-crm": ("Todo", "1dd429fe03b2", "builder"),
     "review": ("In Review", "8e5c37a23b91", "reviewer"),
     "integrate": ("Approved", "4e7a4d9c5fa4", "integrator"),
 }
+LANE_FILTERS = {"build": "agentic", "build-crm": "Wolftac CRM v2"}
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
 
@@ -243,6 +245,15 @@ def lane_issues(token: str, state: str) -> list[dict]:
             return issues
 
 
+def lane_matches(issue: dict, word: str) -> bool:
+    """Match the worker's case-insensitive project/label substring filter."""
+    word = word.casefold()
+    project = (issue.get("project") or {}).get("name") or ""
+    return word in project.casefold() or any(
+        word in label["name"].casefold() for label in issue["labels"]["nodes"]
+    )
+
+
 def lane_fingerprint(issues: list[dict]) -> str:
     records = []
     for issue in issues:
@@ -372,6 +383,7 @@ def main() -> int:
     lines: list[str] = []
     ready_lanes = {}
     probes = {}
+    state_probes = {}
     linear_auth_failed = False
     # The token is shared. Finish all non-in-flight probes before launching
     # anything, so a later lane's 401 can veto earlier build/review decisions.
@@ -400,17 +412,26 @@ def main() -> int:
 
             ready_lanes[lane] = (job_id, observed_last_run, profile)
             if fail_open_reason is None:
+                if linear_state not in state_probes:
+                    try:
+                        state_probes[linear_state] = (lane_issues(token, linear_state), None)
+                    except Exception as exc:  # noqa: BLE001 — share state probe failure
+                        state_probes[linear_state] = (None, error_reason(exc))
+                        if isinstance(exc, urllib.error.HTTPError):
+                            if exc.code == 401:
+                                linear_auth_failed = True
+                            # Never retain a response/traceback containing remote data.
+                            exc.close()
+                issues, probe_error = state_probes[linear_state]
+                if probe_error is not None:
+                    probes[lane] = (None, None, probe_error)
+                    continue
                 try:
-                    issues = lane_issues(token, linear_state)
+                    if lane in LANE_FILTERS:
+                        issues = [issue for issue in issues if lane_matches(issue, LANE_FILTERS[lane])]
                     probes[lane] = (issues, lane_fingerprint(issues), None)
                 except Exception as exc:  # noqa: BLE001 — isolate probe failure
                     probes[lane] = (None, None, error_reason(exc))
-                    if isinstance(exc, urllib.error.HTTPError):
-                        if exc.code == 401:
-                            linear_auth_failed = True
-                        # Do not retain the response/traceback or let an unclosed
-                        # HTTPError warning echo a remote credential-bearing URL.
-                        exc.close()
         except Exception as exc:  # noqa: BLE001 — lane isolation
             ready_lanes.pop(lane, None)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
