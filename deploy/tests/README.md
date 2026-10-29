@@ -18,6 +18,7 @@ Git worktree, never live junctions or `deploy.ps1 -Deploy`.
 | File | What it holds down |
 |---|---|
 | `test_junctions.py` | Four-root manifest and legacy override; validate-all-first setup, idempotent setup/teardown, full-path diagnostics, worker deploy coverage and foreign-repository rejection. Windows scratch junctions only. |
+| `test_run_gate.py` | WD-574 gate runner: synthetic-only subprocess environment, output redaction, timeout/tree cleanup, exit codes, repo/worktree identity, seed list and six-copy/deploy parity. Run `python -m unittest discover -s deploy/tests -p test_run_gate.py -v`. Uses scratch repos and a fake Hermes home, never live credentials or real repo gates. |
 | `factory-watchdog-drift.tests.ps1` | `factory-watchdog.ps1` drift alerting: truthful magnitude on any kind of edit, no false "running normally" while liveness is failing, and `cannot compare` for a deployed copy that is absent. Plus the alert state machine — transition, cooldown, 12h nag, recovery — and agreement with `deploy.ps1 -Check` on which targets are drifted. |
 | `factory-watchdog-learn.tests.ps1` | `factory-watchdog.ps1` pending `/learn` edits (WD-362): clean is silent, a modified or untracked file in the junctioned live worktree alerts once by path and line count (never content), is snapshotted byte-exact, and survives `git restore .`; cooldown, 12h nag, single recovery, 30-day retention keeping the newest, and "cannot check" for an unresolvable worktree or failed `git status`. Hermetic: scratch repo, scratch junctioned worktree, `-SlackOutbox` interception. |
 

@@ -28,6 +28,7 @@ $Pairs = @(
     @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\SKILL.md" }
     @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" }
     @{ Src = "canonical\wolftac-integrate\scripts\slack_bot.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\slack_bot.py" }
+    @{ Src = "canonical\wolftac-integrate\scripts\run_gate.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\run_gate.py" }
     # Shared doctrine skill (not a pipeline stage) — ships to every local agent surface.
     @{ Src = "canonical\wolftac-agent-command-patterns\SKILL.md"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-agent-command-patterns\SKILL.md" }
     @{ Src = "ports\codex\wolftac-agent-command-patterns.md"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-agent-command-patterns.md" }
@@ -39,6 +40,7 @@ $Pairs = @(
     # directory whose name cannot collide with a prompt file.
     @{ Src = "ports\codex\wolftac-integrate-scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\linear_bot.py" }
     @{ Src = "ports\codex\wolftac-integrate-scripts\slack_bot.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\slack_bot.py" }
+    @{ Src = "ports\codex\wolftac-integrate-scripts\run_gate.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\run_gate.py" }
 )
 
 # Tree-backed ports must stay complete as their skills gain references and UI metadata.
@@ -129,6 +131,7 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
     $Pairs += @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$wslSkills\wolftac-integrate\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$wslSkills\wolftac-integrate\scripts\linear_bot.py" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\slack_bot.py"; Dst = "$wslSkills\wolftac-integrate\scripts\slack_bot.py" }
+    $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\run_gate.py"; Dst = "$wslSkills\wolftac-integrate\scripts\run_gate.py" }
     $Pairs += @{ Src = "canonical\wolftac-agent-command-patterns\SKILL.md"; Dst = "$wslSkills\wolftac-agent-command-patterns\SKILL.md" }
 }
 
