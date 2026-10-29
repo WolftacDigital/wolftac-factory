@@ -26,6 +26,8 @@ Design constraints learned the hard way (WD-357, WD-380):
   do NOT dispatch. The safety net and typed approval comments bound the delay.
 * Tokens come from the .env FILE, never the process environment or argv. Never
   print remote error bodies or exception messages, which may echo credentials.
+* Report approval wait/outage status from the completed integrate probe, without
+  changing dispatch or state; older proof-pack paging is bounded and read-only.
 
 Read-only against Linear and Slack; a rocket dispatches, never approves/merges.
 Canonical: deploy/factory-gatekeeper.py; installed: scripts/factory_gatekeeper.py
@@ -71,7 +73,9 @@ query($state: String!, $after: String) {
       identifier state { name } assignee { id } project { name }
       priority description
       labels { nodes { name } pageInfo { hasNextPage endCursor } }
-      comments(first: 50, orderBy: createdAt) { nodes { id createdAt body } }
+      comments(first: 50, orderBy: createdAt) {
+        nodes { id createdAt body } pageInfo { hasNextPage endCursor }
+      }
       inverseRelations {
         nodes { type issue { identifier state { name } } }
         pageInfo { hasNextPage endCursor }
@@ -101,6 +105,15 @@ query($id: String!, $after: String) {
 }
 """
 PERMALINK = re.compile(r"https://[^/\s]+/archives/([A-Z0-9]+)/p(\d{10})(\d{6})")
+COMMENTS_QUERY = """
+query($id: String!, $after: String) {
+  issue(id: $id) {
+    comments(first: 50, after: $after, orderBy: createdAt) {
+      nodes { id createdAt body } pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
 
 
 class ProbeError(Exception):
@@ -312,6 +325,61 @@ def slack_approval(issues: list[dict], dispatched: dict, env_path: str, policy_p
     return None
 
 
+def approval_packs(comments: list[dict]) -> list[dict]:
+    return [c for c in comments if any(marker in (c["body"] or "")
+            for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"))]
+
+
+def approval_issues(token: str, issues: list[dict]) -> list[dict]:
+    """Page only missing packs, without mutating dispatch/fingerprint inputs."""
+    result = []
+    for issue in issues:
+        connection = issue["comments"]
+        comments = list(connection["nodes"])
+        seen = set()
+        for _ in range(10):
+            if approval_packs(comments) or not connection.get("pageInfo"):
+                break
+            cursor = next_cursor(connection, seen)
+            if cursor is None:
+                break
+            connection = linear_query(token, COMMENTS_QUERY, {
+                "id": issue["identifier"], "after": cursor,
+            })["issue"]["comments"]
+            comments.extend(connection["nodes"])
+        result.append({**issue, "comments": {"nodes": comments}})
+    return result
+
+
+def approval_status(issues: list[dict], now: datetime) -> list[str]:
+    """Pure approval diagnostics: identifiers/ages only, never pack contents."""
+    stale, down = [], []
+    for issue in sorted(issues, key=lambda row: row["identifier"]):
+        identifier = issue["identifier"]
+        if not re.fullmatch(r"[A-Z]+-\d+", identifier):
+            continue
+        packs = approval_packs(issue["comments"]["nodes"])
+        if not packs:
+            continue
+        pack = max(packs, key=lambda c: c["createdAt"])
+        created = parse_ts(pack["createdAt"])
+        if created is None:
+            continue
+        age = now - created
+        hours = max(0, int(age.total_seconds() // 3600))
+        age_text = f"{hours}h" if hours < 48 else f"{hours // 24}d"
+        if re.search(r"\blane\s+unavailable\b", pack["body"], re.IGNORECASE):
+            down.append(f"{identifier}={age_text}")
+        elif age > timedelta(hours=24):
+            stale.append(f"{identifier}={age_text}")
+    segments = []
+    if stale:
+        segments.append("approval-stale: " + ",".join(stale))
+    if down:
+        segments.append("approval-lane-down: " + ",".join(down))
+    return segments or [f"approval-wait: ok ({len(issues)} approved)"]
+
+
 def hermes_cli() -> list[str]:
     """Locate the hermes CLI; prefer the install-dir binary, fall back to PATH."""
     for candidate in (
@@ -383,6 +451,8 @@ def main() -> int:
     lines: list[str] = []
     ready_lanes = {}
     probes = {}
+    lane_errors = set()
+
     state_probes = {}
     linear_auth_failed = False
     # The token is shared. Finish all non-in-flight probes before launching
@@ -434,6 +504,7 @@ def main() -> int:
                     probes[lane] = (None, None, error_reason(exc))
         except Exception as exc:  # noqa: BLE001 — lane isolation
             ready_lanes.pop(lane, None)
+            lane_errors.add(lane)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
     for lane, (job_id, observed_last_run, profile) in ready_lanes.items():
@@ -489,7 +560,22 @@ def main() -> int:
                 if approval is not None:
                     approvals[approval[0]] = approval[1]
         except Exception as exc:  # noqa: BLE001 — lane isolation is the whole point
+            lane_errors.add(lane)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
+
+    # Diagnostics run AFTER dispatch and never feed fingerprints or saved state.
+    if "integrate" in job_map:
+        probe = probes.get("integrate")
+        if (token is None or linear_auth_failed or fail_open_reason is not None or not probe
+                or probe[2] is not None or "integrate" in lane_errors):
+            lines.append("approval-wait: unknown (integrate lane not probed)")
+        else:
+            try:
+                lines.extend(approval_status(approval_issues(token, probe[0]), now_utc()))
+            except Exception as exc:  # noqa: BLE001 — diagnostics cannot affect dispatch
+                lines.append(f"approval-wait: unknown ({error_reason(exc)})")
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
 
     if not args.dry_run:
         save_state(state_path, state)

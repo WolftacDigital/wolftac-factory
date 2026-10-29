@@ -204,7 +204,8 @@ class WatchdogTests(unittest.TestCase):
         # Only the new check dispatch is inserted inside the existing cron checks.
         def checks(text):
             part = text[text.index("function Test-CronDirectory"):text.index("function Get-StatePath")]
-            return part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "")
+            return part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "").replace(
+                "    Test-GatekeeperApprovalWait $Dir $jobs\n", "")
         self.assertEqual(checks(base), checks(current))
         jobs = json.loads((self.cron / "jobs.json").read_text())
         jobs["jobs"][0].update(enabled=False, paused=True, last_status="error",
@@ -267,6 +268,96 @@ class WatchdogTests(unittest.TestCase):
                 self.assertEqual(findings(text), [])
                 self.assertIn("DRIFT CLEAN:", text)
                 self.assertIn("LEARN CLEAN:", text)
+
+    def test_approval_findings_and_ok(self):
+        stale = f"- [{self.cron}] approval-wait: proof pack older than 24h with the issue still Approved: WD-354 (15d)"
+        down = f"- [{self.cron}] approval-lane-down: newest proof pack disclosed the approval lane as unavailable; only a typed APPROVE MERGE can approve: WD-348 (3d)"
+        cases = [("approval-stale: WD-354=15d", [stale]),
+                 ("approval-lane-down: WD-348=3d", [down]),
+                 ("approval-stale: WD-354=15d; approval-lane-down: WD-348=3d", [stale, down]),
+                 ("approval-wait: ok (2 approved)", [])]
+        for segment, expected in cases:
+            with self.subTest(segment=segment):
+                self.output("tick.txt", "gatekeeper: integrate: unchanged (skip); " + segment)
+                code, text = self.run_watchdog()
+                self.assertEqual(findings(text), expected)
+                self.assertEqual(code, 1 if expected else 0)
+                self.assertRegex(text, r"(?:FAIL|ok)\s+approval-wait\s")
+
+    def test_approval_lookback_and_expiry(self):
+        self.output("z-old.txt", "approval-stale: WD-354=15d", age=7200)
+        self.output("a-new.txt", "approval-wait: unknown (integrate lane not probed)")
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(findings(text)), 1)
+        self.assertIn("WD-354 (15d)", findings(text)[0])
+        self.output("z-old.txt", "approval-stale: WD-354=15d", age=25200)
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertRegex(text, r"skipped\s+approval-wait\s+no evaluated approval status in Gatekeeper output from the last 6h")
+        self.assertEqual(self.run_watchdog(extra=("-ApprovalStatusMaxAgeHours", "8"))[0], 1)
+        self.output("a-new.txt", "gatekeeper: integrate: idle")
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertRegex(text, r"skipped\s+approval-wait\s")
+
+    def test_approval_newest_evaluated_recovers_and_ties_use_name(self):
+        old = self.output("z-old.txt", "approval-stale: WD-354=15d", age=3600)
+        new = self.output("a-new.txt", "approval-wait: ok (0 approved)")
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertRegex(text, r"ok\s+approval-wait\s")
+        at = time.time() - 10
+        for path in (old, new):
+            os.utime(path, (at, at))
+        self.assertEqual(self.run_watchdog()[0], 1)
+
+    def test_approval_only_identifiers_and_ages_reach_output(self):
+        self.output("tick.txt", "R3A-BODY-SENTINEL " + " ".join(FAKES) +
+                    "\napproval-stale: WD-354=15d,WD-519=30h; approval-lane-down: WD-348=3d")
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertNotIn("R3A-BODY-SENTINEL", text)
+        rows = findings(text)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(rows[0].endswith("WD-354 (15d), WD-519 (30h)"))
+        self.assertTrue(rows[1].endswith("WD-348 (3d)"))
+        self.output("tick.txt", "approval-stale: R3A-BODY-SENTINEL " + FAKES[0])
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertNotIn("R3A-BODY-SENTINEL", text)
+
+    def test_approval_missing_sources_and_invalid_job_id(self):
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertNotRegex(text, r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+        (self.cron / "output/gk-549").mkdir(parents=True)
+        self.assertNotRegex(self.run_watchdog()[1], r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+        self.output("tick.txt", "approval-stale: WD-354=15d")
+        jobs = json.loads((self.cron / "jobs.json").read_text())
+        jobs["jobs"][0]["id"] = "../gk-549"
+        (self.cron / "jobs.json").write_text(json.dumps(jobs))
+        self.assertNotRegex(self.run_watchdog()[1], r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+        jobs["jobs"][0].update(id="gk-549", name="Wolftac Factory Build Worker")
+        (self.cron / "jobs.json").write_text(json.dumps(jobs))
+        self.assertNotRegex(self.run_watchdog()[1], r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+
+    def test_approval_unreadable_output(self):
+        # Only the older fixture fails to read; the newest auth-check file works.
+        blocked = self.output("old.txt", "approval-stale: WD-354=15d", age=7200)
+        self.output("new.txt", "approval-wait: unknown (integrate lane not probed)")
+        wrapper = self.root / "unreadable.ps1"
+        literal = str(blocked).replace("'", "''")
+        script = str(SCRIPT).replace("'", "''")
+        wrapper.write_text(
+            "function Get-Content {\n [CmdletBinding()] param([string]$LiteralPath, [switch]$Raw)\n"
+            f" if ($LiteralPath -eq '{literal}') {{ throw 'fixture read denied' }}\n"
+            " Microsoft.PowerShell.Management\\Get-Content @PSBoundParameters\n}\n"
+            f"& '{script}' @args\nexit $LASTEXITCODE\n", encoding="utf-8", newline="\n")
+        code, text = self.run_watchdog(script=wrapper)
+        self.assertEqual(code, 1)
+        self.assertEqual(findings(text), [f"- [{self.cron}] approval-wait: watchdog cannot read Gatekeeper output"])
+        self.assertRegex(text, r"FAIL\s+approval-wait\s+output unreadable")
 
     @unittest.skipUnless(os.getenv("WD549_REAL_CRON"), "TP4 opt-in real cron read-only comparison")
     def test_real_cron_findings_match_main(self):
