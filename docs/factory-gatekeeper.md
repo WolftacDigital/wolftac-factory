@@ -11,14 +11,22 @@ unchanged queue must not dispatch another silent worker on every tick.
 `%LOCALAPPDATA%\hermes\scripts\factory_gatekeeper.py`. It runs as a Hermes
 `no_agent` job with **no model calls**. Read the actual interval from the default
 profile's `cron\jobs.json`; on AI-MSI it is 30 minutes as of 2026-09-19. This
-change does not alter any schedule or worker prompt. All three workers retain
-their two-hour safety-net schedules, covering time-based eligibility (including
+change does not alter any schedule or worker prompt. The four worker jobs have
+separate safety-net schedules, covering time-based eligibility (including
 four-hour stale claims), newly reachable repos, and a failed gatekeeper.
 
 Each tick queries the Wolftac Digital team's `Factory Queue` issues, paginating
-100 issues at a time: build = `Todo`, review = `In Review`, integrate = `Approved`.
-These are **superset** lane lists, not eligibility filters. BLOCKED/NEEDS-HUMAN
-parks, lane filters, Repo reachability and approval verification stay in skills.
+100 issues at a time: build and build-crm = `Todo`, review = `In Review`,
+integrate = `Approved`. Each state is fetched once per tick, sharing all pages
+and probe failures between its ready lanes. Build lanes then filter that result:
+`build` uses `agentic`; `build-crm` uses `Wolftac CRM v2`. A filter matches a
+case-insensitive substring of the project name or any label name; a missing
+project contributes no match. An issue matching both filters belongs to both
+fingerprints. Issues matching neither are not dispatched to a build job (NG-2);
+suggest /wolftac-spec for a catch-all lane. Review, integrate and custom
+`--job-map` lane names absent from `LANE_FILTERS` are unfiltered.
+These remain **superset** lane lists, not full eligibility filters.
+BLOCKED/NEEDS-HUMAN parks, Repo reachability and approval verification stay in skills.
 The gatekeeper does not claim, comment or otherwise write to Linear or Slack.
 
 ### Fingerprint rule
@@ -72,6 +80,7 @@ build or review probe succeeded earlier. The output is:
 
 ```text
 build: linear-auth-failed (401) -> skipped
+build-crm: linear-auth-failed (401) -> skipped
 review: linear-auth-failed (401) -> skipped
 integrate: linear-auth-failed (401) -> dispatched(pid=...) for re-mint
 ```
@@ -168,6 +177,7 @@ Each lane's job lives in its own Hermes profile, one bot per stage:
 | Lane | Linear state | Job | Profile (bot) |
 |---|---|---|---|
 | build | Todo | `9b7b5987bcd6` | `builder` (Mason) |
+| build-crm | Todo | `1dd429fe03b2` | `builder` (Mason) |
 | review | In Review | `8e5c37a23b91` | `reviewer` (Quinn) |
 | integrate | Approved | `4e7a4d9c5fa4` | `integrator` (Harper) |
 
@@ -178,6 +188,11 @@ A `--job-map` entry may be `[state, jobId]` (default profile) or
 `[state, jobId, profile]`; profile names must match `[a-z0-9][a-z0-9_-]*`, and a
 bad entry is a `LANE-ERROR` for that lane only. `--jobs-path`, when given,
 overrides the jobs file for every lane (scratch testing).
+
+The `build` state key keeps its existing meaning and in-flight marker.
+`build-crm` has its own fingerprint and marker, and reads its own job ID from
+the shared builder jobs file. Existing state needs no migration: a non-empty
+CRM lane without a fingerprint reports `no-baseline` on its first ready tick.
 
 A live in-flight marker produces `in-flight (skip)` before any Linear or Slack
 probe for that lane, regardless of queue changes. As before, a changed job

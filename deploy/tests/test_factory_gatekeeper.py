@@ -117,7 +117,10 @@ class GatekeeperTests(unittest.TestCase):
 
     def baseline(self):
         self.write(self.state, {"lanes": {}, "fingerprints": {
-            lane: g.lane_fingerprint(self.issues[state]) for lane, (state, *_) in g.DEFAULT_JOB_MAP.items()
+            lane: g.lane_fingerprint([
+                row for row in self.issues[state]
+                if lane not in g.LANE_FILTERS or g.lane_matches(row, g.LANE_FILTERS[lane])
+            ]) for lane, (state, *_) in g.DEFAULT_JOB_MAP.items()
         }, "approval_dispatched": {}})
 
     def confirm(self):
@@ -320,7 +323,8 @@ class GatekeeperTests(unittest.TestCase):
                 self.assertIn("review: idle", out)
                 self.assertIn("integrate: idle", out)
                 self.assertNotIn(LINEAR, out)
-                self.spawn.assert_called_once()
+                self.assertEqual(self.spawn.call_count, 2)
+                self.assertIn("build-crm: probe failed", out)
                 self.assertNotIn("build", json.loads(self.state.read_text())["fingerprints"])
 
     def test_linear_401_dispatches_only_integrate_in_every_lane_order(self):
@@ -344,7 +348,7 @@ class GatekeeperTests(unittest.TestCase):
                     with patch.object(g.urllib.request, "urlopen", side_effect=opener), \
                             patch.object(g, "dispatch", wraps=g.dispatch) as dispatch:
                         out = self.tick("--job-map", json.dumps(mapping))
-                    for lane in ("build", "review"):
+                    for lane in ("build", "build-crm", "review"):
                         self.assertIn(f"{lane}: linear-auth-failed (401) -> skipped", out)
                     self.assertIn("integrate: linear-auth-failed (401) -> dispatched(pid=1234) for re-mint", out)
                     self.spawn.assert_called_once()
@@ -368,6 +372,7 @@ class GatekeeperTests(unittest.TestCase):
                         mapping = {lane: g.DEFAULT_JOB_MAP[lane][:2] if legacy else g.DEFAULT_JOB_MAP[lane]
                                    for lane in order}
                         self.issues = {state: [issue(state=state)] for state, *_ in mapping.values()}
+                        self.issues["Todo"].append(self.crm_issue())
                         self.write(self.state, {})
                         self.linear_error = (urllib.error.HTTPError(
                             "https://api.linear.app/graphql", 401, LINEAR, {}, None) if rejected else None)
@@ -434,9 +439,9 @@ class GatekeeperTests(unittest.TestCase):
                     with patch.object(g.urllib.request, "urlopen", side_effect=opener):
                         out = self.tick()
                     expected_reason = type(failure).__name__ if isinstance(failure, Exception) else "JSONDecodeError"
-                    for lane in ("build", "review") if inflight else g.DEFAULT_JOB_MAP:
+                    for lane in ("build", "build-crm", "review") if inflight else g.DEFAULT_JOB_MAP:
                         self.assertIn(f"{lane}: probe failed ({expected_reason}) -> FAIL-OPEN -> dispatched(pid=1234)", out)
-                    self.assertEqual(self.spawn.call_count, 2 if inflight else 3)
+                    self.assertEqual(self.spawn.call_count, 3 if inflight else 4)
                     if inflight:
                         self.assertIn("integrate: in-flight (skip)", out)
                     self.assertNotIn("linear-auth-failed", out)
@@ -600,7 +605,8 @@ class GatekeeperTests(unittest.TestCase):
 
     def test_default_lanes_run_as_exec_team_profiles(self):
         profiles = {lane: g.lane_entry(entry)[2] for lane, entry in g.DEFAULT_JOB_MAP.items()}
-        self.assertEqual(profiles, {"build": "builder", "review": "reviewer", "integrate": "integrator"})
+        self.assertEqual(profiles, {"build": "builder", "build-crm": "builder",
+                                    "review": "reviewer", "integrate": "integrator"})
 
     def test_dispatch_targets_profile(self):
         with patch.object(g, "hermes_cli", return_value=["hermes"]):
@@ -626,7 +632,9 @@ class GatekeeperTests(unittest.TestCase):
             state, job_id, profile = g.lane_entry(entry)
             path = self.root / "profiles" / profile / "cron" / "jobs.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-            self.write(path, {"jobs": [{"id": job_id, "last_run_at": "2026-09-19T10:00:00Z"}]})
+            jobs = json.loads(path.read_text())["jobs"] if path.exists() else []
+            jobs.append({"id": job_id, "last_run_at": "2026-09-19T10:00:00Z"})
+            self.write(path, {"jobs": jobs})
         out = self.tick()
         self.assertIn("build: no-baseline -> dispatched(pid=1234)", out)
         state = json.loads(self.state.read_text())
@@ -815,6 +823,174 @@ class GatekeeperTests(unittest.TestCase):
                 self.assertEqual(current_out.split("; approval-")[0], stdout.getvalue().strip())
                 self.assertEqual(current_argv, [c.args for c in self.spawn.call_args_list])
                 self.assertEqual(current_slack, [r.full_url for r in self.requests if "slack.com" in r.full_url])
+
+    @staticmethod
+    def crm_issue(identifier="WD-CRM"):
+        row = issue(identifier)
+        row["project"] = {"name": "Wolftac CRM v2"}
+        row["labels"] = connection([{"name": "Factory Queue"}])
+        return row
+
+    def build_lane_fixture(self):
+        self.issues["Todo"] = [issue(), self.crm_issue()]
+        i = self.args.index("--exec-override")
+        del self.args[i:i + 2]
+        patch.object(g, "hermes_cli", return_value=["hermes"]).start()
+        # Popen remains fake: no real Hermes worker is launched.
+        self.baseline()
+
+    def test_lane_constants(self):
+        self.assertEqual(g.DEFAULT_JOB_MAP, {
+            "build": ("Todo", "9b7b5987bcd6", "builder"),
+            "build-crm": ("Todo", "1dd429fe03b2", "builder"),
+            "review": ("In Review", "8e5c37a23b91", "reviewer"),
+            "integrate": ("Approved", "4e7a4d9c5fa4", "integrator"),
+        })
+        self.assertEqual(g.LANE_FILTERS, {"build": "agentic", "build-crm": "Wolftac CRM v2"})
+
+    def test_crm_change_dispatches_only_crm(self):
+        self.build_lane_fixture()
+        self.issues["Todo"][1]["description"] = "CRM changed"
+        out = self.tick()
+        self.assertIn("build-crm: changed -> dispatched(pid=1234)", out)
+        self.assertIn("build: unchanged (skip)", out)
+        self.spawn.assert_called_once()
+        self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "builder", "cron", "run", "1dd429fe03b2"])
+
+    def test_agentic_label_project_and_case_dispatch_only_agentic(self):
+        self.build_lane_fixture()
+        for project, labels in ((None, ["agentic"]),
+                                ({"name": "Wolftac Agentic OS — Product Roadmap"}, []),
+                                (None, ["AGENTIC"]), (None, ["prefix-AgEnTiC-suffix"])):
+            with self.subTest(project=project, labels=labels):
+                row = issue()
+                row.update(project=project, labels=connection([{"name": s} for s in labels]))
+                self.issues["Todo"] = [row, self.crm_issue()]
+                self.baseline()
+                row["description"] = "agentic changed"
+                out = self.tick()
+                self.assertIn("build: changed -> dispatched(pid=1234)", out)
+                self.assertIn("build-crm: unchanged (skip)", out)
+                self.spawn.assert_called_once()
+                self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "builder", "cron", "run", "9b7b5987bcd6"])
+
+    def test_unmatched_change_dispatches_neither_build(self):
+        self.build_lane_fixture()
+        row = issue("WD-OTHER")
+        row.update(project=None, labels=connection([{"name": "Factory Queue"}]))
+        self.issues["Todo"].append(row)
+        self.baseline()
+        row["description"] = "unmatched change"
+        out = self.tick()
+        for lane in ("build", "build-crm"):
+            self.assertIn(f"{lane}: unchanged (skip)", out)
+        self.spawn.assert_not_called()
+
+    def test_empty_crm_and_shared_issue_fingerprints(self):
+        self.baseline()
+        self.assertIn("build-crm: idle", self.tick())
+        self.spawn.assert_not_called()
+        shared = issue("WD-SHARED")
+        shared["project"] = {"name": "WOLFTAC CRM V2 / Pilot"}
+        self.issues["Todo"] = [shared]
+        self.baseline()
+        shared["description"] = "shared change"
+        out = self.tick()
+        state = json.loads(self.state.read_text())
+        for lane in ("build", "build-crm"):
+            self.assertIn(f"{lane}: changed -> dispatched(pid=1234)", out)
+            self.assertEqual(state["fingerprints"][lane], g.lane_fingerprint([shared]))
+        self.assertEqual(self.spawn.call_count, 2)
+
+    def test_shared_todo_pages_are_fetched_once(self):
+        self.issues["Todo"] = [issue(f"WD-{n}") for n in range(100)] + [self.crm_issue()]
+        self.baseline()
+        self.issues["Todo"][-1]["description"] = "last-page CRM change"
+        out = self.tick()
+        pages = [json.loads(r.data)["variables"]["after"] for r in self.requests
+                 if r.data and json.loads(r.data)["variables"].get("state") == "Todo"]
+        self.assertEqual(pages, [None, "100"])
+        self.assertIn("build: unchanged (skip)", out)
+        self.assertIn("build-crm: changed -> dispatched(pid=1234)", out)
+        self.spawn.assert_called_once()
+
+    def test_shared_todo_probe_failure_is_cached(self):
+        self.build_lane_fixture()
+        self.linear_error = TimeoutError("synthetic")
+        out = self.tick()
+        for lane in ("build", "build-crm"):
+            self.assertIn(f"{lane}: probe failed (TimeoutError) -> FAIL-OPEN -> dispatched(pid=1234)", out)
+        self.assertEqual(self.spawn.call_count, 2)
+        self.assertEqual(sum(json.loads(r.data)["variables"].get("state") == "Todo"
+                             for r in self.requests if r.data), 1)
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        out = self.tick()
+        for lane in ("build", "build-crm", "review"):
+            self.assertIn(f"{lane}: linear-auth-failed (401) -> skipped", out)
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched(pid=1234) for re-mint", out)
+        self.spawn.assert_called_once()
+        self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "integrator", "cron", "run", "4e7a4d9c5fa4"])
+
+    def test_build_inflight_and_last_run_are_independent(self):
+        self.build_lane_fixture()
+        i = self.args.index("--jobs-path")
+        del self.args[i:i + 2]
+        jobs_path = self.root / "profiles/builder/cron/jobs.json"
+        jobs_path.parent.mkdir(parents=True)
+        stamps = {"build": "2026-09-19T10:00:00Z", "build-crm": "2026-09-19T11:00:00Z"}
+        self.write(jobs_path, {"jobs": [
+            {"id": g.DEFAULT_JOB_MAP[lane][1], "last_run_at": stamp} for lane, stamp in stamps.items()
+        ]})
+        for held, ready in (("build", "build-crm"), ("build-crm", "build")):
+            with self.subTest(held=held):
+                self.baseline()
+                before = json.loads(self.state.read_text())
+                marker = {"dispatched_at": NOW.isoformat(), "job_last_run_at": stamps[held]}
+                before["lanes"][held] = marker
+                self.write(self.state, before)
+                for row in self.issues["Todo"]:
+                    row["description"] += " changed"
+                out = self.tick()
+                self.assertIn(f"{held}: in-flight (skip)", out)
+                self.assertIn(f"{ready}: changed -> dispatched(pid=1234)", out)
+                self.spawn.assert_called_once()
+                self.assertEqual(self.spawn.call_args.args[0][-1], g.DEFAULT_JOB_MAP[ready][1])
+                after = json.loads(self.state.read_text())
+                self.assertEqual(after["lanes"][held], marker)
+                self.assertEqual(after["fingerprints"][held], before["fingerprints"][held])
+                self.assertEqual(after["lanes"][ready]["job_last_run_at"], stamps[ready])
+
+    def test_legacy_state_preserves_markers_and_crm_gets_baseline(self):
+        self.build_lane_fixture()
+        marker = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        before = {
+            "lanes": {lane: dict(marker) for lane in ("build", "review", "integrate")},
+            "fingerprints": {lane: "a" * 64 for lane in ("build", "review", "integrate")},
+            "approval_dispatched": {"WD-OLD": "1789819979.335359"},
+        }
+        self.write(self.state, before)
+        out = self.tick()
+        self.assertIn("build-crm: no-baseline -> dispatched(pid=1234)", out)
+        self.spawn.assert_called_once()
+        after = json.loads(self.state.read_text())
+        for lane in before["lanes"]:
+            self.assertIn(f"{lane}: in-flight (skip)", out)
+            self.assertEqual(after["lanes"][lane], before["lanes"][lane])
+            self.assertEqual(after["fingerprints"][lane], before["fingerprints"][lane])
+        self.assertEqual(after["approval_dispatched"], before["approval_dispatched"])
+        self.assertEqual(after["fingerprints"]["build-crm"], g.lane_fingerprint([self.issues["Todo"][1]]))
+
+    def test_custom_lane_is_unfiltered_and_crm_label_matches(self):
+        row = issue()
+        row.update(project=None, labels=connection([{"name": "Factory Queue"}]))
+        self.issues["Todo"] = [row]
+        out = self.tick("--job-map", json.dumps({"other": ["Todo", "custom"]}))
+        self.assertIn("other: no-baseline -> dispatched(pid=1234)", out)
+        self.spawn.assert_called_once()
+        self.assertFalse(g.lane_matches(row, "Wolftac CRM v2"))
+        row["labels"]["nodes"].append({"name": "prefix WOLFTAC crm V2 suffix"})
+        self.assertTrue(g.lane_matches(row, "Wolftac CRM v2"))
 
     def test_bad_profile_in_job_map_is_a_lane_error(self):
         out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
