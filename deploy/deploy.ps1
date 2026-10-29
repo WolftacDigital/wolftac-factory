@@ -50,19 +50,29 @@ $trees = @(
     @{ Src = "ports\hermes\wolftac-review"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-review" },
     @{ Src = "ports\hermes\wolftac-integrate"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-integrate" },
     @{ Src = "ports\hermes\wolftac-agent-command-patterns"; Dst = "$env:LOCALAPPDATA\hermes\skills\wolftac-agent-command-patterns" },
-    # The isolated factory-integrate profile is a SEPARATE Hermes home with its own
-    # skills tree; the default-profile target above never reaches it. It ran for weeks
-    # on an unversioned SKILL.md with no linear_bot.py, so the worker hand-rolled a
-    # GraphQL client every tick and never processed the queue. Both halves ship here:
-    # the skill (helper paths pointed at THIS profile) and the isolation preflight the
-    # worker must clear before claiming anything.
-    @{ Src = "ports\hermes-factory-integrate\skills\wolftac-integrate"; Dst = "$env:LOCALAPPDATA\hermes\profiles\factory-integrate\skills\wolftac-integrate" },
-    @{ Src = "ports\hermes-factory-integrate\deploy"; Dst = "$env:LOCALAPPDATA\hermes\profiles\factory-integrate\deploy" },
+    # factory-integrate retired at the 2026-10-20 cutover; its source port stays for WD-547.
     @{ Src = "plugins\wolftac-factory\skills\wolftac-spec"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-spec" },
     @{ Src = "plugins\wolftac-factory\skills\wolftac-build"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-build" },
     @{ Src = "plugins\wolftac-factory\skills\wolftac-review"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-review" },
     @{ Src = "plugins\wolftac-factory\skills\wolftac-integrate"; Dst = "$env:USERPROFILE\.agents\skills\wolftac-integrate" }
 )
+# Share the loader with setup/teardown, but isolate its strict-mode setting from
+# callers that dot-source deploy.ps1 (including the watchdog).
+$junctionManifestPath = Join-Path $PSScriptRoot "junctions.json"
+$junctionManifest = $null
+try {
+    $junctionManifest = & {
+        . (Join-Path $PSScriptRoot "junction-lib.ps1")
+        Get-JunctionManifest -ManifestPath $junctionManifestPath -RepoRoot $Repo
+    }
+    foreach ($jp in $junctionManifest.Pairs) {
+        if (-not @($trees | Where-Object { [IO.Path]::GetFullPath($_.Dst) -ieq $jp.LinkPath }).Count) {
+            $trees += @{ Src = ($jp.RepoRel -replace '/', '\'); Dst = $jp.LinkPath }
+        }
+    }
+} catch {
+    Write-Output "WARN: could not read $junctionManifestPath ($($_.Exception.Message)); treating all targets as copy-based."
+}
 foreach ($tree in $trees) {
     $srcRoot = Join-Path $Repo $tree.Src
     # This enumerates the FILESYSTEM, not git, so .gitignore does not protect it: running a
@@ -131,7 +141,6 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
 # than counting them. See docs\hermes-skill-junctions.md.
 $JunctionedRoots = @()
 $JunctionedTargets = @()
-$junctionManifestPath = Join-Path $PSScriptRoot "junctions.json"
 
 # Identity of THIS repository, shared by every one of its worktrees. Comparing the
 # git common dir is what distinguishes "a worktree of this repo" from "any folder
@@ -148,12 +157,10 @@ function Get-GitCommonDir([string]$Dir) {
 }
 $RepoCommonDir = Get-GitCommonDir $Repo
 
-if (Test-Path -LiteralPath $junctionManifestPath -PathType Leaf) {
+if ($junctionManifest) {
     try {
-        $junctionManifest = Get-Content -LiteralPath $junctionManifestPath -Raw | ConvertFrom-Json
-        $junctionSkillsRoot = [Environment]::ExpandEnvironmentVariables($junctionManifest.skills_root)
-        foreach ($jp in @($junctionManifest.pairs)) {
-            $linkPath = Join-Path $junctionSkillsRoot $jp.name
+        foreach ($jp in $junctionManifest.Pairs) {
+            $linkPath = $jp.LinkPath
             $linkItem = Get-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
             if (-not $linkItem -or -not ($linkItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
             # Trust the manifest only as a hint. Two independent conditions must
@@ -171,7 +178,7 @@ if (Test-Path -LiteralPath $junctionManifestPath -PathType Leaf) {
             # was reported "JUNCTIONED ... no drift is possible" and exit 0 — the
             # drift alarm went permanently silent over content Hermes actually
             # loads. A suffix is not an identity.
-            $suffix = "\" + ($jp.repo -replace '/', '\').Trim('\')
+            $suffix = "\" + ($jp.RepoRel -replace '/', '\').Trim('\')
             $actual = $null
             try { $actual = [IO.Path]::GetFullPath($linkItem.LinkTarget) } catch {}
             $tailOk = $actual -and $actual.TrimEnd('\').EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase) -and
