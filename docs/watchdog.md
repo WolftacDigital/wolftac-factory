@@ -30,6 +30,7 @@ Per cron directory, every run:
 | `last-status` | a job's `last_status` is `error` |
 | `next-run-fresh` | `next_run_at` is more than `-StaleIntervals` (default 3) scheduling intervals in the past |
 | `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
+| `approval-wait` | the newest evaluated approval status within the 6-hour look-back reports stale proof packs or an unavailable approval lane |
 
 Once per run, `linear-token-expiry` checks only
 `LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` in `-EnvFile`. It adds one finding if the date
@@ -46,6 +47,28 @@ adds no finding; other checks cover scheduler liveness. An unreadable existing
 output produces an unhealthy read finding. Output contents are never included in
 alerts. Both checks feed the existing transition/nag/recovery path, with no new
 Slack sender or channel.
+
+The **approval-wait** check uses the same Gatekeeper job and output directory,
+but looks back **6 hours** (`-ApprovalStatusMaxAgeHours`, default 6). Files are
+ordered by `LastWriteTimeUtc`, then filename, descending. It passes over unknown
+or legacy outputs until the first evaluated status: `approval-wait: ok`,
+`approval-stale: ...`, or `approval-lane-down: ...`. Thus an in-flight or failed
+tick does not falsely recover an outstanding alert. No evaluated status in the
+window means a `skipped` report row, no finding. Missing jobs/directories/files
+produce neither a finding nor a report row; unreadable existing outputs produce
+a read finding. This is bounded look-back, not persisted approval state.
+
+Stale findings say `approval-wait: proof pack older than 24h with the issue still
+Approved: WD-354 (15d)`. Lane-outage findings say `approval-lane-down: newest proof
+pack disclosed the approval lane as unavailable; only a typed APPROVE MERGE can
+approve: WD-348 (3d)`. This legacy wording reports the pack's disclosed lane state;
+it does not grant approval or change the integrate approval policy. Only parsed
+issue identifiers and ages reach findings, never titles or pack/output text.
+Both feed the existing transition, 12-hour nag and recovery path unchanged.
+
+If the watchdog's own `.env` lacks `SLACK_FACTORY_BOT_TOKEN`, its existing check
+reports that separately and it cannot deliver (exit 3 on delivery failure).
+WD-551 owns removing that coupling; this check adds no sender or credential.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**

@@ -6,6 +6,7 @@ import io
 import itertools
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ SPEC.loader.exec_module(g)
 LINEAR = "lin_TEST_SENTINEL"
 SLACK = "xoxb-TEST-SENTINEL"
 NOW = datetime(2026, 9, 19, 20, 0, tzinfo=timezone.utc)
+REAL_POPEN = subprocess.Popen
 
 
 def connection(nodes, cursor=None):
@@ -60,6 +62,7 @@ class GatekeeperTests(unittest.TestCase):
         self.linear_error = None
         self.slack_error = None
         self.requests = []
+        self.comment_pages = {}
         self.args = ["gatekeeper", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
                      "--state-path", str(self.state), "--approval-policy", str(self.policy),
                      "--exec-override", json.dumps(["fake-noop"])]
@@ -81,6 +84,11 @@ class GatekeeperTests(unittest.TestCase):
             data = json.loads(request.data)
             self.assertNotIn("mutation", data["query"].lower())
             variables = data["variables"]
+            if data["query"] == g.COMMENTS_QUERY:
+                page = self.comment_pages[(variables["id"], variables["after"])]
+                if isinstance(page, Exception):
+                    raise page
+                return io.StringIO(json.dumps({"data": {"issue": {"comments": page}}}))
             if self.linear_error and variables.get("state") == "Todo":
                 if isinstance(self.linear_error, Exception):
                     raise self.linear_error
@@ -623,6 +631,190 @@ class GatekeeperTests(unittest.TestCase):
         self.assertIn("build: no-baseline -> dispatched(pid=1234)", out)
         state = json.loads(self.state.read_text())
         self.assertEqual(state["lanes"]["build"]["job_last_run_at"], "2026-09-19T10:00:00Z")
+
+    def approval_fixture(self, hours=30, body="MERGE PROOF PACK", identifier="WD-354"):
+        row = issue(identifier, "Approved")
+        row["comments"] = connection([comment(body, (NOW - timedelta(hours=hours)).isoformat())])
+        self.issues["Approved"] = [row]
+        self.baseline()
+        return row
+
+    def approval_tick(self, *extra):
+        result = self.tick("--no-slack", *extra)
+        for request in self.requests:
+            self.assertNotIn("slack.com", request.full_url)
+            self.assertNotIn("mutation", json.loads(request.data)["query"].lower())
+        return result
+
+    def test_approval_stale_ages(self):
+        for hours, segment in [(360, "approval-stale: WD-354=15d"),
+                               (30, "approval-stale: WD-354=30h"),
+                               (23, "approval-wait: ok (1 approved)"),
+                               (24, "approval-wait: ok (1 approved)"),
+                               (48, "approval-stale: WD-354=2d")]:
+            with self.subTest(hours=hours):
+                self.approval_fixture(hours)
+                out = self.approval_tick()
+                self.assertIn(segment, out)
+                if hours <= 24:
+                    self.assertNotIn("approval-stale:", out)
+                self.spawn.assert_not_called()
+
+    def test_approval_lane_down_disclosure(self):
+        for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"):
+            for hours, age in ((1, "1h"), (72, "3d")):
+                self.approval_fixture(hours, marker + "\nSlack LaNe\nUNAVAILABLE this pack", "WD-1")
+                out = self.approval_tick()
+                self.assertIn("approval-lane-down: WD-1=" + age, out)
+                self.assertNotIn("approval-stale:", out)
+        row = self.approval_fixture(1, "LANDING PROOF PACK", "WD-1")
+        row["comments"]["nodes"].append(comment("MERGE PROOF PACK\nlane unavailable", (NOW - timedelta(days=3)).isoformat()))
+        self.baseline()
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+
+    def test_approval_pack_beyond_newest_50(self):
+        row = self.approval_fixture()
+        pack = row["comments"]["nodes"][0]
+        row["comments"] = connection([comment("SWEPT: churn") for _ in range(50)], "older")
+        self.comment_pages[("WD-354", "older")] = connection([pack], "unused")
+        self.baseline()
+        original = copy.deepcopy(row)
+        out = self.approval_tick()
+        self.assertIn("approval-stale: WD-354=30h", out)
+        self.assertEqual(row, original)
+        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 1)
+        success_lines, success_spawns = out.split("; approval-")[0], self.spawn.call_count
+        for error in (urllib.error.URLError(LINEAR),
+                      urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)):
+            self.comment_pages[("WD-354", "older")] = error
+            self.baseline()
+            out = self.approval_tick()
+            self.assertIn("approval-wait: unknown (" + type(error).__name__ + ")", out)
+            self.assertEqual(out.split("; approval-")[0], success_lines)
+            self.assertEqual(self.spawn.call_count, success_spawns)
+            self.assertNotIn(LINEAR, out)
+        row["comments"] = connection([], "0")
+        self.comment_pages = {("WD-354", str(n)): connection([comment()], str(n + 1)) for n in range(10)}
+        self.baseline()
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 10)
+        self.comment_pages[("WD-354", "0")] = connection([], "0")
+        self.assertIn("approval-wait: unknown (Linear pagination did not advance)", self.approval_tick())
+        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 1)
+        self.comment_pages[("WD-354", "0")] = connection([])
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+
+    def test_approval_unknown_when_integrate_not_probed(self):
+        self.approval_fixture()
+        state = json.loads(self.state.read_text())
+        state["lanes"]["integrate"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        self.write(self.state, state)
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.assertFalse(any(json.loads(r.data)["variables"].get("state") == "Approved" for r in self.requests))
+        self.assertFalse(any(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests))
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.linear_error = None
+        self.baseline()
+        self.env.unlink()
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.assertEqual(self.requests, [])
+
+    def test_approval_status_missing_invalid_and_sorted(self):
+        row = self.approval_fixture()
+        row["comments"]["nodes"][0]["createdAt"] = "not-a-date"
+        self.assertEqual(g.approval_status([row], NOW), ["approval-wait: ok (1 approved)"])
+        row["comments"] = {"nodes": []}
+        self.baseline()
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+        self.assertFalse(any(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests))
+        first = copy.deepcopy(self.approval_fixture(30, identifier="WD-2"))
+        second = copy.deepcopy(self.approval_fixture(72, identifier="WD-1"))
+        down = copy.deepcopy(self.approval_fixture(1, "LANDING PROOF PACK\nlane unavailable", "WD-3"))
+        rows = [down, first, second]
+        before = copy.deepcopy(rows)
+        self.assertEqual(g.approval_status(rows, NOW), ["approval-stale: WD-1=3d,WD-2=30h", "approval-lane-down: WD-3=1h"])
+        self.assertEqual(rows, before)
+        self.assertEqual(g.approval_status([], NOW), ["approval-wait: ok (0 approved)"])
+
+    def test_approval_dry_run_and_job_map_boundaries(self):
+        self.approval_fixture()
+        before = {p: p.read_bytes() for p in (self.env, self.jobs, self.state)}
+        self.assertIn("approval-stale: WD-354=30h", self.approval_tick("--dry-run"))
+        self.spawn.assert_not_called()
+        for path, contents in before.items():
+            self.assertEqual(path.read_bytes(), contents)
+        self.assertNotIn("approval-", self.approval_tick("--job-map", json.dumps({"build": ["Todo", "x"]})))
+        out = self.approval_tick("--job-map", json.dumps({"integrate": ["Approved", "x", "../bad"]}))
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", out)
+        self.assertEqual(self.requests, [])
+        self.baseline()
+        with patch.object(g, "lane_issues", side_effect=OSError(LINEAR)):
+            self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.write(self.state, {})
+        with patch.object(g, "dispatch", side_effect=RuntimeError(LINEAR)):
+            self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+
+    def test_approval_status_leaks_nothing(self):
+        self.approval_fixture(72, "MERGE PROOF PACK\nR3A-BODY-SENTINEL " + LINEAR + SLACK + "\nlane unavailable")
+        self.approval_tick()
+        artifacts = "".join(self.output) + self.state.read_text()
+        for log in (self.root / "cron/gatekeeper-logs").glob("*.log"):
+            artifacts += log.read_text()
+        for value in ("R3A-BODY-SENTINEL", LINEAR, SLACK):
+            self.assertNotIn(value, artifacts)
+
+    def test_approval_state_and_dispatch_equal_main(self):
+        # Execute actual remote-main code against the same synthetic inputs.
+        with patch.object(subprocess, "Popen", REAL_POPEN):
+            source = subprocess.check_output(["git", "show", "origin/main:deploy/factory-gatekeeper.py"],
+                                             cwd=Path(__file__).resolve().parents[2], encoding="utf-8", timeout=10)
+        path = self.root / "gk-main.py"
+        path.write_text(source, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("gk_main_581", path)
+        base = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(base)
+        for mode in ("stale", "down", "paging", "paging-failure", "slack", "inflight", "401", "changed"):
+            with self.subTest(mode=mode):
+                row = self.approval_fixture()
+                self.linear_error = None
+                if mode == "down":
+                    row["comments"]["nodes"][0]["body"] += "\nlane unavailable"
+                if mode in ("paging", "paging-failure"):
+                    pack = row["comments"]["nodes"][0]
+                    row["comments"] = connection([comment("SWEPT: churn")], "older")
+                    self.comment_pages[("WD-354", "older")] = (connection([pack]) if mode == "paging"
+                                                               else urllib.error.URLError(LINEAR))
+                if mode == "slack":
+                    row["comments"]["nodes"] = [proof()]
+                self.baseline()
+                if mode == "inflight":
+                    state = json.loads(self.state.read_text())
+                    state["lanes"]["integrate"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+                    self.write(self.state, state)
+                if mode == "401":
+                    self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)
+                if mode == "changed":
+                    row["description"] = "new scope"
+                base_state = self.root / "main-state.json"
+                base_state.write_bytes(self.state.read_bytes())
+                current_out = self.tick()
+                current_argv = [c.args for c in self.spawn.call_args_list]
+                current_slack = [r.full_url for r in self.requests if "slack.com" in r.full_url]
+                current_data = json.loads(self.state.read_text())
+                args = [str(base_state) if a == str(self.state) else a for a in self.args]
+                stdout = io.StringIO()
+                self.requests.clear()
+                self.spawn.reset_mock()
+                with patch.object(base, "hermes_home", return_value=str(self.root)), \
+                        patch.object(base, "now_utc", return_value=NOW), \
+                        patch.object(base.sys, "argv", args), contextlib.redirect_stdout(stdout):
+                    self.assertEqual(base.main(), 0)
+                self.assertEqual(current_data, json.loads(base_state.read_text()))
+                self.assertEqual(current_out.split("; approval-")[0], stdout.getvalue().strip())
+                self.assertEqual(current_argv, [c.args for c in self.spawn.call_args_list])
+                self.assertEqual(current_slack, [r.full_url for r in self.requests if "slack.com" in r.full_url])
 
     def test_bad_profile_in_job_map_is_a_lane_error(self):
         out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))

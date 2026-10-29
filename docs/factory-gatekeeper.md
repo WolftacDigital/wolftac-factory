@@ -114,6 +114,45 @@ restore the very per-tick cost this change eliminates. The two-hour safety net
 and typed-comment path bound the approval delay. Error diagnostics exclude
 remote response bodies and exception text that might echo credentials.
 
+### Approval wait status
+
+After dispatch decisions, each tick with an `integrate` job-map entry appends
+approval diagnostics from that tick's successful integrate probe. No new
+Approved query is made while integrate is in flight. The newest comment containing
+`MERGE PROOF PACK` or `LANDING PROOF PACK` is used. If the newest 50 comments have
+no pack, read at most 10 additional comment pages, with a non-advancing cursor
+guard. Those older comments never enter fingerprints or Slack approval detection.
+A missing `pageInfo` means no more pages; no pack means counted, but never alerted.
+
+Segments (identifiers sorted, stale before lane-down):
+
+```text
+approval-stale: WD-354=15d,WD-519=30h
+approval-lane-down: WD-348=3d
+approval-wait: ok (2 approved)
+approval-wait: unknown (integrate lane not probed)
+approval-wait: unknown (URLError)
+```
+
+`lane unavailable` in the newest pack is case-insensitive and may wrap across
+whitespace. It takes precedence over staleness for that issue. Otherwise a pack
+is stale only when strictly older than 24 hours. Whole hours are printed below
+48 hours; whole days thereafter. An invalid pack timestamp skips that issue.
+`ok` appears only when neither alert list is populated, counting all Approved
+issues, including those without packs. An empty lane is `ok (0 approved)`.
+
+In-flight, env/probe/lane errors and Linear 401 produce `unknown`; paging errors
+produce an `unknown` with a safe exception reason, not response or pack text.
+No integrate entry means no approval segment. `--dry-run` reports the same status.
+Dispatch, fingerprints, in-flight/401 routing, Slack calls, exit codes and state
+schema are unchanged. Output contains identifiers and ages only, never issue
+titles or proof-pack text. This does not judge whether a later approval exists.
+
+The watchdog evaluates the newest non-unknown status in a 6-hour look-back and
+raises findings via its existing alert path. See `docs/watchdog.md`. Build/review
+verification uses fake HTTP and scratch watchdog inputs only; installing the
+merged script and observing live alerts remain post-merge operator steps.
+
 ### Detached dispatch, in-flight guard and lane isolation
 
 `hermes cron run` is synchronous for nested runs. The gatekeeper launches it
