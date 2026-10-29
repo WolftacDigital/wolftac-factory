@@ -19,7 +19,8 @@ Checks, per cron directory:
   2. job enabled       — every job matching -JobNamePattern is enabled and not paused
   3. job last_status   — not "error"
   4. job next_run_at   — not more than -StaleIntervals scheduling intervals in the past
-  5. gatekeeper auth  — newest Gatekeeper output does not contain linear-auth-failed
+  5. job last_failure  — no failure recorded in the last -RecentFailureHours (default 6)
+  6. gatekeeper auth  — newest Gatekeeper output does not contain linear-auth-failed
 
 Once per run: the Linear bot expiry date in -EnvFile is valid and at least 3 days away.
 Only the expiry key is extracted; no Linear credentials are used or validated.
@@ -66,6 +67,7 @@ param(
     [int]$HeartbeatMaxAgeMinutes = 5,
     [int]$StaleIntervals = 3,
     [int]$NagHours = 12,
+    [int]$RecentFailureHours = 6,
     # Prepended to alert text. Exists so fault-injection runs against the real channel
     # are unmistakably drills — an unmarked test alert that mentions Jonathan is
     # indistinguishable from the real outage this watchdog exists to announce.
@@ -328,6 +330,36 @@ function Test-CronDirectory([string]$Dir) {
             Add-Report $name "last-status" "FAIL" "last_status=$status$detail"
         } else {
             Add-Report $name "last-status" "ok" "last_status=$(if ($status) { $status } else { '(none)' })"
+        }
+
+        # Hermes records a failed run in last_failure but often still writes
+        # last_status=ok on the next tick, even when that tick failed the same way
+        # (2026-10-19: integrate hit a Linear 401 on every run for two days while
+        # last_status alternated, so this watchdog posted "recovered" twice). A failure
+        # inside the window keeps the job unhealthy, so the incident stays open until
+        # the job has actually gone -RecentFailureHours without failing.
+        $lf = Get-Prop $job 'last_failure'
+        $lfAt = Get-Prop $lf 'at'
+        if ($lfAt) {
+            try {
+                $lfDt = [datetimeoffset]::Parse("$lfAt")
+                $ageH = ((Get-Date) - $lfDt.LocalDateTime).TotalHours
+                if ($ageH -le $RecentFailureHours) {
+                    $lfDetail = "$(Get-Prop $lf 'detail')" -split "`n" |
+                        ForEach-Object { $_.Trim(' ', '-', '*', '#') } | Where-Object { $_ } | Select-Object -First 3
+                    $lfText = ($lfDetail -join ' / ')
+                    if ($lfText.Length -gt 300) { $lfText = $lfText.Substring(0, 300) + '...' }
+                    Add-Finding ("[$Dir] {0}: FAILED {1:N1}h ago (window {2}h) - {3}" -f $name, $ageH, $RecentFailureHours, $lfText)
+                    Add-Report $name "recent-failure" "FAIL" ("last_failure {0:N1}h ago (window {1}h)" -f $ageH, $RecentFailureHours)
+                } else {
+                    Add-Report $name "recent-failure" "ok" ("last_failure {0:N1}h ago (window {1}h)" -f $ageH, $RecentFailureHours)
+                }
+            } catch {
+                Add-Finding "[$Dir] ${name}: unparseable last_failure.at '$lfAt'"
+                Add-Report $name "recent-failure" "FAIL" "unparseable last_failure.at"
+            }
+        } else {
+            Add-Report $name "recent-failure" "ok" "no last_failure recorded"
         }
 
         # Overdue is measured in scheduling intervals, so a 5m job and a daily job are
@@ -665,7 +697,7 @@ foreach ($r in $report) {
     Write-Output ("  {0,-6} {1,-20} {2}  [{3}]" -f $r.Result, $r.Check, $r.Observed, $r.Scope)
 }
 if ($healthy) {
-    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, Linear expiry, Gatekeeper auth)"
+    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Linear expiry, Gatekeeper auth)"
 } else {
     Write-Output "UNHEALTHY: $($findings.Count) finding(s)"
     foreach ($f in $findings) { Write-Output "  - $f" }

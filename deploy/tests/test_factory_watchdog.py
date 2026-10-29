@@ -204,7 +204,13 @@ class WatchdogTests(unittest.TestCase):
         # Only the new check dispatch is inserted inside the existing cron checks.
         def checks(text):
             part = text[text.index("function Test-CronDirectory"):text.index("function Get-StatePath")]
-            return part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "")
+            part = part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "")
+            # The recent-failure check is a deliberate later addition to the cron checks;
+            # drop its block on both sides so everything else stays pinned to main.
+            start = part.find("        # Hermes records a failed run in last_failure")
+            if start >= 0:
+                part = part[:start] + part[part.index("        # Overdue is measured", start):]
+            return part
         self.assertEqual(checks(base), checks(current))
         jobs = json.loads((self.cron / "jobs.json").read_text())
         jobs["jobs"][0].update(enabled=False, paused=True, last_status="error",
