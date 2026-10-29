@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -24,6 +25,14 @@ def git(*args):
 
 def quote(value):
     return "'" + str(value).replace("'", "''") + "'"
+
+
+def is_junction(path):
+    """Path.is_junction() needs Python 3.12; the Hermes venv runs 3.11."""
+    try:
+        return os.lstat(path).st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    except (OSError, AttributeError):
+        return False
 
 
 def tree_state(root):
@@ -99,7 +108,7 @@ class JunctionTests(unittest.TestCase):
 
     def unlink_fixture_links(self):
         for link in reversed(self.links):
-            if link.is_junction():
+            if is_junction(link):
                 link.rmdir()  # Remove only the link, never recurse into a target.
 
     def write_manifest(self, legacy=False):
@@ -163,7 +172,7 @@ class JunctionTests(unittest.TestCase):
         for root in self.roots:
             for pair in self.pairs:
                 link = root / pair["name"]
-                self.assertTrue(link.is_junction())
+                self.assertTrue(is_junction(link))
                 self.assertEqual(link.resolve(), (self.live / pair["repo"]).resolve())
         before = [tree_state(p) for p in self.roots]
         self.assert_rows(self.run_script(), "NOOP", 8)
@@ -172,7 +181,7 @@ class JunctionTests(unittest.TestCase):
         for root in self.roots:
             for pair in self.pairs:
                 link = root / pair["name"]
-                self.assertFalse(link.is_junction())
+                self.assertFalse(is_junction(link))
                 self.assertEqual(lf_tree(link), lf_tree(self.live / pair["repo"]))
         before = [tree_state(p) for p in self.roots]
         self.assert_rows(self.run_script("teardown"), "NOOP", 8)
@@ -186,14 +195,14 @@ class JunctionTests(unittest.TestCase):
         output = self.run_script(code=1)
         self.assertIn(f"REFUSE {bad}:", output)
         self.assertEqual(before, [tree_state(p) for p in self.roots])
-        self.assertTrue(all(not p.is_junction() for p in self.links))
+        self.assertTrue(all(not is_junction(p) for p in self.links))
 
     def test_missing_roots_create_all_eight(self):
         self.links = [root / skill for root in self.roots for skill in SKILLS]
         self.assert_rows(self.run_script(extra="-DryRun"), "CREATE", 8)
         self.assertTrue(all(not p.exists() for p in self.roots))
         self.assert_rows(self.run_script(), "LINKED", 8)
-        self.assertTrue(all(p.is_junction() for p in self.links))
+        self.assertTrue(all(is_junction(p) for p in self.links))
 
     def make_link(self, link, target):
         link.parent.mkdir(parents=True, exist_ok=True)
