@@ -246,6 +246,10 @@ def main(argv=None):
     run.add_argument("--set-env", action="append", default=[])
     run.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
+    # Gate output is decoded as UTF-8; a piped stdout's legacy code page must not
+    # turn a passing gate that prints a non-ASCII character into a runner crash.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parent = os.environ
     command = []
     env = {}

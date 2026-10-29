@@ -172,6 +172,21 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNone(self.trailer(result)["exit_code"])
         self.assertIn("error", self.trailer(result))
 
+    def test_non_ascii_output_does_not_crash_a_passing_gate(self):
+        # A piped runner stdout uses the locale codec (cp1252 on Windows); force a
+        # narrow one everywhere so a passing gate printing a check mark is covered.
+        env = dict(self.env, PYTHONIOENCODING="ascii")
+        code = "import sys; sys.stdout.buffer.write('PASS \\u2713 caf\\u00e9\\n'.encode('utf-8'))"
+        result = subprocess.run([sys.executable, str(RUNNER), "run", "--repo-path", str(self.repo),
+                                 "--cwd", str(self.repo), "--", sys.executable, "-c", code],
+                                env=env, cwd=self.root, capture_output=True, timeout=20)
+        stdout = result.stdout.decode("utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+        self.assertIn("PASS ✓ café", stdout)
+        trailers = [line for line in stdout.splitlines() if line.startswith("GATE-RESULT ")]
+        self.assertEqual(len(trailers), 1, stdout)
+        self.assertEqual(json.loads(trailers[0].removeprefix("GATE-RESULT "))["exit_code"], 0)
+
     def test_usage_errors_do_not_echo_secrets(self):
         for args in (["--unknown", self.secrets[0]], ["run", "--repo-path", str(self.repo), "--cwd", str(self.repo)],
                      ["run", "--repo-path", str(self.repo), "--cwd", str(self.repo), "--set-env", self.secrets[0], "--", "python"]):
