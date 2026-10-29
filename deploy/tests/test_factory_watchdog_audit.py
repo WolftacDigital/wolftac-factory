@@ -59,7 +59,8 @@ class WatchdogAuditTests(unittest.TestCase):
     def run_watchdog(self, dry=True, extra=(), cron=None, outbox=None, expected=0):
         args = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT),
                 "-CronDir", str(cron or self.cron), "-EnvFile", str(self.envfile),
-                "-PolicyPath", str(self.policy), "-SkipDrift", "-SkipLearn",
+                "-PolicyPath", str(self.policy), "-UserProfile", str(self.root / "profile"),
+                "-SkipDrift", "-SkipLearn",
                 "-SlackOutbox", str(outbox or self.outbox), *extra]
         if dry:
             args.append("-DryRun")
