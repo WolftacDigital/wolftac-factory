@@ -152,6 +152,67 @@ Both `LINEAR_FACTORY_BOT_TOKEN` and `SLACK_FACTORY_BOT_TOKEN` are read from the
 Hermes `.env` **file**, never argv or process environment (the scheduler sanitizes
 subprocess environments). No token is written to output, state or logs.
 
+## Daily Done-without-integration audit (WD-580)
+
+After all lane dispatch decisions, an independent read-only audit checks team `WD`,
+label `Factory Queue`, state `Done`. It checks only for an **INTEGRATION REPORT**
+heading at the beginning of a comment (optional Agent line / Markdown heading),
+not its author or other stage evidence. A mid-text mention does not count.
+Issues page at 50 and comments at 100, exhausting both; repeated cursors fail safely.
+The existing token reader and 20-second Linear request timeout are reused.
+
+Constants: `AUDIT_INTERVAL_HOURS = 24`, `AUDIT_FIRST_WINDOW_DAYS = 7`,
+`AUDIT_GRACE_MINUTES = 60`, `AUDIT_OVERDUE_HOURS = 48`.
+State lives only in the top-level `audit` key: `covered_until`, `last_ok_at`,
+`pending_since` (UTC ISO timestamps or absent), and `found` (issue IDs).
+No key means never run. The first window starts seven days ago; later windows
+start at `covered_until`. The exclusive end is now minus 60 minutes, allowing
+integration reports to arrive after Done. Success advances the checkpoint and
+clears pending failure time. Failure retains findings/checkpoint and retries next
+tick, setting `pending_since` only on a first failure with no previous success.
+This is a windowed audit, not a persistent per-issue acknowledgement registry.
+
+Every tick includes an `audit:` element so the watchdog's newest-file reader can
+observe the stored result between daily queries:
+
+```text
+audit: done-without-integration: WD-371,WD-413 (window <start>..<end>)
+audit: clean (window <start>..<end>)
+audit: done-without-integration: WD-371,WD-413 (last audit <last_ok_at>)
+audit: clean (last audit <last_ok_at>)
+audit: failed (<safe error reason>)
+audit: overdue (last ok <timestamp or never>)
+audit: skipped (linear-auth-failed)
+```
+
+Failure/overdue also repeats the stored nonempty findings as a second element.
+Overdue means at least 48 hours since last success (or first pending failure).
+A lane-probe 401 skips the audit entirely. Audit failure never changes lane
+decisions, `lanes`, `fingerprints`, `approval_dispatched`, or the exit code.
+
+- `--no-audit`: no audit query or output element.
+- `--audit-only`: no lane probe or dispatch; saves only audit changes alongside
+  existing state, unless dry-run.
+- `--audit-since <ISO-8601 with timezone>`: force a window start even when not due.
+  Dates without a timezone exit 2; a start beyond the grace boundary fails without
+  advancing state.
+- `--dry-run`: runs due audits but writes nothing, appending ` (dry-run)` to each
+  audit element.
+
+Build/review run fake HTTP tests only, never the live token reader. After approved
+merge and the normal backup/manual script copy, Jonathan may verify the live
+GraphQL schema with this read-only backfill (no job or interval change):
+
+```powershell
+python "$env:LOCALAPPDATA\hermes\scripts\factory_gatekeeper.py" --dry-run --audit-only --audit-since 2026-09-01T00:00:00Z
+```
+
+Expected historical findings include WD-371 and WD-413, but not WD-424, WD-437,
+WD-461 or WD-549, which have reports. Other IDs require inspection. Synthetic
+tests do not prove the live schema. An operator-only non-dry backfill persists
+the result for the next scheduled watchdog alert. Rollback ignores the added
+audit key; preserve backups and do not change scheduler settings.
+
 ## Install / wiring — operator only, after approved merge
 
 This remains a **manual copy**, not a new `deploy.ps1` installation feature.

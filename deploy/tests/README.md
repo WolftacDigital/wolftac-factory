@@ -17,6 +17,21 @@ exits non-zero if anything failed.
 
 ## Hermetic by construction
 
+WD-580 adds `test_factory_gatekeeper_audit.py` (fake `urlopen`, fixed clock,
+scratch state/credentials: windows, pagination, failures, isolation, flags and
+secret suppression) and `test_factory_watchdog_audit.py` (real PowerShell with
+scratch cron/policy/fake env and `-DryRun` / `-SlackOutbox`: status parsing,
+multi-directory precedence, cooldown/nag/recovery and failed-delivery retries).
+
+```text
+python -B -m unittest discover -s deploy/tests -p "test_factory_gatekeeper*.py" -v
+python -B -m unittest discover -s deploy/tests -p test_factory_watchdog_audit.py -v
+python -B -m unittest discover -s deploy/tests -v
+```
+
+Set `TEMP`, `TMP` and `TMPDIR` to a writable scratch root. Do not opt into live
+cron tests or supply live credentials for build/review audit verification.
+
 The suite builds its own scratch repo, deployed tree, cron directory, and a stand-in
 `deploy.ps1` whose `$Pairs` point at scratch destinations. It never reads or writes a
 live deploy target, the real cron directory, the task scheduler, or Slack. The Slack

@@ -60,7 +60,7 @@ class GatekeeperTests(unittest.TestCase):
         self.linear_error = None
         self.slack_error = None
         self.requests = []
-        self.args = ["gatekeeper", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
+        self.args = ["gatekeeper", "--no-audit", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
                      "--state-path", str(self.state), "--approval-policy", str(self.policy),
                      "--exec-override", json.dumps(["fake-noop"])]
         self.addCleanup(patch.stopall)
