@@ -1,6 +1,11 @@
 {
-  "_comment": "WD-349: Hermes skill directories exposed at the deployed path via Windows directory junctions, so a /learn edit lands directly in the repo working tree. Consumed by deploy/junction-setup.ps1, deploy/junction-teardown.ps1 and deploy/deploy.ps1. See docs/hermes-skill-junctions.md.",
-  "skills_root": "%LOCALAPPDATA%/hermes/skills",
+  "_comment": "WD-579: Four Hermes skill roots (default, builder, reviewer, integrator), each with the same four pairs. Hermes skill directories exposed at the deployed path via Windows directory junctions, so a /learn edit lands directly in the repo working tree. Consumed by deploy/junction-setup.ps1, deploy/junction-teardown.ps1 and deploy/deploy.ps1. See docs/hermes-skill-junctions.md.",
+  "skills_roots": [
+    "%LOCALAPPDATA%/hermes/skills",
+    "%LOCALAPPDATA%/hermes/profiles/builder/skills",
+    "%LOCALAPPDATA%/hermes/profiles/reviewer/skills",
+    "%LOCALAPPDATA%/hermes/profiles/integrator/skills"
+  ],
   "pairs": [
     { "repo": "ports/hermes/wolftac-spec", "name": "wolftac-spec" },
     { "repo": "ports/hermes/wolftac-build", "name": "wolftac-build" },
