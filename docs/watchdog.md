@@ -194,8 +194,8 @@ on its own, readable without opening Slack.
 ```powershell
 $repo  = "D:\Wolftac\Factory"
 $pwsh  = (Get-Command pwsh).Source          # full path: "pwsh.exe" alone is not on the task's PATH
-$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\factory-integrate\cron"
-$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`""
+$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\builder\cron;$env:LOCALAPPDATA\hermes\profiles\reviewer\cron;$env:LOCALAPPDATA\hermes\profiles\integrator\cron"
+$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`" -EnvFile `"$env:LOCALAPPDATA\hermes\.env`""
 $action  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
@@ -221,9 +221,11 @@ Two mechanics that will bite if you change this command:
   directory and an unmarked false outage page. Passing a real PowerShell array still
   works when you call the script from a session rather than via `-File`.
 
-The default watches only `%LOCALAPPDATA%\hermes\cron`. The **integrate worker runs in
-its own Hermes profile** with a separate cron directory, so the command above lists
-both — omit the second path and the integrate worker can die unwatched.
+The default watches only `%LOCALAPPDATA%\hermes\cron`. The builder, reviewer and
+integrator workers have separate cron directories, so the command above lists all
+four and explicitly selects the operator's env file. Omitting a worker profile
+leaves it unwatched. This matches the current task's directory arguments; no task
+change is needed for WD-579.
 
 ### Running without an interactive session
 
