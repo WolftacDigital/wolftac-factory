@@ -254,6 +254,35 @@ the WSL VM recycles between commands).
    `linear_bot.py comment <ID> --body-file -`, run `linear_bot.py state <ID> Todo`,
    push NOTHING, clean up, stop.
 
+   **UNATTENDED-GATE-LIMITS** (applies to every gate re-run, including merge-time
+   and branchless verification; takes precedence over the ordinary defect path):
+
+   1. Never authenticate as a human. Do not use a password manager, a saved-login
+      or vault tool (for example `browser_vault`), a login form, or any credential
+      except the factory bot credentials this skill names. A spec may define a
+      credential-free test session (for example WD-352's local `mc_session`
+      cookie); use only that, never invent an authentication bypass.
+   2. Each gate gets a wall-clock limit of 15 minutes, or the limit the spec states.
+      Each browser step gets 3 minutes of no visible progress. Record the start
+      time, bound tool waits to the remaining limit, and stop that gate when either
+      limit is hit. Do not keep retrying or wait for a human in an unattended run.
+   3. A gate that needs a human (login, MFA, missing credential, or interactive
+      approval), or hits a limit, ends the run with exactly one Linear comment:
+      `PRECONDITION: <gate / test-plan step> could not run unattended - <observed signal>`.
+      Name only the step and observed status (for example HTTP 401 at
+      `/api/content-machine`, redirect to `/login`, or the last visible state at
+      timeout), never credential values. Read the existing comments first: if the
+      same text already exists for the current proof position, post nothing new.
+      Leave the state `Approved`, keep the delegate claim, merge nothing, and post
+      nothing else (no proof pack or approval notification). End cleanly with that
+      PRECONDITION line in the run output. On later ticks, treat the issue as
+      WAITING under WD-371 before re-running gates: keep the claim, post nothing,
+      and move to other Approved candidates. Revisit only after a newer human
+      comment or a spec change.
+   4. A `PRECONDITION:` is not a defect report. Do not move the issue to `Todo`
+      for it. Ordinary code failures and rebase conflicts still use the existing
+      numbered-defect / `Todo` path; do not relabel them as preconditions.
+
 5. **Post the MERGE PROOF PACK and notify.** First use
    `SLACK_FACTORY_BOT_TOKEN` and `chat.postMessage` to post the Slack approval
    message to the `slack_channel_id` from `deploy/approval-policy.json`. Select
