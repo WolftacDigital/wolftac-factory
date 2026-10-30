@@ -57,6 +57,38 @@ DEFAULT_JOB_MAP = {
 LANE_FILTERS = {"build": "agentic", "build-crm": "Wolftac CRM v2"}
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
+AUDIT_INTERVAL_HOURS = 24
+AUDIT_FIRST_WINDOW_DAYS = 7
+AUDIT_GRACE_MINUTES = 60
+AUDIT_OVERDUE_HOURS = 48
+
+AUDIT_QUERY = """
+query($after: String, $from: DateTimeOrDuration!, $to: DateTimeOrDuration!) {
+  issues(first: 50, after: $after, filter: {
+    team: { key: { eq: "WD" } }
+    labels: { name: { eq: "Factory Queue" } }
+    state: { name: { eq: "Done" } }
+    completedAt: { gte: $from, lt: $to }
+  }) {
+    nodes { identifier completedAt comments(first: 100) {
+      nodes { body } pageInfo { hasNextPage endCursor }
+    } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+AUDIT_COMMENTS_QUERY = """
+query($id: String!, $after: String) {
+  issue(id: $id) {
+    comments(first: 100, after: $after) {
+      nodes { body } pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+INTEGRATION_REPORT = re.compile(
+    r"\A\s*(?:(?:- )?\*\*Agent:\*\*[^\n]*\n\s*)?(?:#{1,6}\s*)?\**\s*INTEGRATION REPORT\b"
+)
 
 # Live-verified direction: inverseRelations(type=blocks).issue is the blocker;
 # relations(type=blocks).relatedIssue is an issue WE block, not our blocker.
@@ -151,7 +183,7 @@ def load_state(path: str) -> dict:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    for key in ("lanes", "fingerprints", "approval_dispatched"):
+    for key in ("lanes", "fingerprints", "approval_dispatched", "audit"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
     return data
@@ -252,6 +284,88 @@ def lane_matches(issue: dict, word: str) -> bool:
     return word in project.casefold() or any(
         word in label["name"].casefold() for label in issue["labels"]["nodes"]
     )
+
+
+def audit_since(value: str) -> datetime:
+    """Reject ambiguous local dates without echoing arbitrary CLI input."""
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if stamp.tzinfo is not None:
+            return stamp.astimezone(timezone.utc)
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("audit-since requires ISO-8601 with timezone")
+
+
+def audit_issues(token: str, start: datetime, end: datetime) -> list[str]:
+    found = set()
+    after, seen = None, set()
+    while True:
+        page = linear_query(token, AUDIT_QUERY, {
+            "after": after, "from": start.isoformat(), "to": end.isoformat(),
+        })["issues"]
+        for issue in page["nodes"]:
+            identifier = issue["identifier"]
+            if not isinstance(identifier, str) or not re.fullmatch(r"WD-\d+", identifier):
+                raise ProbeError("Invalid audit issue identifier")
+            comments, nested_seen = issue["comments"], set()
+            has_report = False
+            while True:
+                has_report |= any(INTEGRATION_REPORT.match(c.get("body") or "")
+                                  is not None for c in comments["nodes"])
+                cursor = next_cursor(comments, nested_seen)
+                if cursor is None:
+                    break
+                comments = linear_query(token, AUDIT_COMMENTS_QUERY, {
+                    "id": identifier, "after": cursor,
+                })["issue"]["comments"]
+            if not has_report:
+                found.add(identifier)
+        after = next_cursor(page, seen)
+        if after is None:
+            return sorted(found, key=lambda value: int(value.split("-")[1]))
+
+
+def audit_result(found: list[str], detail: str) -> str:
+    result = "done-without-integration: " + ",".join(found) if found else "clean"
+    return f"audit: {result} ({detail})"
+
+
+def run_audit(audit: dict, token, since=None, auth_failed=False) -> list[str]:
+    """Own only audit state; a failure never changes lane decisions or exit status."""
+    if auth_failed:
+        return ["audit: skipped (linear-auth-failed)"]
+    now = now_utc()
+    last_ok = parse_ts(audit.get("last_ok_at"))
+    found = audit.get("found", [])
+    # Only validated IDs and parsed timestamps may reach output, even from state.
+    found = sorted({v for v in found if isinstance(v, str) and re.fullmatch(r"WD-\d+", v)},
+                   key=lambda value: int(value.split("-")[1])) if isinstance(found, list) else []
+    stored = audit_result(found, f"last audit {last_ok.isoformat() if last_ok else 'never'}")
+    if since is None and last_ok and now - last_ok < timedelta(hours=AUDIT_INTERVAL_HOURS):
+        return [stored]
+    try:
+        if token is None:
+            raise ProbeError("Linear token unavailable")
+        start = since or parse_ts(audit.get("covered_until")) or now - timedelta(days=AUDIT_FIRST_WINDOW_DAYS)
+        end = now - timedelta(minutes=AUDIT_GRACE_MINUTES)
+        if start > end:
+            raise ProbeError("Audit window starts after grace boundary")
+        result = audit_issues(token, start, end)
+    except Exception as exc:  # noqa: BLE001 — the audit must not starve workers
+        reason = error_reason(exc)
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
+        if not audit.get("last_ok_at") and not audit.get("pending_since"):
+            audit["pending_since"] = now.isoformat()
+        pending = last_ok or parse_ts(audit.get("pending_since"))
+        line = (f"audit: overdue (last ok {last_ok.isoformat() if last_ok else 'never'})"
+                if pending and now - pending >= timedelta(hours=AUDIT_OVERDUE_HOURS)
+                else f"audit: failed ({reason})")
+        return [line, stored] if found else [line]
+    audit.update(covered_until=end.isoformat(), last_ok_at=now.isoformat(), found=result)
+    audit.pop("pending_since", None)
+    return [audit_result(result, f"window {start.isoformat()}..{end.isoformat()}")]
 
 
 def lane_fingerprint(issues: list[dict]) -> str:
@@ -363,8 +477,13 @@ def main() -> int:
                         help="TEST ONLY: JSON argv list to launch instead of the hermes CLI")
     parser.add_argument("--approval-policy", default=os.path.join(os.path.dirname(__file__), "approval-policy.json"))
     parser.add_argument("--no-slack", action="store_true", help="skip Slack checks")
+    parser.add_argument("--no-audit", action="store_true", help="skip audit queries and output")
+    parser.add_argument("--audit-only", action="store_true", help="audit without probing or dispatching lanes")
+    parser.add_argument("--audit-since", type=audit_since, help="force audit from a timezone-qualified ISO-8601 timestamp")
     args = parser.parse_args()
     job_map = json.loads(args.job_map) if args.job_map else DEFAULT_JOB_MAP
+    if args.audit_only:
+        job_map = {}
     exec_override = json.loads(args.exec_override) if args.exec_override else None
     home = hermes_home()
     env_path = args.env_path or os.path.join(home, ".env")
@@ -491,6 +610,12 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 — lane isolation is the whole point
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
+    if not args.no_audit:
+        try:
+            audit_lines = run_audit(state["audit"], token, args.audit_since, linear_auth_failed)
+        except Exception as exc:  # noqa: BLE001 — even malformed audit state is isolated
+            audit_lines = [f"audit: failed ({error_reason(exc)})"]
+        lines.extend(line + (" (dry-run)" if args.dry_run else "") for line in audit_lines)
     if not args.dry_run:
         save_state(state_path, state)
     print("gatekeeper: " + "; ".join(lines))

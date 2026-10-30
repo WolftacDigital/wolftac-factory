@@ -148,6 +148,40 @@ An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is a
 UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
 
+### Done-without-integration audit (WD-580)
+
+`Test-GatekeeperAudit` reads the newest Gatekeeper output with the same validated
+single-component job ID and ordering as the auth check. It never queries Linear
+or reads a Linear token. Only `WD-<digits>` identifiers from the audit marker may
+enter alerts; other output text is discarded. Across cron directories, IDs are
+unioned and status precedence is `found`, `cannot-check`, `clean`, `not-reported`.
+
+The console prints one of:
+
+```text
+AUDIT: <n> Done issue(s) without an INTEGRATION REPORT: <ids>
+AUDIT CLEAN: latest Gatekeeper audit found none
+AUDIT: CANNOT CHECK - Gatekeeper audit overdue
+AUDIT: not reported by the Gatekeeper
+AUDIT: skipped (-SkipAudit)
+```
+
+This fourth concern never changes the liveness exit code or delays a worker-outage
+alert. Failed delivery still produces the existing exit 3. The existing
+`Send-SlackAlert`, sender and channel are unchanged. A first finding, changed ID
+set, or overdue transition posts once; unchanged problems re-ping at most every
+`-NagHours`. A later clean daily window posts one recovery, meaning no **new**
+unreported Done issues, not that previously reported issues were repaired.
+
+State is `audit_status`, `audit_ids`, `audit_last_alert_at` in the same scratchable
+sidecar. Missing keys mean clean. `not-reported` (old/no-audit/missing output) and
+`-SkipAudit` carry previous state forward, like `-SkipLearn`. Failed sends preserve
+the prior audit state and alert time so transitions and recoveries retry.
+
+Hermetic tests: `python -B -m unittest discover -s deploy/tests -p test_factory_watchdog_audit.py -v`.
+Use scratch cron/policy/fake credential inputs with `-DryRun` or `-SlackOutbox`;
+build/review never send a real alert or run against the live credential file.
+
 ### Deployment order
 
 WD-547's automatic re-mint starts within 5 days of expiry; the 3-day watchdog

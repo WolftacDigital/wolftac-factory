@@ -11,6 +11,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 PWSH = shutil.which("pwsh")
@@ -47,6 +48,18 @@ def lf_tree(root):
             for p in root.rglob("*") if p.is_file()}
 
 
+def out_of_scope_state(root):
+    """Guard operation side effects, not unrelated feature diffs from main.
+
+    WD-579's one-time PR scope check must not freeze these files for later
+    issues (WD-580 intentionally extends the watchdog). Compare the current
+    bytes and mtimes immediately around each junction/deploy probe instead.
+    """
+    return {name: tree_state(root / name) for name in (
+        "ports/hermes-factory-integrate", "deploy/invariants.json",
+        "deploy/factory-watchdog.ps1")}
+
+
 class ManifestTests(unittest.TestCase):
     def test_exact_four_roots_and_unchanged_pairs(self):
         manifest = json.loads((ROOT / "deploy/junctions.json").read_text())
@@ -58,7 +71,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(manifest["pairs"], base["pairs"])
         self.assertEqual(len(manifest["pairs"]), 4)
 
-    def test_docs_and_out_of_scope_files(self):
+    def test_docs(self):
         watchdog = (ROOT / "docs/watchdog.md").read_text(encoding="utf-8")
         install = watchdog.split("## Install", 1)[1].split("## Verify", 1)[0]
         for profile in ("builder", "reviewer", "integrator"):
@@ -71,9 +84,6 @@ class ManifestTests(unittest.TestCase):
             self.assertIn(text, docs)
         self.assertNotIn("factory-skills-live", docs)
         self.assertIn("test_junctions.py", (ROOT / "deploy/tests/README.md").read_text())
-        self.assertEqual(git("diff", "origin/main", "--stat", "--",
-                             "ports/hermes-factory-integrate", "deploy/invariants.json",
-                             "deploy/factory-watchdog.ps1"), "")
 
 
 @unittest.skipUnless(os.name == "nt" and PWSH, "Windows directory junctions and PowerShell 7 required")
@@ -137,14 +147,41 @@ class JunctionTests(unittest.TestCase):
         return output
 
     def run_script(self, name="setup", extra="", code=0):
-        return self.ps(f"& {quote(ROOT / ('deploy/junction-' + name + '.ps1'))} "
-                       f"-RepoRoot {quote(self.live)} -ManifestPath {quote(self.manifest)} {extra}\n"
-                       "exit $LASTEXITCODE\n", code)
+        before = out_of_scope_state(self.live)
+        output = self.ps(f"& {quote(ROOT / ('deploy/junction-' + name + '.ps1'))} "
+                         f"-RepoRoot {quote(self.live)} -ManifestPath {quote(self.manifest)} {extra}\n"
+                         "exit $LASTEXITCODE\n", code)
+        self.assertEqual(before, out_of_scope_state(self.live))
+        return output
 
     def assert_rows(self, output, marker, count):
         rows = [line for line in output.splitlines() if line.startswith(marker + " ")]
         self.assertEqual(len(rows), count, output)
         return rows
+
+    def test_no_write_guard_rejects_watchdog_mutation(self):
+        # Negative control: a successful command cannot hide a source write.
+        # Mutate only the disposable worktree, never ROOT or a live profile.
+        target = self.live / "deploy/factory-watchdog.ps1"
+        before, metadata = target.read_bytes(), target.stat()
+        real_ps = self.ps
+        mutated = False
+
+        def mutating_ps(*args, **kwargs):
+            nonlocal mutated
+            output = real_ps(*args, **kwargs)
+            target.write_bytes(before + b"\n# synthetic unexpected write\n")
+            mutated = True
+            return output
+
+        try:
+            with patch.object(self, "ps", side_effect=mutating_ps):
+                with self.assertRaises(AssertionError):
+                    self.run_script(extra="-DryRun")
+            self.assertTrue(mutated, "negative control must reach the source write")
+        finally:
+            target.write_bytes(before)
+            os.utime(target, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
 
     def test_legacy_manifest_and_skillsroot_override(self):
         self.copies()
@@ -210,10 +247,12 @@ class JunctionTests(unittest.TestCase):
         self.links.append(link)
 
     def deploy_probe(self, link=None):
+        before = out_of_scope_state(ROOT)
         output = self.ps(f". {quote(ROOT / 'deploy/deploy.ps1')}\n"
                          "$data = @{ Dsts = @($Pairs.Dst); Roots = @($JunctionedRoots); "
                          f"Under = (Test-UnderJunction {quote((link or self.case) / 'SKILL.md')}) }}\n"
                          "Write-Output ('FIXTURE_JSON:' + ($data | ConvertTo-Json -Compress))\n")
+        self.assertEqual(before, out_of_scope_state(ROOT))
         data = json.loads(next(line.removeprefix("FIXTURE_JSON:") for line in output.splitlines()
                                if line.startswith("FIXTURE_JSON:")))
         return output, data

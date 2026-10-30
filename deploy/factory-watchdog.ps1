@@ -89,6 +89,8 @@ param(
     [string]$LearnBackupRoot = "",
     [int]$LearnRetentionDays = 30,
     [switch]$SkipLearn,
+    # Done-without-integration is independent of worker liveness.
+    [switch]$SkipAudit,
     # Test seam: write each alert payload to a file here instead of posting it, so the
     # regression suite can assert on exact message text without touching Slack.
     [string]$SlackOutbox = ""
@@ -123,6 +125,8 @@ $findings = New-Object System.Collections.Generic.List[string]
 # "all clear" — an unexplained pass is how a mis-pointed watchdog looks healthy.
 $report = New-Object System.Collections.Generic.List[object]
 $readFailure = $false
+$auditStatuses = New-Object System.Collections.Generic.List[string]
+$auditIds = New-Object System.Collections.Generic.List[string]
 
 function Add-Finding([string]$Text) { $script:findings.Add($Text) }
 
@@ -276,6 +280,36 @@ function Test-GatekeeperAuth([string]$Dir, $Jobs) {
     }
 }
 
+function Test-GatekeeperAudit([string]$Dir, $Jobs) {
+    if ($SkipAudit) { return }
+    foreach ($job in @($Jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) { continue }
+        try {
+            $newest = Get-ChildItem -LiteralPath $outputDir -File |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending | Select-Object -First 1
+            if ($null -eq $newest) { continue }
+            $output = Get-Content -LiteralPath $newest.FullName -Raw -ErrorAction Stop
+            $hits = [regex]::Matches("$output", 'audit: done-without-integration: (WD-\d+(?:,WD-\d+)*)')
+            if ($hits.Count -gt 0) {
+                $script:auditStatuses.Add('found')
+                foreach ($hit in $hits) {
+                    foreach ($issue in ($hit.Groups[1].Value -split ',')) { $script:auditIds.Add($issue) }
+                }
+            } elseif ("$output" -cmatch 'audit: overdue') {
+                $script:auditStatuses.Add('cannot-check')
+            } elseif ("$output" -cmatch 'audit: clean') {
+                $script:auditStatuses.Add('clean')
+            }
+        } catch {
+            # The existing auth/liveness reader owns unreadable-output findings.
+            # Never copy untrusted output or error text into an audit alert.
+        }
+    }
+}
+
 function Test-CronDirectory([string]$Dir) {
     # --- check 1: ticker liveness -------------------------------------------------
     $hb = Join-Path $Dir "ticker_heartbeat"
@@ -302,6 +336,7 @@ function Test-CronDirectory([string]$Dir) {
     }
 
     Test-GatekeeperAuth $Dir $jobs
+    Test-GatekeeperAudit $Dir $jobs
     $matched = @($jobs | Where-Object { (Get-Prop $_ 'name') -like $JobNamePattern })
     if ($matched.Count -eq 0) {
         # Zero matches is itself a failure: the workers were deleted, renamed, or this
@@ -701,6 +736,25 @@ if ($SkipLearn) {
     foreach ($p in $learnPending) { Write-Output "  - $(Format-LearnLine $p)" }
 }
 
+# AUDIT BEGIN: output
+$auditObserved = 'not-reported'
+foreach ($status in @('found', 'cannot-check', 'clean')) {
+    if ($auditStatuses.Contains($status)) { $auditObserved = $status; break }
+}
+$auditCurrentIds = @($auditIds | Sort-Object -Unique | Sort-Object { [System.Numerics.BigInteger]::Parse(($_ -replace '^WD-', '')) })
+if ($SkipAudit) {
+    Write-Output 'AUDIT: skipped (-SkipAudit)'
+} elseif ($auditObserved -eq 'found') {
+    Write-Output "AUDIT: $($auditCurrentIds.Count) Done issue(s) without an INTEGRATION REPORT: $($auditCurrentIds -join ', ')"
+} elseif ($auditObserved -eq 'cannot-check') {
+    Write-Output 'AUDIT: CANNOT CHECK - Gatekeeper audit overdue'
+} elseif ($auditObserved -eq 'clean') {
+    Write-Output 'AUDIT CLEAN: latest Gatekeeper audit found none'
+} else {
+    Write-Output 'AUDIT: not reported by the Gatekeeper'
+}
+# AUDIT END: output
+
 if ($DryRun) {
     Write-Output "DRY RUN: no Slack post, no snapshot, no state written."
     exit ($healthy ? 0 : 1)
@@ -888,6 +942,51 @@ if ($learnShouldPost) {
     $learnDelivered = Send-SlackAlert $learnMessage $policy
 }
 
+# AUDIT BEGIN: transition
+# Only successful delivery advances audit status/IDs, preserving failed transitions
+# (including recovery) for retry. Skipped/absent reports carry all state forward.
+$prevAuditStatus = if ($prev) { Get-Prop $prev 'audit_status' } else { $null }
+if (-not $prevAuditStatus) { $prevAuditStatus = 'clean' }
+$prevAuditIds = @(if ($prev) { Get-Prop $prev 'audit_ids' })
+$prevAuditAlert = if ($prev) { Get-Prop $prev 'audit_last_alert_at' } else { $null }
+$auditStatus = $prevAuditStatus
+$auditSavedIds = $prevAuditIds
+$auditShouldPost = $false
+$auditDelivered = $true
+$auditMessage = $null
+if (-not $SkipAudit -and $auditObserved -ne 'not-reported') {
+    $auditStatus = $auditObserved
+    $auditSavedIds = $auditCurrentIds
+    $hoursSinceAudit = if ($prevAuditAlert) { ($now - [datetime]::Parse($prevAuditAlert)).TotalHours } else { [double]::MaxValue }
+    if ($auditStatus -eq 'found') {
+        if ($prevAuditStatus -ne 'found' -or ($prevAuditIds -join ',') -ne ($auditCurrentIds -join ',')) {
+            $auditShouldPost = $true
+            $auditMessage = ":mag: *Done without integration: $($auditCurrentIds.Count) Factory Queue issue(s) reached Done with no INTEGRATION REPORT* - $($auditCurrentIds -join ', ')`nOnly /wolftac-integrate may set Done; check each issue's history. (Not a worker outage.)"
+        } elseif ($hoursSinceAudit -ge $NagHours) {
+            $auditShouldPost = $true
+            $auditMessage = (":mag: *Done without integration, still unresolved after {0:N0}h:* {1}" -f $hoursSinceAudit, ($auditCurrentIds -join ', '))
+        }
+    } elseif ($auditStatus -eq 'cannot-check') {
+        if ($prevAuditStatus -ne 'cannot-check' -or $hoursSinceAudit -ge $NagHours) {
+            $auditShouldPost = $true
+            $auditMessage = ':mag: *Done-without-integration audit has not completed for 48h* - the Gatekeeper audit is overdue. (Not a worker outage.)'
+        }
+    } elseif ($prevAuditStatus -in @('found', 'cannot-check')) {
+        $auditShouldPost = $true
+        $auditMessage = ':white_check_mark: *Done-without-integration audit clean* - the latest daily audit found no new Done issue without an INTEGRATION REPORT.'
+    }
+}
+if ($auditShouldPost) {
+    if ($AlertPrefix) { $auditMessage = "$AlertPrefix`n$auditMessage" }
+    try { $auditDelivered = Send-SlackAlert $auditMessage $policy }
+    catch { $auditDelivered = $false; Write-Output 'AUDIT: alert delivery failed' }
+    if (-not $auditDelivered) {
+        $auditStatus = $prevAuditStatus
+        $auditSavedIds = $prevAuditIds
+    }
+}
+# AUDIT END: transition
+
 # Persist AFTER the attempt. A failed delivery leaves last_alert_at untouched so the
 # next tick retries rather than silently swallowing the alert.
 $newState = [ordered]@{
@@ -906,6 +1005,11 @@ $newState = [ordered]@{
     learn_last_alert_at = if ($learnShouldPost -and $learnDelivered) { $now.ToString('o') } else { $prevLearnAlert }
     learn_fingerprint   = $learnFingerprint
     learn_snapshot      = $learnSnapshot
+    # AUDIT BEGIN: state
+    audit_status        = $auditStatus
+    audit_ids           = @($auditSavedIds)
+    audit_last_alert_at = if ($auditShouldPost -and $auditDelivered) { $now.ToString('o') } else { $prevAuditAlert }
+    # AUDIT END: state
 }
 try {
     $newState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath -Encoding utf8
@@ -914,7 +1018,7 @@ try {
     Write-Output "STATE: could not write $statePath - $($_.Exception.Message)"
 }
 
-if (-not $delivered -or -not $driftDelivered -or -not $learnDelivered) { exit 3 }
+if (-not $delivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered) { exit 3 }
 # Drift and pending /learn edits deliberately do NOT change the exit code: a drifted-but-running factory is
 # not an outage, and Task Scheduler's Last Result is the liveness signal (AC-3).
 exit ($healthy ? 0 : 1)
