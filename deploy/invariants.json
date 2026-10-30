@@ -482,5 +482,35 @@
         "pattern": "UNATTENDED-GATE-LIMITS"
       }
     ]
+  },
+  {
+    "id": "integrate-gate-runner",
+    "description": "Every integrate surface routes command gates through the runner and checks the repository allowlist at pickup.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      }
+    ]
   }
 ]
