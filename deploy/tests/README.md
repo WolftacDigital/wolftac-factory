@@ -12,6 +12,8 @@ exits non-zero if anything failed.
 
 | File | What it holds down |
 |---|---|
+| `test_worker_schedules.py` | WD-576 operator script: scratch Hermes homes and `fixtures/fake-hermes.ps1` prove dry-run immutability, exact CLI argv, per-profile backups, read-back, idempotency, validate-all refusal and fail/noop errors. Imports the gatekeeper's job-map constants only, never its credential loader or dispatch. Run `python -B -m unittest discover -s deploy/tests -p test_worker_schedules.py -v`. |
+| `test_factory_watchdog.py` | WD-549 expiry/auth and unchanged-main regressions plus WD-576 safety-net boundaries, exclusions, non-interval schedules and configurable minimum. Every invocation is `-DryRun` with synthetic inputs. Leave `WD549_REAL_CRON` unset for WD-576. |
 | `factory-watchdog-drift.tests.ps1` | `factory-watchdog.ps1` drift alerting: truthful magnitude on any kind of edit, no false "running normally" while liveness is failing, and `cannot compare` for a deployed copy that is absent. Plus the alert state machine — transition, cooldown, 12h nag, recovery — and agreement with `deploy.ps1 -Check` on which targets are drifted. |
 | `factory-watchdog-learn.tests.ps1` | `factory-watchdog.ps1` pending `/learn` edits (WD-362): clean is silent, a modified or untracked file in the junctioned live worktree alerts once by path and line count (never content), is snapshotted byte-exact, and survives `git restore .`; cooldown, 12h nag, single recovery, 30-day retention keeping the newest, and "cannot check" for an unresolvable worktree or failed `git status`. Hermetic: scratch repo, scratch junctioned worktree, `-SlackOutbox` interception. |
 
