@@ -11,9 +11,16 @@ unchanged queue must not dispatch another silent worker on every tick.
 `%LOCALAPPDATA%\hermes\scripts\factory_gatekeeper.py`. It runs as a Hermes
 `no_agent` job with **no model calls**. Read the actual interval from the default
 profile's `cron\jobs.json`; on AI-MSI it is 30 minutes as of 2026-09-19. This
-change does not alter any schedule or worker prompt. The four worker jobs have
-separate safety-net schedules, covering time-based eligibility (including
-four-hour stale claims), newly reachable repos, and a failed gatekeeper.
+change does not alter any schedule or worker prompt. The four worker jobs retain
+two-hour safety-net schedules, covering time-based eligibility (including
+four-hour stale claims), newly reachable repos, and a failed gatekeeper:
+`builder/9b7b5987bcd6` (agentic), `builder/1dd429fe03b2` (crm),
+`reviewer/8e5c37a23b91` and `integrator/4e7a4d9c5fa4`.
+The operator script `deploy/worker-schedules.ps1` plans their reconciliation to
+120 minutes; `-Apply` backs up each affected profile once, uses `hermes cron edit`
+and verifies read-back. It never writes `jobs.json` directly. A second successful
+apply is a no-op. The watchdog's `worker-safety-net` check alerts on intervals
+below 120 minutes or non-interval worker schedules.
 
 Each tick queries the Wolftac Digital team's `Factory Queue` issues, paginating
 100 issues at a time: build and build-crm = `Todo`, review = `In Review`,
@@ -243,8 +250,17 @@ scheduler files. The isolated `factory-integrate` profile is not in scope.
    ```
 3. Confirm existing gatekeeper job `1a9fb621f161` still references
    `factory_gatekeeper.py` with `no_agent: true`; confirm the existing interval
-   in `cron\jobs.json` and worker two-hour safety nets. **Do not change them.**
-   No gateway restart is required for this script-copy update.
+   in `cron\jobs.json`; do not change the gatekeeper schedule.
+   After merge, Jonathan confirms the 120-minute worker safety net, runs
+   `pwsh deploy/worker-schedules.ps1` to inspect the four PLAN/OK lines, then
+   `pwsh deploy/worker-schedules.ps1 -Apply` and repeats it to confirm four OKs.
+   Apply worker schedules before updating the watchdog checkout, or its new
+   `worker-safety-net` check will alert on the old five-minute schedules.
+   Each changed profile gets `jobs.json.bak-<yyyyMMdd-HHmmss>-pre-safety-net`.
+   Missing/unparseable jobs or non-factory names refuse the whole operation;
+   CLI failure or read-back mismatch exits 1. No gateway restart is required.
+   Build/review runs must always supply a scratch `-HermesHome` and the fixture
+   `-HermesCommand deploy/tests/fixtures/fake-hermes.ps1`, never the live CLI.
 4. Inspect the next three real gatekeeper outputs under
    `cron\output\1a9fb621f161\`: the first non-empty lane without a baseline
    dispatches once; subsequent confirmed, unchanged lanes skip. This soak is a

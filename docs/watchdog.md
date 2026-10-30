@@ -30,6 +30,25 @@ Per cron directory, every run:
 | `last-status` | a job's `last_status` is `error` |
 | `next-run-fresh` | `next_run_at` is more than `-StaleIntervals` (default 3) scheduling intervals in the past |
 | `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
+| `worker-safety-net` | an enabled, unpaused agent worker matching `-JobNamePattern` has an interval below `-WorkerMinIntervalMinutes` (default 120), or a present schedule kind other than `interval` |
+
+The safety-net check excludes `Wolftac Factory Gatekeeper`, `no_agent: true`,
+disabled or paused jobs, and schedules without `kind`. Every checked worker has
+one `ok`/`FAIL` report row; each violation adds one finding to the existing
+transition/nag/recovery path, not a new sender. Unreadable jobs are still reported
+by the existing cron check. `-WorkerMinIntervalMinutes` overrides the threshold.
+
+After merge, Jonathan can restore the four worker schedules with
+`pwsh deploy/worker-schedules.ps1` (dry run), then `-Apply`, then another `-Apply`
+to confirm four `OK` lines. The script validates all targets first, backs up each
+changed profile once, invokes `hermes -p <profile> cron edit <id> --schedule "every 120m"`,
+and verifies the resulting interval. It never writes `jobs.json` directly or
+restarts the scheduler. Apply schedules before pulling the new watchdog check.
+The gatekeeper and paused rollback/factory-integrate jobs are not targets.
+Retain the `jobs.json.bak-*-pre-safety-net` backups; rollback an individual job
+through the same Hermes command with its prior interval, not a direct JSON write.
+Build/review uses only scratch homes and the fake Hermes command; watchdog
+acceptance probes use `-DryRun` and synthetic inputs, never live credentials.
 
 Once per run, `linear-token-expiry` checks only
 `LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` in `-EnvFile`. It adds one finding if the date

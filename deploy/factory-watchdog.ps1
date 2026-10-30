@@ -65,6 +65,7 @@ param(
     [string]$JobNamePattern = "Wolftac Factory *",
     [int]$HeartbeatMaxAgeMinutes = 5,
     [int]$StaleIntervals = 3,
+    [int]$WorkerMinIntervalMinutes = 120,
     [int]$NagHours = 12,
     # Prepended to alert text. Exists so fault-injection runs against the real channel
     # are unmistakably drills — an unmarked test alert that mentions Jonathan is
@@ -276,6 +277,30 @@ function Test-GatekeeperAuth([string]$Dir, $Jobs) {
             Add-Finding "[$Dir] gatekeeper-linear-auth: watchdog cannot read newest Gatekeeper output"
             Add-Report $Dir "gatekeeper-linear-auth" "FAIL" "output unreadable"
             $script:readFailure = $true
+        }
+    }
+}
+
+function Test-WorkerSafetyNet([string]$Dir) {
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return } # Existing cron check reports unreadable input.
+    foreach ($job in $jobs) {
+        $name = Get-Prop $job 'name'
+        if ($name -notlike $JobNamePattern -or $name -eq 'Wolftac Factory Gatekeeper' -or
+            (Get-Prop $job 'enabled') -ne $true -or (Get-Prop $job 'paused') -eq $true -or
+            (Get-Prop $job 'no_agent') -eq $true) { continue }
+        $schedule = Get-Prop $job 'schedule'
+        $kind = Get-Prop $schedule 'kind'
+        if (-not $kind) { continue } # Legacy fixtures have no kind; do not guess.
+        $minutes = Get-Prop $schedule 'minutes'
+        if ($kind -ne 'interval') {
+            Add-Finding "[$Dir] ${name}: worker-safety-net - schedule kind '$kind' is not an interval; the safety net is every ${WorkerMinIntervalMinutes}m"
+            Add-Report $name 'worker-safety-net' 'FAIL' "kind '$kind' is not an interval"
+        } elseif ($minutes -lt $WorkerMinIntervalMinutes) {
+            Add-Finding "[$Dir] ${name}: worker-safety-net - schedule every ${minutes}m is below the ${WorkerMinIntervalMinutes}m safety net; run deploy\worker-schedules.ps1"
+            Add-Report $name 'worker-safety-net' 'FAIL' "every ${minutes}m; minimum ${WorkerMinIntervalMinutes}m"
+        } else {
+            Add-Report $name 'worker-safety-net' 'ok' "every ${minutes}m; minimum ${WorkerMinIntervalMinutes}m"
         }
     }
 }
@@ -680,7 +705,7 @@ function Invoke-LearnRetention {
 }
 
 # ── run the checks ───────────────────────────────────────────────────────────────
-foreach ($dir in $CronDir) { Test-CronDirectory $dir }
+foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir }
 Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
 if (-not $SkipLearn) { Measure-Learn }

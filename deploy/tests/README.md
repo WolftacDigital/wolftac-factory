@@ -17,6 +17,8 @@ Git worktree, never live junctions or `deploy.ps1 -Deploy`.
 
 | File | What it holds down |
 |---|---|
+| `test_worker_schedules.py` | WD-576 operator script: scratch Hermes homes and `fixtures/fake-hermes.ps1` prove dry-run immutability, exact CLI argv, per-profile backups, read-back, idempotency, validate-all refusal and fail/noop errors. Imports the gatekeeper's job-map constants only, never its credential loader or dispatch. Run `python -B -m unittest discover -s deploy/tests -p test_worker_schedules.py -v`. |
+| `test_factory_watchdog.py` | WD-549 expiry/auth and unchanged-main regressions plus WD-576 safety-net boundaries, exclusions, non-interval schedules and configurable minimum. Every invocation is `-DryRun` with synthetic inputs. Leave `WD549_REAL_CRON` unset for WD-576. |
 | `test_junctions.py` | Four-root manifest and legacy override; validate-all-first setup, idempotent setup/teardown, full-path diagnostics, worker deploy coverage and foreign-repository rejection. Windows scratch junctions only. |
 | `test_run_gate.py` | WD-574 gate runner: synthetic-only subprocess environment, output redaction, timeout/tree cleanup, exit codes, repo/worktree identity, seed list and six-copy/deploy parity. Run `python -m unittest discover -s deploy/tests -p test_run_gate.py -v`. Uses scratch repos and a fake Hermes home, never live credentials or real repo gates. |
 | `factory-watchdog-drift.tests.ps1` | `factory-watchdog.ps1` drift alerting: truthful magnitude on any kind of edit, no false "running normally" while liveness is failing, and `cannot compare` for a deployed copy that is absent. Plus the alert state machine — transition, cooldown, 12h nag, recovery — and agreement with `deploy.ps1 -Check` on which targets are drifted. |
