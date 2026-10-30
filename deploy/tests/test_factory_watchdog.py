@@ -6,6 +6,7 @@ No live .env is read. TemporaryDirectory uses the caller's TMPDIR when set.
 """
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -246,6 +247,13 @@ class WatchdogTests(unittest.TestCase):
     def test_existing_checks_and_alerting_are_unchanged(self):
         basepath, base = self.baseline()
         current = SCRIPT.read_text(encoding="utf-8")
+        # WD-580 adds an independent fourth concern. Remove only its explicitly
+        # delimited additions when asserting the old three concerns byte-for-byte.
+        def without_audit(text):
+            text = re.sub(r'^[ \t]*# AUDIT BEGIN: [^\n]+\n.*?^[ \t]*# AUDIT END: [^\n]+\n\n?',
+                          '', text, flags=re.MULTILINE | re.DOTALL)
+            return text.replace(' -or -not $auditDelivered', '')
+        base, current = without_audit(base), without_audit(current)
         marker = "# ── transition-based alerting"
         self.assertEqual(base[base.index(marker):], current[current.index(marker):])
         for start, end in [("function Send-SlackAlert", "# ── run the checks"),
@@ -258,7 +266,8 @@ class WatchdogTests(unittest.TestCase):
         # Only the new check dispatch is inserted inside the existing cron checks.
         def checks(text):
             part = text[text.index("function Test-CronDirectory"):text.index("function Get-StatePath")]
-            return part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "")
+            return part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "").replace(
+                "    Test-GatekeeperAudit $Dir $jobs\n", "")
         self.assertEqual(checks(base), checks(current))
         jobs = json.loads((self.cron / "jobs.json").read_text())
         jobs["jobs"][0].update(enabled=False, paused=True, last_status="error",
@@ -337,7 +346,8 @@ class WatchdogTests(unittest.TestCase):
         # Compare entire drift/learn diagnostics too, including clean/unknown states.
         # Do not filter PENDING rows away to make current-main preservation pass.
         def diagnostics(text):
-            return text[text.index("DRIFT"):text.index("DRY RUN:")]
+            return "\n".join(line for line in text[text.index("DRIFT"):text.index("DRY RUN:")].splitlines()
+                             if not line.startswith("AUDIT"))
         self.assertEqual(diagnostics(before[1]), diagnostics(after[1]))
         self.assertIn("LEARN", diagnostics(after[1]))
         self.assertEqual(before_state, state.read_bytes() if state.exists() else None)

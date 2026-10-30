@@ -167,6 +167,40 @@ An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is a
 UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
 
+### Done-without-integration audit (WD-580)
+
+`Test-GatekeeperAudit` reads the newest Gatekeeper output with the same validated
+single-component job ID and ordering as the auth check. It never queries Linear
+or reads a Linear token. Only `WD-<digits>` identifiers from the audit marker may
+enter alerts; other output text is discarded. Across cron directories, IDs are
+unioned and status precedence is `found`, `cannot-check`, `clean`, `not-reported`.
+
+The console prints one of:
+
+```text
+AUDIT: <n> Done issue(s) without an INTEGRATION REPORT: <ids>
+AUDIT CLEAN: latest Gatekeeper audit found none
+AUDIT: CANNOT CHECK - Gatekeeper audit overdue
+AUDIT: not reported by the Gatekeeper
+AUDIT: skipped (-SkipAudit)
+```
+
+This fourth concern never changes the liveness exit code or delays a worker-outage
+alert. Failed delivery still produces the existing exit 3. The existing
+`Send-SlackAlert`, sender and channel are unchanged. A first finding, changed ID
+set, or overdue transition posts once; unchanged problems re-ping at most every
+`-NagHours`. A later clean daily window posts one recovery, meaning no **new**
+unreported Done issues, not that previously reported issues were repaired.
+
+State is `audit_status`, `audit_ids`, `audit_last_alert_at` in the same scratchable
+sidecar. Missing keys mean clean. `not-reported` (old/no-audit/missing output) and
+`-SkipAudit` carry previous state forward, like `-SkipLearn`. Failed sends preserve
+the prior audit state and alert time so transitions and recoveries retry.
+
+Hermetic tests: `python -B -m unittest discover -s deploy/tests -p test_factory_watchdog_audit.py -v`.
+Use scratch cron/policy/fake credential inputs with `-DryRun` or `-SlackOutbox`;
+build/review never send a real alert or run against the live credential file.
+
 ### Deployment order
 
 WD-547's automatic re-mint starts within 5 days of expiry; the 3-day watchdog
@@ -213,8 +247,8 @@ on its own, readable without opening Slack.
 ```powershell
 $repo  = "D:\Wolftac\Factory"
 $pwsh  = (Get-Command pwsh).Source          # full path: "pwsh.exe" alone is not on the task's PATH
-$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\factory-integrate\cron"
-$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`""
+$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\builder\cron;$env:LOCALAPPDATA\hermes\profiles\reviewer\cron;$env:LOCALAPPDATA\hermes\profiles\integrator\cron"
+$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`" -EnvFile `"$env:LOCALAPPDATA\hermes\.env`""
 $action  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
@@ -240,9 +274,11 @@ Two mechanics that will bite if you change this command:
   directory and an unmarked false outage page. Passing a real PowerShell array still
   works when you call the script from a session rather than via `-File`.
 
-The default watches only `%LOCALAPPDATA%\hermes\cron`. The **integrate worker runs in
-its own Hermes profile** with a separate cron directory, so the command above lists
-both — omit the second path and the integrate worker can die unwatched.
+The default watches only `%LOCALAPPDATA%\hermes\cron`. The builder, reviewer and
+integrator workers have separate cron directories, so the command above lists all
+four and explicitly selects the operator's env file. Omitting a worker profile
+leaves it unwatched. This matches the current task's directory arguments; no task
+change is needed for WD-579.
 
 ### Running without an interactive session
 
