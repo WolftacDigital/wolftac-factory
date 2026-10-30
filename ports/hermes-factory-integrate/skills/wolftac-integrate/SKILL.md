@@ -108,7 +108,18 @@ python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" claim WD-123
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" unclaim WD-123
 python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py" state WD-123 Done [--dry-run]
+python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/run_gate.py" check-repo --repo-path "<spec Repo path>"
+python "$LOCALAPPDATA/hermes/profiles/factory-integrate/skills/wolftac-integrate/scripts/run_gate.py" run --repo-path "<spec Repo path>" --cwd "<integrate worktree or deliverable folder>" [--timeout-sec <spec limit in seconds>] -- <gate argv>
 ```
+
+Gate runner exits (separate from `linear_bot.py` exit codes):
+- **0:** repo allowed (`check-repo`) or gate passed (`run`).
+- **1:** gate failed; use the existing numbered defect report and `Todo` path.
+- **3:** repo not allowlisted; at pickup skip silently, no comment or state change;
+  at gate time use `PRECONDITION:` with `gate runner refused: repo allowlist`, keep `Approved`.
+- **4:** allowlist unavailable or invalid; at pickup fail closed, claim nothing,
+  post nothing, stop the tick; at gate time use the same allowlist `PRECONDITION:`, keep `Approved`.
+- **124:** gate timed out; use `PRECONDITION:` with `timed out after <N> s`, keep `Approved`.
 
 - `viewer` — the bot's own identity (the id every approval author is checked against)
 - `queue` — Factory Queue in a state, oldest updated first, optional lane filter
@@ -176,7 +187,12 @@ the WSL VM recycles between commands).
    matches it case-insensitively against the issue's Linear project name and labels.
    Read one issue in full with `linear_bot.py issue <ID>`. Skip — SILENTLY,
    no comment or state change — issues whose spec **Repo:** path is unreachable from
-   this environment. Before choosing a delegate-held issue, perform a read-first
+   this environment. Before choosing or claiming any candidate, run
+   `run_gate.py check-repo --repo-path "<spec Repo path>"` using this surface's
+   literal helper path above. Exit 3 = skip silently (no comment, no state change).
+   Exit 4 = fail closed: claim nothing, post nothing, stop the tick. Exit 0 permits
+   the remaining pickup checks.
+   Before choosing a delegate-held issue, perform a read-first
    stale-claim sweep: if the most recent comment (or claim time when there are none)
    is OLDER than 4 hours, post exactly
    `SWEPT: stale integrate claim, no activity since <timestamp>` (via
@@ -248,7 +264,8 @@ the WSL VM recycles between commands).
    artifact is not immutable → defect report, state `Todo`, push NOTHING). Create a
    detached integrate worktree at the current remote default; never switch the active
    user checkout; NEVER force-push. Rebase (or merge) the reviewed branch onto the
-   current default in that worktree and re-run the spec's Test plan gates. Secret
+   current default in that worktree and re-run the spec's Test plan command gates via
+   `run_gate.py run` (GATE-RUNNER). Secret
    values never appear in output. Rebase conflict or gate failure → post a numbered
    defect report (what's wrong → repro → expected vs actual) with
    `linear_bot.py comment <ID> --body-file -`, run `linear_bot.py state <ID> Todo`,
@@ -282,6 +299,21 @@ the WSL VM recycles between commands).
    4. A `PRECONDITION:` is not a defect report. Do not move the issue to `Todo`
       for it. Ordinary code failures and rebase conflicts still use the existing
       numbered-defect / `Todo` path; do not relabel them as preconditions.
+
+   **GATE-RUNNER:** Run every Test plan command gate through `run_gate.py run` with
+   `--repo-path`, `--cwd` set to the integrate worktree (or the deliverable's folder
+   in 4-alt/6-alt), `--timeout-sec` set to the spec's stated limit in seconds or
+   omitted for the 15-minute default, and the gate's argv after `--`. Wrap a
+   shell-syntax gate as `-- pwsh -NoProfile -Command "<gate>"` or
+   `-- bash -c "<gate>"`. Never run a gate command directly. Exit 1 is a gate failure;
+   exit 124 and exits 3/4 are `PRECONDITION:` outcomes under UNATTENDED-GATE-LIMITS.
+   This rule covers steps 4, 6 (rebuild), 4-alt and 6-alt. Agent-driven browser and
+   manual steps remain under UNATTENDED-GATE-LIMITS only, with no changed limits.
+   For exit 124, the observed signal is `timed out after <N> s`; for exits 3/4 at
+   gate time it is `gate runner refused: repo allowlist`. Keep `Approved` in both
+   cases and follow the existing PRECONDITION comment/waiting rule, not the defect
+   path. Record each gate's already-redacted `GATE-RESULT` line with its result for
+   the proof pack's **Gates re-run** evidence.
 
 5. **Post the MERGE PROOF PACK and notify.** First use
    `SLACK_FACTORY_BOT_TOKEN` and `chat.postMessage` to post the Slack approval
@@ -335,7 +367,8 @@ the WSL VM recycles between commands).
    **Never trust a SHA from a prior session** — a proof pack's rebased head lives in
    that worker's local object store. Rebuild it: fresh detached integrate worktree at
    the current remote default, re-verify the reviewed branch SHA, re-run the rebase,
-   re-run the gates on the head you just built (failure → numbered defect report via
+   re-run the command gates through `run_gate.py run` (GATE-RUNNER) on the head you just built
+   (failure → numbered defect report via
    `linear_bot.py comment`, then `linear_bot.py state <ID> Todo`, push NOTHING).
    **PR-MERGE-TRANSITION-RULE:** Query the reviewed branch for a PR again. If it
    exists, merge with `gh pr merge <n> --merge`; if none exists, treat it as a
@@ -378,7 +411,8 @@ the WSL VM recycles between commands).
 4-alt. **Verify the live deliverable.** There is no branch, no rebase, and no
    integrate worktree on this path — the deliverable the review attested lives
    outside git (deployed configuration, installed skills, provisioned services).
-   Re-run the spec's **Test plan** against that live deliverable exactly as
+   Re-run the spec's **Test plan** (command gates via `run_gate.py run`, per GATE-RUNNER)
+   against that live deliverable exactly as
    written; secret values never appear in output. If any verification step
    fails: do NOT rework it yourself — post a numbered defect report (what's
    wrong → repro → expected vs actual) with `linear_bot.py comment`, run
@@ -417,7 +451,8 @@ the WSL VM recycles between commands).
    `APPROVE MERGE` / `APPROVED MERGE` prefix plus the viewer-identity check.
    Back off if another session posted an INTEGRATION REPORT. An approval OLDER
    than the newest LANDING PROOF PACK is void — post a fresh pack instead of
-   landing on it. Re-run the spec's **Test plan** against the live deliverable
+   landing on it. Re-run the spec's **Test plan** (command gates via `run_gate.py run`, per
+   GATE-RUNNER) against the live deliverable
    again on this pass — never land on a prior session's verification; if it now
    fails: numbered defect report, `linear_bot.py state <ID> Todo`, land NOTHING.
    A branchless landing never pushes, merges, or deploys anything new — it
