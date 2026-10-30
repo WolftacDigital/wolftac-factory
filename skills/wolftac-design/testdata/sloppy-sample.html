@@ -1,0 +1,49 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE for the anti-slop diagnostic. Deliberately bad. It contains BOTH:
+    - a fabricated testimonial (must be flagged for DELETION), and
+    - a visible [Client Name] placeholder (must be LEFT IN PLACE).
+  The point of the fixture is that a diagnostic which strips both has broken the
+  artifact it was checking.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sloppy sample</title>
+  <style>
+    body {
+      background: linear-gradient(135deg, #7B5CF0 0%, #3C8CF0 100%);
+      color: #FFFFFF;
+      font-family: system-ui, sans-serif;
+      text-align: center;
+    }
+    .card { background: rgba(255,255,255,0.12); backdrop-filter: blur(8px); border-radius: 18px; padding: 24px; }
+    .card.alt { border-radius: 4px; }
+    .shot { background: #C9C9C9; height: 180px; }
+  </style>
+</head>
+<body>
+  <h1>🚀 Transform Your Business Today</h1>
+  <p>Trusted by 40,000+ teams worldwide.</p>
+
+  <section>
+    <div class="card"><h3>✨ Fast</h3><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p></div>
+    <div class="card"><h3>🔒 Secure</h3><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p></div>
+    <div class="card alt"><h3>📈 Scalable</h3><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p></div>
+  </section>
+
+  <section>
+    <div class="shot"></div>
+    <blockquote>
+      "This product completely changed how our engineering org operates. We shipped 3x faster in the first quarter."
+      <cite>— Sarah Chen, VP Engineering, Acme</cite>
+    </blockquote>
+  </section>
+
+  <section>
+    <h2>Prepared for [Client Name]</h2>
+    <p>[Logo]</p>
+    <p>Engagement value: [00]</p>
+  </section>
+</body>
+</html>
