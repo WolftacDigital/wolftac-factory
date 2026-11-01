@@ -1,9 +1,10 @@
 # Hermes skill junctions — making `/learn` edits land in the repo
 
-**Status:** mechanism built and tested; **live cutover is gated on WD-346 landing.**
+**Status:** junctions are live in four Hermes skill roots: default, builder,
+reviewer and integrator, targeting `D:\Wolftac\.factory-live\ports\hermes\wolftac-*`.
 **Scope:** the Hermes port only (`ports/hermes/wolftac-*`). Claude Code, Codex,
-Claude Desktop, the Codex plugin, the isolated `factory-integrate` profile and WSL
-stay copy-deployed — migrating them is a follow-up (WD-349 NG-2).
+Claude Desktop, the Codex plugin and WSL stay copy-deployed. The `factory-integrate`
+profile is retired and no longer deployed; its source port remains for WD-547.
 
 ## The problem this removes
 
@@ -23,7 +24,7 @@ change from the moment it is written.
 
 | File | Role |
 |---|---|
-| `deploy/junctions.json` | The junctioned pair list — the single source of truth shared by all three scripts. |
+| `deploy/junctions.json` | The `skills_roots` list and four pairs — the single source of truth shared by setup, teardown and deploy. Every root gets all four skills. |
 | `deploy/junction-lib.ps1` | Shared helpers: LF-normalized tree comparison, reparse-point inspection, link-only removal, safety scan. |
 | `deploy/junction-setup.ps1` | Validate-then-act migration to junctions. Idempotent; refuses rather than destroys. |
 | `deploy/junction-teardown.ps1` | Rollback to real directories + copy-based deploy. Idempotent. |
@@ -49,8 +50,12 @@ checkout (`.git` is a directory rather than a worktree file). Override with
 earlier revision of this quick-start showed the bare form, contradicting its own
 decision 1; the guard now makes the two agree by construction.
 
-Both scripts take `-RepoRoot` and `-SkillsRoot` so they can be exercised against
-scratch trees — which is how every claim below was tested.
+The manifest's `skills_roots` names `%LOCALAPPDATA%/hermes/skills` plus
+`%LOCALAPPDATA%/hermes/profiles/{builder,reviewer,integrator}/skills`: 16 root x
+skill pairs in total. The loader still accepts the legacy single `skills_root`.
+Both scripts take `-RepoRoot`, `-ManifestPath` and `-SkillsRoot` (overrides all roots
+with one scratch root) for isolated tests. Plans and refusals name full link paths.
+Every root is validated before any root is changed.
 
 ## The four key decisions, and the evidence that settled them
 
@@ -156,7 +161,7 @@ profile's `config.yaml`:
 ```yaml
 skills:
   external_dirs:
-    - D:/Wolftac/factory-skills-live/ports/hermes
+    - D:/Wolftac/.factory-live/ports/hermes
 ```
 
 Verified: the warning disappears, each skill is still discovered exactly once (the
@@ -254,28 +259,31 @@ carried an uncommitted edit, and exiting 1. Copy-based deploy is fully restored.
 Do **not** run this while `deploy.ps1 -Check` shows drift on the Hermes targets —
 the setup script will refuse, which is the point.
 
-1. Land WD-346 so `ports/hermes/wolftac-*` and `%LOCALAPPDATA%\hermes\skills\wolftac-*`
-   are byte-identical. Confirm with `pwsh deploy\deploy.ps1 -Check`.
-2. Create the dedicated live worktree — a checkout no stage ever switches:
+1. Confirm `ports/hermes/wolftac-*` and all four deployed roots are identical or
+   already junctioned. Use `pwsh deploy\deploy.ps1 -Check`; reconcile any drift first.
+2. Use the existing dedicated live worktree, `D:\Wolftac\.factory-live`, which no
+   stage ever switches. Only on a new installation, create it:
    ```powershell
-   git -C D:\Wolftac\Factory worktree add --detach D:\Wolftac\factory-skills-live main
+   git -C D:\Wolftac\Factory worktree add --detach D:\Wolftac\.factory-live main
    ```
-3. Dry-run, then migrate:
+3. Dry-run: expect 16 `NOOP` lines on the current installation. Run the second
+   command only if the validated plan contains `CREATE` or `REPLACE`:
    ```powershell
-   pwsh D:\Wolftac\Factory\deploy\junction-setup.ps1 -RepoRoot D:\Wolftac\factory-skills-live -DryRun
-   pwsh D:\Wolftac\Factory\deploy\junction-setup.ps1 -RepoRoot D:\Wolftac\factory-skills-live
+   pwsh D:\Wolftac\Factory\deploy\junction-setup.ps1 -RepoRoot D:\Wolftac\.factory-live -DryRun
+   pwsh D:\Wolftac\Factory\deploy\junction-setup.ps1 -RepoRoot D:\Wolftac\.factory-live
    ```
-4. Restart the Hermes gateway (`hermes gateway restart`) so the cached skills index
-   is rebuilt from the new location.
+4. Only after a migration changes links, have the operator restart the Hermes
+   gateway (`hermes gateway restart`) to rebuild the cached index. An all-`NOOP`
+   validation needs no migration or restart. Workers never perform this live step.
 5. Verify: `pwsh D:\Wolftac\Factory\deploy\deploy.ps1 -Check` reports the Hermes
    targets `JUNCTIONED`; a `/wolftac-*` invocation still works.
 
-**Steady state.** After a `/learn` edit, `git -C D:\Wolftac\factory-skills-live status`
+**Steady state.** After a `/learn` edit, `git -C D:\Wolftac\.factory-live status`
 shows it. Review with `git diff`, then commit and push it from that worktree like any
 change. Nothing auto-commits (NG-4). To advance the live worktree to a newer `main`,
-confirm it is clean first, then `git -C D:\Wolftac\factory-skills-live checkout --detach origin/main`.
+confirm it is clean first, then `git -C D:\Wolftac\.factory-live checkout --detach origin/main`.
 
-**Rollback.** `pwsh D:\Wolftac\Factory\deploy\junction-teardown.ps1 -RepoRoot D:\Wolftac\factory-skills-live`,
+**Rollback.** `pwsh D:\Wolftac\Factory\deploy\junction-teardown.ps1 -RepoRoot D:\Wolftac\.factory-live`,
 then restart the gateway. Any uncommitted `/learn` work is preserved twice over: it
 stays in the live worktree, and it is what teardown copies back out to the deployed
 path.

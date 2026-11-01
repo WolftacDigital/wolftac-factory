@@ -6,6 +6,7 @@ No live .env is read. TemporaryDirectory uses the caller's TMPDIR when set.
 """
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -182,6 +183,60 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("cannot read expiry date", text)
         self.assertIn("watchdog cannot read SLACK_FACTORY_BOT_TOKEN", text)
 
+    def safety_worker(self, schedule, **changes):
+        job = {"id": "worker-576", "name": "Wolftac Factory Build Worker - agentic (Mason)",
+               "enabled": True, "paused": False, "no_agent": False, "last_status": "ok",
+               "next_run_at": timestamp(1), "schedule": schedule}
+        job.update(changes)
+        (self.cron / "jobs.json").write_text(json.dumps({"jobs": [job]}))
+        return job
+
+    def test_worker_safety_net_boundaries(self):
+        for minutes in (5, 119, 120, 240):
+            with self.subTest(minutes=minutes):
+                job = self.safety_worker({"kind": "interval", "minutes": minutes})
+                code, text = self.run_watchdog()
+                rows = [r for r in findings(text) if "worker-safety-net" in r]
+                self.assertEqual(len(rows), int(minutes < 120))
+                self.assertEqual(code, int(minutes < 120))
+                if rows:
+                    self.assertIn(job["name"], rows[0])
+                    self.assertIn(f"every {minutes}m", rows[0])
+                    self.assertIn("120m safety net", rows[0])
+                # One report row as well as the separate findings summary.
+                reports = [r for r in text.splitlines() if "worker-safety-net" in r
+                           and r.lstrip().startswith(("ok ", "FAIL "))]
+                self.assertEqual(len(reports), 1, text)
+                self.assertIn("FAIL" if minutes < 120 else "ok", reports[0])
+
+    def test_worker_safety_net_exclusions(self):
+        cases = [({"kind": "interval", "minutes": 30}, {"name": "Wolftac Factory Gatekeeper"}),
+                 ({"kind": "interval", "minutes": 5}, {"no_agent": True}),
+                 ({"kind": "interval", "minutes": 5}, {"enabled": False}),
+                 ({"kind": "interval", "minutes": 5}, {"paused": True}),
+                 ({"minutes": 5}, {}),
+                 ({"kind": "interval", "minutes": 5}, {"name": "Unrelated worker"})]
+        for schedule, changes in cases:
+            with self.subTest(schedule=schedule, changes=changes):
+                self.safety_worker(schedule, **changes)
+                _, text = self.run_watchdog()
+                self.assertNotIn("worker-safety-net", text)
+
+    def test_worker_safety_net_noninterval(self):
+        self.safety_worker({"kind": "cron", "expr": "*/5 * * * *"})
+        code, text = self.run_watchdog()
+        rows = [r for r in findings(text) if "worker-safety-net" in r]
+        self.assertEqual(code, 1)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("kind 'cron' is not an interval", rows[0])
+
+    def test_worker_safety_net_configured_minimum(self):
+        self.safety_worker({"kind": "interval", "minutes": 5})
+        code, text = self.run_watchdog(extra=("-WorkerMinIntervalMinutes", "5"))
+        self.assertEqual(code, 0)
+        self.assertEqual(findings(text), [])
+        self.assertIn("minimum 5m", text)
+
     def baseline(self):
         text = subprocess.check_output(["git", "show", "origin/main:deploy/factory-watchdog.ps1"],
                                        cwd=ROOT, encoding="utf-8")
@@ -192,6 +247,13 @@ class WatchdogTests(unittest.TestCase):
     def test_existing_checks_and_alerting_are_unchanged(self):
         basepath, base = self.baseline()
         current = SCRIPT.read_text(encoding="utf-8")
+        # WD-580 adds an independent fourth concern. Remove only its explicitly
+        # delimited additions when asserting the old three concerns byte-for-byte.
+        def without_audit(text):
+            text = re.sub(r'^[ \t]*# AUDIT BEGIN: [^\n]+\n.*?^[ \t]*# AUDIT END: [^\n]+\n\n?',
+                          '', text, flags=re.MULTILINE | re.DOTALL)
+            return text.replace(' -or -not $auditDelivered', '')
+        base, current = without_audit(base), without_audit(current)
         marker = "# ── transition-based alerting"
         self.assertEqual(base[base.index(marker):], current[current.index(marker):])
         for start, end in [("function Send-SlackAlert", "# ── run the checks"),
@@ -204,7 +266,8 @@ class WatchdogTests(unittest.TestCase):
         # Only the new check dispatch is inserted inside the existing cron checks.
         def checks(text):
             part = text[text.index("function Test-CronDirectory"):text.index("function Get-StatePath")]
-            part = part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "")
+            part = part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "").replace(
+                "    Test-GatekeeperAudit $Dir $jobs\n", "")
             # The recent-failure check is a deliberate later addition to the cron checks;
             # drop its block on both sides so everything else stays pinned to main.
             start = part.find("        # Hermes records a failed run in last_failure")
@@ -289,7 +352,8 @@ class WatchdogTests(unittest.TestCase):
         # Compare entire drift/learn diagnostics too, including clean/unknown states.
         # Do not filter PENDING rows away to make current-main preservation pass.
         def diagnostics(text):
-            return text[text.index("DRIFT"):text.index("DRY RUN:")]
+            return "\n".join(line for line in text[text.index("DRIFT"):text.index("DRY RUN:")].splitlines()
+                             if not line.startswith("AUDIT"))
         self.assertEqual(diagnostics(before[1]), diagnostics(after[1]))
         self.assertIn("LEARN", diagnostics(after[1]))
         self.assertEqual(before_state, state.read_bytes() if state.exists() else None)

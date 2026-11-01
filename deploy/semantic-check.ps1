@@ -121,6 +121,33 @@ foreach ($surface in $helperCopies.Keys) {
     }
 }
 
+# Gate runners are byte-identical, including the isolated Hermes surface. Do not
+# normalize line endings before hashing: byte drift itself must fail this check.
+$canonicalRunner = "canonical/wolftac-integrate/scripts/run_gate.py"
+$runnerCopies = @(
+    "ports/hermes/wolftac-integrate/scripts/run_gate.py",
+    "plugins/wolftac-factory/skills/wolftac-integrate/scripts/run_gate.py",
+    "ports/codex/wolftac-integrate-scripts/run_gate.py",
+    "ports/claude-desktop/wolftac-integrate/scripts/run_gate.py",
+    "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/run_gate.py"
+)
+$runnerHash = $null
+if (Read-RepoFile $canonicalRunner) {
+    $runnerHash = (Get-FileHash -LiteralPath (Join-Path $RepoRoot $canonicalRunner) -Algorithm SHA256).Hash
+} else {
+    $errors.Add("$canonicalRunner - gate runner is missing or empty")
+}
+foreach ($copy in $runnerCopies) {
+    if (Read-RepoFile $copy) {
+        $copyHash = (Get-FileHash -LiteralPath (Join-Path $RepoRoot $copy) -Algorithm SHA256).Hash
+        if ($runnerHash -and $copyHash -ne $runnerHash) {
+            $errors.Add("$copy - drifted from $canonicalRunner; gate runners must be byte-identical")
+        }
+    } else {
+        $errors.Add("$copy - gate runner is missing or empty")
+    }
+}
+
 # A credentialed GraphQL call hand-rolled into a fenced command block is the exact
 # pattern the helper replaced: it puts the token on a command line, trips the
 # credential-keyword heuristic, and re-prompts on every Linear round-trip. Prose
