@@ -279,6 +279,30 @@ Ok '-SkipDrift reports skipped' ($out -match 'DRIFT: skipped')
 $state6 = Get-Content $statePath -Raw | ConvertFrom-Json
 Ok '-SkipDrift does not assert clean for a check that never ran' ($state6.drift_status -eq 'drifted') $state6.drift_status
 
+Write-Host '=== SYSTEM task: targets resolve under the operator profile, not systemprofile ==='
+# The scheduled task runs as SYSTEM, so %USERPROFILE% is systemprofile and every
+# deploy.ps1 target read as absent. The profile now comes from -UserProfile, or from
+# the profile that owns -EnvFile.
+$prof = Join-Path $Scratch 'Users\operator'
+$sysProf = Join-Path $Scratch 'systemprofile'
+New-Item -ItemType Directory -Force (Join-Path $prof 'skills'), (Join-Path $prof 'AppData\Local\hermes'), $sysProf | Out-Null
+Copy-Item (Join-Path $d.Repo 'canonical\alpha.md') (Join-Path $prof 'skills\alpha.md')
+$envFile = Join-Path $prof 'AppData\Local\hermes\.env'
+Set-Content -LiteralPath $envFile -Value 'SLACK_FACTORY_BOT_TOKEN=xoxb-scratch-not-a-real-token'
+$profDeploy = (Get-Content $d.Script -Raw) -replace '(?s)\$Pairs = @\(.*?\n\)', '$Pairs = @(
+    @{ Src = "canonical\alpha.md"; Dst = "$env:USERPROFILE\skills\alpha.md" }
+)'
+$profScript = Join-Path $d.Repo 'deploy\deploy-profile.ps1'
+Set-Content -LiteralPath $profScript -Value $profDeploy
+$savedUp = $env:USERPROFILE; $savedLa = $env:LOCALAPPDATA
+$env:USERPROFILE = $sysProf; $env:LOCALAPPDATA = Join-Path $sysProf 'AppData\Local'
+try {
+  $o1 = & pwsh -NoProfile -File $Watchdog -CronDir $cron -DeployScript $profScript -EnvFile $envFile -DryRun 2>&1 | Out-String
+  $o2 = & pwsh -NoProfile -File $Watchdog -CronDir $cron -DeployScript $profScript -UserProfile $prof -DryRun 2>&1 | Out-String
+} finally { $env:USERPROFILE = $savedUp; $env:LOCALAPPDATA = $savedLa }
+Ok 'SYSTEM: profile inferred from -EnvFile compares clean' ($o1 -match 'DRIFT CLEAN' -and $o1 -notmatch 'cannot compare') $o1
+Ok 'SYSTEM: explicit -UserProfile compares clean' ($o2 -match 'DRIFT CLEAN' -and $o2 -notmatch 'cannot compare') $o2
+
 Remove-Item Env:\SLACK_FACTORY_BOT_TOKEN -ErrorAction SilentlyContinue
 if (Test-Path $Scratch) { Remove-Item -Recurse -Force $Scratch }
 Write-Host ''

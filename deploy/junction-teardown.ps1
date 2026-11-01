@@ -46,7 +46,7 @@ $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 $manifest = Get-JunctionManifest -ManifestPath $ManifestPath -RepoRoot $RepoRoot -SkillsRoot $SkillsRoot
 
 Write-Output "repo root  : $RepoRoot"
-Write-Output "skills root: $($manifest.SkillsRoot)"
+foreach ($root in $manifest.SkillsRoots) { Write-Output "skills root: $root" }
 Write-Output ""
 
 # ── Phase 1: validate every pair before removing anything. ────────────────
@@ -55,11 +55,11 @@ $refusals = @()
 
 foreach ($pair in $manifest.Pairs) {
     if (-not (Test-Path -LiteralPath $pair.RepoPath -PathType Container)) {
-        $refusals += "REFUSE $($pair.Name): repo tree missing - $($pair.RepoPath); restoring a real directory would produce an empty skill"
+        $refusals += "REFUSE $($pair.LinkPath): repo tree missing - $($pair.RepoPath); restoring a real directory would produce an empty skill"
         continue
     }
     if (Test-Path -LiteralPath $pair.LinkPath -PathType Leaf) {
-        $refusals += "REFUSE $($pair.Name): deployed path is a file, not a directory - $($pair.LinkPath)"
+        $refusals += "REFUSE $($pair.LinkPath): deployed path is a file, not a directory - $($pair.LinkPath)"
         continue
     }
     if (Test-IsReparsePoint $pair.LinkPath) {
@@ -67,7 +67,7 @@ foreach ($pair in $manifest.Pairs) {
         if (Test-SamePath $target $pair.RepoPath) {
             $plan += [pscustomobject]@{ Pair = $pair; Action = "UNLINK"; Detail = "junction -> $target" }
         } else {
-            $refusals += "REFUSE $($pair.Name): deployed path is a link to '$target', not this repo's '$($pair.RepoPath)' - not ours to remove"
+            $refusals += "REFUSE $($pair.LinkPath): deployed path is a link to '$target', not this repo's '$($pair.RepoPath)' - not ours to remove"
         }
         continue
     }
@@ -82,7 +82,7 @@ foreach ($pair in $manifest.Pairs) {
             $plan += [pscustomobject]@{ Pair = $pair; Action = "OVERWRITE"; Detail = "DISCARDING $($divergent.Count) divergent file(s) - -DiscardDeployedEdits was passed" }
         } else {
             $sample = ($divergent | Select-Object -First 5) -join ', '
-            $refusals += "REFUSE $($pair.Name): deployed path is a real directory that DIFFERS from the repo in $($divergent.Count) file(s) [$sample] - $($pair.LinkPath). It is not a junction, so this content exists only there. Reconcile it into the repo first (docs\drift-reconciliation.md), or re-run with -DiscardDeployedEdits if it is genuinely worthless."
+            $refusals += "REFUSE $($pair.LinkPath): deployed path is a real directory that DIFFERS from the repo in $($divergent.Count) file(s) [$sample] - $($pair.LinkPath). It is not a junction, so this content exists only there. Reconcile it into the repo first (docs\drift-reconciliation.md), or re-run with -DiscardDeployedEdits if it is genuinely worthless."
         }
         continue
     }
@@ -90,7 +90,7 @@ foreach ($pair in $manifest.Pairs) {
 }
 
 foreach ($entry in $plan) {
-    Write-Output ("{0,-12} {1,-20} {2}" -f $entry.Action, $entry.Pair.Name, $entry.Detail)
+    Write-Output ("{0,-12} {1,-20} {2}" -f $entry.Action, $entry.Pair.LinkPath, $entry.Detail)
 }
 
 if ($refusals.Count -gt 0) {
@@ -115,7 +115,7 @@ foreach ($entry in $plan) {
     if ($entry.Action -eq "NOOP") {
         # Already real and byte-identical to the repo. Writing would churn mtimes
         # for no gain, and every write is a chance to lose something.
-        Write-Output "NOOP     $($pair.LinkPath) (already a real directory matching the repo)"
+        # The validated plan above already reports this unchanged link path.
         $untouched++
         continue
     }

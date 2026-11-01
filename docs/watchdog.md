@@ -15,7 +15,8 @@ scheduler it is supposed to be watching (the old `agentic-os-watchdog` job vanis
 that same incident). From Slack, a dead factory and an idle factory are both silence.
 
 So this watchdog runs under **Windows Task Scheduler**, and reads only files:
-`jobs.json` and `ticker_heartbeat`. No Hermes CLI, no gateway API. It keeps working
+`jobs.json`, `ticker_heartbeat`, the newest Gatekeeper output, and the Linear bot
+expiry date from `-EnvFile`. No Hermes CLI, no gateway API. It keeps working
 when Hermes is entirely down — which is exactly when it matters.
 
 ## What it checks
@@ -28,6 +29,43 @@ Per cron directory, every run:
 | `enabled-not-paused` | a `Wolftac Factory *` job has `enabled: false` or `paused: true` |
 | `last-status` | a job's `last_status` is `error` |
 | `next-run-fresh` | `next_run_at` is more than `-StaleIntervals` (default 3) scheduling intervals in the past |
+| `recent-failure` | a job's `last_failure.at` is within `-RecentFailureHours` (default 6). Hermes often writes `last_status: ok` on a tick that failed the same way, so `last-status` alone flaps and posts false recoveries |
+| `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
+| `worker-safety-net` | an enabled, unpaused agent worker matching `-JobNamePattern` has an interval below `-WorkerMinIntervalMinutes` (default 120), or a present schedule kind other than `interval` |
+
+The safety-net check excludes `Wolftac Factory Gatekeeper`, `no_agent: true`,
+disabled or paused jobs, and schedules without `kind`. Every checked worker has
+one `ok`/`FAIL` report row; each violation adds one finding to the existing
+transition/nag/recovery path, not a new sender. Unreadable jobs are still reported
+by the existing cron check. `-WorkerMinIntervalMinutes` overrides the threshold.
+
+After merge, Jonathan can restore the four worker schedules with
+`pwsh deploy/worker-schedules.ps1` (dry run), then `-Apply`, then another `-Apply`
+to confirm four `OK` lines. The script validates all targets first, backs up each
+changed profile once, invokes `hermes -p <profile> cron edit <id> --schedule "every 120m"`,
+and verifies the resulting interval. It never writes `jobs.json` directly or
+restarts the scheduler. Apply schedules before pulling the new watchdog check.
+The gatekeeper and paused rollback/factory-integrate jobs are not targets.
+Retain the `jobs.json.bak-*-pre-safety-net` backups; rollback an individual job
+through the same Hermes command with its prior interval, not a direct JSON write.
+Build/review uses only scratch homes and the fake Hermes command; watchdog
+acceptance probes use `-DryRun` and synthetic inputs, never live credentials.
+
+Once per run, `linear-token-expiry` checks only
+`LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT` in `-EnvFile`. It adds one finding if the date
+is missing, unparseable, expired, or **less than 3 days away**. Valid dates are
+ISO-8601 timestamps with a timezone; comparisons and reported dates use UTC. The
+expiry key may be quoted. Invalid raw values are never echoed. The watchdog does
+not extract, validate, or re-mint a Linear token, and never writes an `.env` file.
+
+The Gatekeeper check runs for each `-CronDir`, independently of `-JobNamePattern`.
+It reads only the newest file in `output\<job-id>\`, ordered by last-write time UTC
+(descending filename breaks ties). An older rejection does not keep a healthy
+newest output unhealthy. A missing Gatekeeper job, output directory or output file
+adds no finding; other checks cover scheduler liveness. An unreadable existing
+output produces an unhealthy read finding. Output contents are never included in
+alerts. Both checks feed the existing transition/nag/recovery path, with no new
+Slack sender or channel.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
@@ -54,6 +92,12 @@ drifted.
 Junctioned targets are skipped: the repo file *is* the deployed file, so drift is not
 possible. Pass `-SkipDrift` to turn the check off; it then carries the previous drift
 state forward rather than asserting a clean result for a check that never ran.
+
+`deploy.ps1` resolves targets through `%USERPROFILE%` and `%LOCALAPPDATA%`. Under the
+SYSTEM task those point at `C:\WINDOWS\system32\config\systemprofile`, where nothing is
+deployed, so the drift check compares against the profile that owns `-EnvFile`
+(`<profile>\AppData\Local\hermes\.env`) instead. Pass `-UserProfile C:\Users\<name>` to
+set it explicitly.
 
 Drift alerts are a **separate concern from liveness** and say so in their own words —
 they lead with the drift count and state that the factory is running normally. Drift
@@ -85,9 +129,88 @@ tracked in `watchdog-state.json` under `drift_status` / `drift_last_alert_at`. A
 written before this feature has no drift keys; that is treated as "no prior state", not
 an error, so rollback and roll-forward both work with no migration step.
 
+### Pending `/learn` edits (WD-362)
+
+Junctioned Hermes skills are the live worktree itself (`D:\Wolftac\.factory-live`,
+see `docs/hermes-skill-junctions.md`), so the drift check skips them: there is only
+one copy. That made uncommitted `/learn` work there invisible, and on 2026-08-30 a
+rewrite destroyed ~5 such lines without anything noticing. This is a third concern,
+separate from liveness and drift.
+
+- **Resolve:** the junction roots come from `deploy.ps1`'s own `$JunctionedRoots`
+  (the same import the drift check uses), then `git -C <root> rev-parse --show-toplevel`.
+- **Detect:** `git status --porcelain -uall` in that worktree. Modified, deleted *and
+  untracked* files count. `/learn` creates reference docs unversioned, so untracked
+  files are the common case.
+- **Report:** one line per file, `PENDING <path> (+added/-removed, kind)`. Paths and
+  line counts only, never content: a `/learn` edit can pick up anything.
+- **Snapshot:** whenever the pending content changes, every changed file is copied
+  byte-exact (and hash-verified) to
+  `%LOCALAPPDATA%\hermes\backups\learn-edits\<UTC-timestamp>\<repo-relative-path>`.
+  The root resolves under the operator profile even under the SYSTEM task, and can be
+  overridden with `-LearnBackupRoot`. Unchanged content on a later run takes no new
+  snapshot. Snapshots older than `-LearnRetentionDays` (default 30) are pruned; the
+  most recent is never removed.
+- **Restore by hand:** copy the file from the newest snapshot back into the live
+  worktree, then review with `git diff` and commit. Nothing is ever auto-committed.
+- **Alerts:** its own transition, 12h nag and single recovery message, tracked as
+  `learn_status` / `learn_last_alert_at` (plus `learn_fingerprint` / `learn_snapshot`)
+  in the same sidecar. A sidecar without these keys counts as "no prior state". The
+  check never affects the exit code.
+- **Cannot check:** no junction roots, a root outside any git worktree, or a failing
+  `git status` reports `LEARN: CANNOT CHECK` and alerts as such. It never reports clean.
+- Disable with `-SkipLearn`, which carries the previous state forward untouched.
+
+Regression suite: `deploy/tests/factory-watchdog-learn.tests.ps1` (hermetic: scratch
+repo, scratch junctioned worktree, `-SlackOutbox` interception).
+
 An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is an
 UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
+
+### Done-without-integration audit (WD-580)
+
+`Test-GatekeeperAudit` reads the newest Gatekeeper output with the same validated
+single-component job ID and ordering as the auth check. It never queries Linear
+or reads a Linear token. Only `WD-<digits>` identifiers from the audit marker may
+enter alerts; other output text is discarded. Across cron directories, IDs are
+unioned and status precedence is `found`, `cannot-check`, `clean`, `not-reported`.
+
+The console prints one of:
+
+```text
+AUDIT: <n> Done issue(s) without an INTEGRATION REPORT: <ids>
+AUDIT CLEAN: latest Gatekeeper audit found none
+AUDIT: CANNOT CHECK - Gatekeeper audit overdue
+AUDIT: not reported by the Gatekeeper
+AUDIT: skipped (-SkipAudit)
+```
+
+This fourth concern never changes the liveness exit code or delays a worker-outage
+alert. Failed delivery still produces the existing exit 3. The existing
+`Send-SlackAlert`, sender and channel are unchanged. A first finding, changed ID
+set, or overdue transition posts once; unchanged problems re-ping at most every
+`-NagHours`. A later clean daily window posts one recovery, meaning no **new**
+unreported Done issues, not that previously reported issues were repaired.
+
+State is `audit_status`, `audit_ids`, `audit_last_alert_at` in the same scratchable
+sidecar. Missing keys mean clean. `not-reported` (old/no-audit/missing output) and
+`-SkipAudit` carry previous state forward, like `-SkipLearn`. Failed sends preserve
+the prior audit state and alert time so transitions and recoveries retry.
+
+Hermetic tests: `python -B -m unittest discover -s deploy/tests -p test_factory_watchdog_audit.py -v`.
+Use scratch cron/policy/fake credential inputs with `-DryRun` or `-SlackOutbox`;
+build/review never send a real alert or run against the live credential file.
+
+### Deployment order
+
+WD-547's automatic re-mint starts within 5 days of expiry; the 3-day watchdog
+threshold allows that process a 2-day recovery window. Prefer deploying WD-547
+first. If this check is deployed before WD-547's first mint writes the date, the
+**expiry date missing** alert is intentional and remains until the date exists.
+Any manual date seeding is WD-547's post-merge operator step, not a build/review
+action. WD-548 supplies the `linear-auth-failed` output marker. This change neither
+modifies nor deploys those components.
 
 ## Alerts
 
@@ -124,9 +247,10 @@ on its own, readable without opening Slack.
 
 ```powershell
 $repo  = "D:\Wolftac\Factory"
-$pwsh  = (Get-Command pwsh).Source          # full path: "pwsh.exe" alone is not on the task's PATH
-$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\factory-integrate\cron"
-$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`""
+$pwsh  = "C:\Program Files\PowerShell\7\pwsh.exe"   # machine-wide MSI install; stable across updates
+if (-not (Test-Path $pwsh)) { throw "Install PowerShell 7 machine-wide first (see below)" }
+$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\builder\cron;$env:LOCALAPPDATA\hermes\profiles\reviewer\cron;$env:LOCALAPPDATA\hermes\profiles\integrator\cron"
+$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`" -EnvFile `"$env:LOCALAPPDATA\hermes\.env`""
 $action  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
@@ -145,6 +269,17 @@ Two mechanics that will bite if you change this command:
 
 * **Use the full path to `pwsh.exe`.** A bare `pwsh.exe` fails with Last Result
   `-2147024894` (`0x80070002`, file not found) — the task's PATH is not your shell's.
+* **Never point the task at a Microsoft Store `pwsh.exe`.** The Store install lives in a
+  versioned folder (`C:\Program Files\WindowsApps\Microsoft.PowerShell_7.x.y.0_x64__...`)
+  that disappears on the next PowerShell update, so the task fails with the same
+  `0x80070002`; it was found Disabled for a month this way (2026-09-16 to 2026-10-19).
+  `(Get-Command pwsh).Source` returns that versioned path when only the Store version is
+  installed. Install the machine-wide MSI (`C:\Program Files\PowerShell\7\pwsh.exe`, fixed
+  path, patched by Microsoft Update). Behind Avast HTTPS interception, winget's `msstore`
+  source fails certificate pinning and elevated sessions may not open sources: run
+  `winget download --id Microsoft.PowerShell --exact --source winget --installer-type wix`
+  unelevated, confirm `Get-AuthenticodeSignature` is Valid / Microsoft Corporation, then
+  `msiexec /i <msi> /qn ADD_PATH=0 USE_MU=1 ENABLE_MU=1` from an elevated shell.
 * **Cron directories may be `;`- or `,`-delimited inside ONE quoted argument.**
   `pwsh -File` passes arguments as literal strings rather than binding a list to an
   array parameter, so the script splits either delimiter itself. Accepting commas
@@ -152,16 +287,19 @@ Two mechanics that will bite if you change this command:
   directory and an unmarked false outage page. Passing a real PowerShell array still
   works when you call the script from a session rather than via `-File`.
 
-The default watches only `%LOCALAPPDATA%\hermes\cron`. The **integrate worker runs in
-its own Hermes profile** with a separate cron directory, so the command above lists
-both — omit the second path and the integrate worker can die unwatched.
+The default watches only `%LOCALAPPDATA%\hermes\cron`. The builder, reviewer and
+integrator workers have separate cron directories, so the command above lists all
+four and explicitly selects the operator's env file. Omitting a worker profile
+leaves it unwatched. The isolated `factory-integrate` profile (WD-281) is parked with
+its job disabled, so it is deliberately not listed: watching it would page about a job
+that is meant to be off.
 
 ### Running without an interactive session
 
 The install command above registers the task as the Windows **SYSTEM** service
 account (`LogonType: ServiceAccount`). That needs an elevated PowerShell, but no
 stored user password, interactive login, or batch-logon grant. SYSTEM has been
-verified on this machine with the installed Microsoft Store PowerShell 7 path.
+verified on this machine with the machine-wide PowerShell 7 MSI path (2026-10-19).
 
 Confirm the persisted principal and cadence:
 
@@ -176,6 +314,35 @@ Expected: `UserId: SYSTEM`, `LogonType: ServiceAccount`, interval `PT15M`, and
 `Last Result: 0` after a scheduled tick.
 
 ## Verify
+
+The WD-549 regression suite invokes PowerShell with `-DryRun` only, using scratch
+files and fake credentials. It covers expiry thresholds, invalid/missing dates,
+newest-output selection, secret suppression, multiple cron directories and unchanged
+existing checks/alert routing:
+
+The comparison requires `origin/main`; run `git fetch origin` first locally.
+Factory Checks uses `actions/checkout` with `fetch-depth: 0` so the baseline ref
+exists even in a fresh Actions checkout. A missing baseline remains an error, not
+a skipped test or a fallback comparison against the branch itself. Both script
+versions receive the same explicit drift input: a scratch pair list for isolated
+cases, or the repo's `deploy.ps1` for TP4. Both also receive an explicit operator
+profile, since Ubuntu runners do not define Windows' `USERPROFILE`. Drift and
+`/learn` checks remain enabled. Isolated cases provide a real clean scratch Git
+repository as the junction root, not an empty root list that means "cannot check".
+The suite also compares pending untracked edits, missing deploy inputs and unknown
+junction roots against current main, and asserts DryRun creates no snapshot,
+alert-outbox file or watchdog state. TP4 compares all finding rows and the complete
+drift/learn diagnostics, including `PENDING` rows, without filtering them away.
+
+```powershell
+python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v
+```
+
+For the optional read-only comparison against the current `origin/main` script,
+set `WD549_REAL_CRON` to the real cron directory before that command. The test still
+uses a scratch credential file and asserts that watchdog state is unchanged. It
+compares findings, not timestamps in the report header. Never remove `-DryRun`
+from the test runner.
 
 ```powershell
 schtasks /query /tn WolftacFactoryWatchdog /v /fo LIST | Select-String "TaskName|Status|Last Run|Last Result|Next Run"

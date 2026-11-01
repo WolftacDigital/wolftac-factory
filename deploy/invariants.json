@@ -393,6 +393,22 @@
     ]
   },
   {
+    "id": "build-review-claim-identity",
+    "description": "Every Build and Review claim step names operator-only Linear tool claims, forbids bot-token and hand-rolled credential access, and restores only its own failed claim while preserving race backoff.",
+    "checks": [
+      {"file": "canonical/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/codex/wolftac-build.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "canonical/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/codex/wolftac-review.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"},
+      {"file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "\\*\\*CLAIM-IDENTITY:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*NO-BOT-TOKEN:\\*\\*(?:(?!\\n(?:### |\\d+\\. )).)*\\*\\*CLAIM-DID-NOT-TAKE:\\*\\*"}
+    ]
+  },
+  {
     "id": "autonomous-run-override",
     "description": "Build/review/integrate take precedence over general-purpose workflow plugins (e.g. superpowers): no mid-run questions, no plan docs in repos, no merges outside the approval gate.",
     "checks": [
@@ -491,6 +507,66 @@
       { "file": "ports/codex/wolftac-integrate.md", "pattern": "Slack posting encoding" },
       { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
       { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" }
+    ]
+  },
+  {
+    "id": "integrate-unattended-gate-limits",
+    "description": "Every integrate surface bounds unattended gates, forbids human authentication, and reports unmet preconditions without rework.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "UNATTENDED-GATE-LIMITS"
+      }
+    ]
+  },
+  {
+    "id": "integrate-gate-runner",
+    "description": "Every integrate surface routes command gates through the runner and checks the repository allowlist at pickup.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
+      }
     ]
   }
 ]

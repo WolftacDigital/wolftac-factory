@@ -57,15 +57,19 @@ session can review what Codex built.
   SHA, it creates one non-draft GitHub PR and records the URL in the BUILD REPORT.
   Reuse an existing PR for the branch; never create a duplicate. A local-only repo
   records `local-only repo — no PR` and keeps the execution-verified flow.
-- **Linear identities are split:** factory workers connect to Linear through the
-  dedicated factory bot identity; humans comment and approve from their own
-  accounts. The integrate stage refuses any typed approval comment
-  (`APPROVE MERGE` or `APPROVED MERGE`, case-insensitively) authored by the same
-  identity it writes with — until the split exists in a workspace, integrate can
-  prepare proof packs but will never merge. Integrate performs ALL of its Linear
-  I/O with the bot credentials (`LINEAR_FACTORY_BOT_TOKEN`), failing closed when
-  they are missing, and notification lanes (e.g. Telegram) are notify-only: no
-  relay ever posts an approval on the human's behalf.
+- **Linear identities are split by stage:** Build and Review act as the operator
+  through the platform's own Linear toolset (`assignee: me`, verified by
+  read-back) and never use the factory bot credentials. Only Integrate acts as
+  the dedicated factory bot, through `linear_bot.py` and `delegate`. Humans
+  comment and approve from their own accounts. The integrate stage refuses any
+  typed approval comment (`APPROVE MERGE` or `APPROVED MERGE`,
+  case-insensitively) authored by the same identity it writes with — until the
+  split exists in a workspace, integrate can prepare proof packs but will never
+  merge. Integrate performs ALL of its Linear I/O with the bot credentials
+  (`LINEAR_FACTORY_BOT_TOKEN`), failing closed when they are missing; see the
+  claim identity split under Shared safeguards. Notification lanes (e.g.
+  Telegram) are notify-only: no relay ever posts an approval on the human's
+  behalf.
 - **Every report opens with an identity line:** `**Agent:** <platform / model>`
   (e.g. `Codex / gpt-5.6-sol`, `Hermes / gpt-5.6-sol`, `Claude Code / Opus 4.8`). This is how
   the human (and other agents) can tell who did what. Reviewers should prefer
@@ -286,6 +290,21 @@ before relying on it; never schedule aspirational syntax.
   skills' pickup steps. A claimed issue with no comment activity for more than
   4 hours may be returned to `Todo` with the `SWEPT` comment; any issue with
   activity younger than 4 hours is untouchable.
+- Claim identity split: Build and Review act as the operator through the
+  platform's own Linear toolset (`assignee: me`, verified by read-back);
+  Integrate acts as the Wolftac Factory Bot through `linear_bot.py` and
+  `delegate`. Three rules bind every Build and Review port, checked by the
+  `build-review-claim-identity` parity invariant: CLAIM-IDENTITY (claim only
+  with the platform Linear tool as the operator; a Build/Review claim lives in
+  `assignee`, never `delegate`); NO-BOT-TOKEN (never read or use the factory
+  bot token, never hand-roll a Linear GraphQL or HTTP call, never import the
+  gatekeeper or `linear_bot.py` for a credential, never write a helper that
+  fetches one; if the Linear write tool is unavailable, stop without claiming
+  and say so); CLAIM-DID-NOT-TAKE (if your own mutation applied but read-back
+  shows the assignee is not you, restore only what this run changed, post
+  nothing on the issue, stop, and report `CLAIM-DID-NOT-TAKE <ID>` with the
+  read-back state, assignee and delegate; losing a race still means back off
+  with no side effects).
 - Never grant blanket auto-approval to an unattended worker. Scope permissions
   to exactly what the stage needs; a destructive operation outside that scope
   should fail, not auto-approve.

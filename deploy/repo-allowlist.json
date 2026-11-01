@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "repos": [
+    {"path": "D:\\Wolftac\\Factory", "github": "WolftacDigital/wolftac-factory"},
+    {"path": "D:\\Wolftac\\atlas_raw_only", "github": "WolftacDigital/atlas_raw_only"},
+    {"path": "C:\\Users\\logan_vwagmmf\\OneDrive\\Wolftac Digital\\Codex\\wolftac-crm", "github": "WolftacDigital/wolftac-crm"},
+    {"path": "D:\\Wolftac\\wolftac-digital-site", "github": "WolftacDigital/wolftac-digital-site"},
+    {"path": "D:\\Wolftac\\peptide-vault", "github": null},
+    {"path": "D:\\Wolftac\\factory-console", "github": "WolftacDigital/factory-console"},
+    {"path": "D:\\Wolftac\\retty-labs-design", "github": null},
+    {"path": "D:\\Wolftac\\retty-ops", "github": null},
+    {"path": "D:\\Wolftac\\Warchest", "github": null},
+    {"path": "D:\\Wolftac\\logan-hermes-config", "github": "WolftacDigital/logan-hermes-config"},
+    {"path": "D:\\Wolftac\\MissionControl", "github": "WolftacDigital/wolftac-mission-control"},
+    {"path": "D:\\Wolftac\\omas-relief-site", "github": "WolftacDigital/omas-relief-site"}
+  ]
+}
