@@ -225,9 +225,11 @@ every task" rule):
    spec's Technical approach and Acceptance criteria. NO scope creep — tangents go in
    the report as "suggest /wolftac-spec". Secrets in .env, never hardcoded. Blocking
    ambiguity → `BLOCKED: <questions>` comment, state `Todo`, stop. Don't guess on
-   load-bearing decisions.
+   load-bearing decisions. For OAuth integrations sharing an existing sign-in project,
+   check provider revocation boundaries before assuming feature-grant isolation; see
+   `references/provider-oauth-contracts.md`.
 
-6. **Verify.** Execute the spec's Test plan literally. Every criterion needs evidence
+6. **Verify.** For PowerShell notification changes, use `references/powershell-delivery-tests.md` for hermetic command shims, exit propagation, timestamp comparisons, and honest live-proof boundaries. Execute the spec's Test plan literally. Every criterion needs evidence
    from running code — "looks right" is not verification. Classify proof precisely:
    automated command output, live browser/API behavior, or an unavailable fixture path.
    If a live criterion needs config, credentials, or a fixture that is not safely
