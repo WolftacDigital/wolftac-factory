@@ -13,7 +13,8 @@ The mapping is **not uniform**:
 | Surface | Repo source | Pair shape | Covers `references/`? |
 | --- | --- | --- | --- |
 | Hermes (default profile) | `ports\hermes\<skill>` | whole-directory **tree** | **yes** |
-| Hermes `factory-integrate` profile | `ports\hermes-factory-integrate\...` | tree | yes |
+| Hermes worker profiles (`builder`, `reviewer`, `integrator`) | `ports\hermes\<skill>` | junctioned whole-directory **tree** | **yes** |
+| Hermes `factory-integrate` profile (retired, not deployed since WD-579) | `ports\hermes-factory-integrate\...` retained for WD-547 | no live deploy target | n/a |
 | Claude Code (`~/.claude/skills`) | `canonical\<skill>\SKILL.md` | individual **files** | **no** |
 | Claude Code in WSL | `canonical\<skill>\SKILL.md` | individual files | **no** |
 | Codex (`~/.codex/prompts`) | `ports\codex\<skill>.md` | individual files | n/a (flat) |

@@ -3,11 +3,13 @@ import contextlib
 import copy
 import importlib.util
 import io
+import itertools
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -58,7 +60,7 @@ class GatekeeperTests(unittest.TestCase):
         self.linear_error = None
         self.slack_error = None
         self.requests = []
-        self.args = ["gatekeeper", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
+        self.args = ["gatekeeper", "--no-audit", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
                      "--state-path", str(self.state), "--approval-policy", str(self.policy),
                      "--exec-override", json.dumps(["fake-noop"])]
         self.addCleanup(patch.stopall)
@@ -107,7 +109,10 @@ class GatekeeperTests(unittest.TestCase):
 
     def baseline(self):
         self.write(self.state, {"lanes": {}, "fingerprints": {
-            lane: g.lane_fingerprint(self.issues[state]) for lane, (state, _) in g.DEFAULT_JOB_MAP.items()
+            lane: g.lane_fingerprint([
+                row for row in self.issues[state]
+                if lane not in g.LANE_FILTERS or g.lane_matches(row, g.LANE_FILTERS[lane])
+            ]) for lane, (state, *_) in g.DEFAULT_JOB_MAP.items()
         }, "approval_dispatched": {}})
 
     def confirm(self):
@@ -310,8 +315,176 @@ class GatekeeperTests(unittest.TestCase):
                 self.assertIn("review: idle", out)
                 self.assertIn("integrate: idle", out)
                 self.assertNotIn(LINEAR, out)
-                self.spawn.assert_called_once()
+                self.assertEqual(self.spawn.call_count, 2)
+                self.assertIn("build-crm: probe failed", out)
                 self.assertNotIn("build", json.loads(self.state.read_text())["fingerprints"])
+
+    def test_linear_401_dispatches_only_integrate_in_every_lane_order(self):
+        for order in itertools.permutations(g.DEFAULT_JOB_MAP):
+            for rejected_lane in g.DEFAULT_JOB_MAP:
+                with self.subTest(order=order, rejected_lane=rejected_lane):
+                    self.issues = {state: [issue(state=state)] for state, *_ in g.DEFAULT_JOB_MAP.values()}
+                    self.baseline()
+                    # Earlier successful build/review probes would dispatch if
+                    # the implementation did not wait for the later 401.
+                    for state in ("Todo", "In Review"):
+                        self.issues[state][0]["description"] = "changed after baseline"
+                    mapping = {lane: g.DEFAULT_JOB_MAP[lane] for lane in order}
+                    rejected_state = mapping[rejected_lane][0]
+
+                    def opener(request, timeout):
+                        if request.data and json.loads(request.data)["variables"].get("state") == rejected_state:
+                            raise urllib.error.HTTPError(request.full_url, 401, LINEAR, {}, None)
+                        return self.open(request, timeout)
+
+                    with patch.object(g.urllib.request, "urlopen", side_effect=opener), \
+                            patch.object(g, "dispatch", wraps=g.dispatch) as dispatch:
+                        out = self.tick("--job-map", json.dumps(mapping))
+                    for lane in ("build", "build-crm", "review"):
+                        self.assertIn(f"{lane}: linear-auth-failed (401) -> skipped", out)
+                    self.assertIn("integrate: linear-auth-failed (401) -> dispatched(pid=1234) for re-mint", out)
+                    self.spawn.assert_called_once()
+                    dispatch.assert_called_once_with(g.DEFAULT_JOB_MAP["integrate"][1], "integrate", False,
+                                                     ["fake-noop"], "integrator")
+                    state = json.loads(self.state.read_text())
+                    self.assertEqual(set(state["lanes"]), {"integrate"})
+                    self.assertEqual(state["fingerprints"], {})
+                    self.assertEqual(state["approval_dispatched"], {})
+                    self.assertNotIn("FAIL-OPEN", out)
+                    self.assertNotIn(LINEAR, out)
+                    self.assertFalse(any("slack.com" in r.full_url for r in self.requests))
+
+    def test_two_phase_dispatch_preserves_each_lane_profile(self):
+        i = self.args.index("--exec-override")
+        del self.args[i:i + 2]
+        for legacy in (False, True):
+            for order in itertools.permutations(g.DEFAULT_JOB_MAP):
+                for rejected in (False, True):
+                    with self.subTest(legacy=legacy, order=order, rejected=rejected):
+                        mapping = {lane: g.DEFAULT_JOB_MAP[lane][:2] if legacy else g.DEFAULT_JOB_MAP[lane]
+                                   for lane in order}
+                        self.issues = {state: [issue(state=state)] for state, *_ in mapping.values()}
+                        self.issues["Todo"].append(self.crm_issue())
+                        self.write(self.state, {})
+                        self.linear_error = (urllib.error.HTTPError(
+                            "https://api.linear.app/graphql", 401, LINEAR, {}, None) if rejected else None)
+                        with patch.object(g, "hermes_cli", return_value=["hermes"]):
+                            self.tick("--job-map", json.dumps(mapping))
+                        expected = []
+                        for lane, entry in mapping.items():
+                            if rejected and lane != "integrate":
+                                continue
+                            profile = [] if legacy else ["-p", entry[2]]
+                            expected.append(["hermes", *profile, "cron", "run", entry[1]])
+                        self.assertEqual([call.args[0] for call in self.spawn.call_args_list], expected)
+
+    def test_linear_401_on_later_page_vetoes_earlier_success(self):
+        self.issues["In Review"] = [issue(f"WD-{n}", "In Review") for n in range(101)]
+
+        def opener(request, timeout):
+            variables = json.loads(request.data)["variables"]
+            if variables.get("state") == "In Review" and variables.get("after") == "100":
+                raise urllib.error.HTTPError(request.full_url, 401, LINEAR, {}, None)
+            return self.open(request, timeout)
+
+        with patch.object(g.urllib.request, "urlopen", side_effect=opener):
+            out = self.tick()
+        self.assertIn("build: linear-auth-failed (401) -> skipped", out)
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched", out)
+        self.spawn.assert_called_once()
+
+    def test_linear_401_keeps_integrate_inflight_guard(self):
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        marker = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        state["lanes"]["integrate"] = marker
+        self.write(self.state, state)
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        out = self.tick()
+        self.assertIn("integrate: in-flight (skip)", out)
+        self.assertIn("build: linear-auth-failed (401) -> skipped", out)
+        self.assertIn("review: linear-auth-failed (401) -> skipped", out)
+        self.spawn.assert_not_called()
+        after = json.loads(self.state.read_text())
+        self.assertEqual(after["lanes"]["integrate"], marker)
+        self.assertEqual(after["fingerprints"], {"integrate": state["fingerprints"]["integrate"]})
+        self.assertFalse(any(json.loads(r.data)["variables"].get("state") == "Approved" for r in self.requests))
+
+    def test_other_probe_failures_keep_fail_open_for_each_ready_lane(self):
+        failures = [urllib.error.URLError(LINEAR), TimeoutError(LINEAR),
+                    urllib.error.HTTPError("https://api.linear.app/graphql", 500, LINEAR, {}, None), "invalid-json"]
+        for failure in failures:
+            for inflight in (False, True):
+                with self.subTest(failure=type(failure).__name__, inflight=inflight):
+                    self.baseline()
+                    if inflight:
+                        state = json.loads(self.state.read_text())
+                        state["lanes"]["integrate"] = {
+                            "dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+                        self.write(self.state, state)
+
+                    def opener(request, timeout):
+                        if isinstance(failure, Exception):
+                            raise failure
+                        return io.StringIO(LINEAR)
+
+                    with patch.object(g.urllib.request, "urlopen", side_effect=opener):
+                        out = self.tick()
+                    expected_reason = type(failure).__name__ if isinstance(failure, Exception) else "JSONDecodeError"
+                    for lane in ("build", "build-crm", "review") if inflight else g.DEFAULT_JOB_MAP:
+                        self.assertIn(f"{lane}: probe failed ({expected_reason}) -> FAIL-OPEN -> dispatched(pid=1234)", out)
+                    self.assertEqual(self.spawn.call_count, 3 if inflight else 4)
+                    if inflight:
+                        self.assertIn("integrate: in-flight (skip)", out)
+                    self.assertNotIn("linear-auth-failed", out)
+                    self.assertNotIn(LINEAR, out)
+
+    def test_linear_401_dry_run_preserves_all_files(self):
+        self.baseline()
+        before = {p: p.read_bytes() for p in (self.env, self.jobs, self.state)}
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        out = self.tick("--dry-run")
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched(dry-run) for re-mint", out)
+        self.spawn.assert_not_called()
+        for path, contents in before.items():
+            self.assertEqual(path.read_bytes(), contents)
+        self.assertFalse((self.root / "cron/gatekeeper-logs").exists())
+
+    def test_linear_401_recovery_rechecks_skipped_lanes(self):
+        self.issues["In Review"] = [issue(state="In Review")]
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        self.tick()
+        self.confirm()
+        self.linear_error = None
+        out = self.tick()
+        self.assertIn("integrate: confirmed-ran", out)
+        for lane in ("build", "review"):
+            self.assertIn(f"{lane}: no-baseline -> dispatched", out)
+        self.assertEqual(self.spawn.call_count, 2)
+
+    def test_linear_401_failed_spawn_is_not_recorded_or_secret_echoed(self):
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        self.spawn.side_effect = OSError(LINEAR)
+        out = self.tick()
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatch-failed(OSError)", out)
+        self.assertNotIn("for re-mint", out)
+        self.assertNotIn(LINEAR, out)
+        self.assertEqual(json.loads(self.state.read_text())["lanes"], {})
+        self.spawn.assert_called_once()
+
+    def test_slack_401_does_not_become_linear_auth_failure(self):
+        self.with_pack()
+        self.issues["Todo"] = [issue()]
+        self.slack_error = urllib.error.HTTPError("https://slack.com/api/reactions.get", 401, SLACK, {}, None)
+        self.addCleanup(self.slack_error.close)
+        out = self.tick()
+        self.assertIn("integrate: slack-check-failed (HTTPError)", out)
+        self.assertIn("build: changed -> dispatched", out)
+        self.assertNotIn("linear-auth-failed", out)
+        self.assertNotIn(SLACK, out)
+        self.spawn.assert_called_once()
 
     def test_inflight_guard_and_ttl_clears_fingerprint(self):
         self.with_pack()
@@ -421,6 +594,216 @@ class GatekeeperTests(unittest.TestCase):
                 params = g.urllib.parse.parse_qs(g.urllib.parse.urlparse(request.full_url).query)
                 self.assertEqual(params["timestamp"], ["1789819979.335359"])
                 self.assertEqual(params["full"], ["true"])
+
+    def test_default_lanes_run_as_exec_team_profiles(self):
+        profiles = {lane: g.lane_entry(entry)[2] for lane, entry in g.DEFAULT_JOB_MAP.items()}
+        self.assertEqual(profiles, {"build": "builder", "build-crm": "builder",
+                                    "review": "reviewer", "integrate": "integrator"})
+
+    def test_dispatch_targets_profile(self):
+        with patch.object(g, "hermes_cli", return_value=["hermes"]):
+            g.dispatch("job123", "build", False, None, "builder")
+            self.assertEqual(self.spawn.call_args[0][0], ["hermes", "-p", "builder", "cron", "run", "job123"])
+            g.dispatch("job123", "build", False, None, None)
+            self.assertEqual(self.spawn.call_args[0][0], ["hermes", "cron", "run", "job123"])
+
+    def test_profile_jobs_path_and_legacy_entry(self):
+        self.assertEqual(g.profile_jobs_path(str(self.root), "reviewer"),
+                         os.path.join(str(self.root), "profiles", "reviewer", "cron", "jobs.json"))
+        self.assertEqual(g.profile_jobs_path(str(self.root), None), os.path.join(str(self.root), "cron", "jobs.json"))
+        self.assertEqual(g.lane_entry(["Todo", "abc"]), ("Todo", "abc", None))
+        for bad in (["Todo", "abc", "../x"], ["Todo", "abc", "A B"], ["Todo"], ["Todo", "abc", "p", "extra"]):
+            with self.assertRaises(ValueError):
+                g.lane_entry(bad)
+
+    def test_last_run_read_from_lane_profile(self):
+        args = [a for a in self.args]
+        i = args.index("--jobs-path"); del args[i:i + 2]
+        self.args = args
+        for lane, entry in g.DEFAULT_JOB_MAP.items():
+            state, job_id, profile = g.lane_entry(entry)
+            path = self.root / "profiles" / profile / "cron" / "jobs.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            jobs = json.loads(path.read_text())["jobs"] if path.exists() else []
+            jobs.append({"id": job_id, "last_run_at": "2026-09-19T10:00:00Z"})
+            self.write(path, {"jobs": jobs})
+        out = self.tick()
+        self.assertIn("build: no-baseline -> dispatched(pid=1234)", out)
+        state = json.loads(self.state.read_text())
+        self.assertEqual(state["lanes"]["build"]["job_last_run_at"], "2026-09-19T10:00:00Z")
+
+    @staticmethod
+    def crm_issue(identifier="WD-CRM"):
+        row = issue(identifier)
+        row["project"] = {"name": "Wolftac CRM v2"}
+        row["labels"] = connection([{"name": "Factory Queue"}])
+        return row
+
+    def build_lane_fixture(self):
+        self.issues["Todo"] = [issue(), self.crm_issue()]
+        i = self.args.index("--exec-override")
+        del self.args[i:i + 2]
+        patch.object(g, "hermes_cli", return_value=["hermes"]).start()
+        # Popen remains fake: no real Hermes worker is launched.
+        self.baseline()
+
+    def test_lane_constants(self):
+        self.assertEqual(g.DEFAULT_JOB_MAP, {
+            "build": ("Todo", "9b7b5987bcd6", "builder"),
+            "build-crm": ("Todo", "1dd429fe03b2", "builder"),
+            "review": ("In Review", "8e5c37a23b91", "reviewer"),
+            "integrate": ("Approved", "4e7a4d9c5fa4", "integrator"),
+        })
+        self.assertEqual(g.LANE_FILTERS, {"build": "agentic", "build-crm": "Wolftac CRM v2"})
+
+    def test_crm_change_dispatches_only_crm(self):
+        self.build_lane_fixture()
+        self.issues["Todo"][1]["description"] = "CRM changed"
+        out = self.tick()
+        self.assertIn("build-crm: changed -> dispatched(pid=1234)", out)
+        self.assertIn("build: unchanged (skip)", out)
+        self.spawn.assert_called_once()
+        self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "builder", "cron", "run", "1dd429fe03b2"])
+
+    def test_agentic_label_project_and_case_dispatch_only_agentic(self):
+        self.build_lane_fixture()
+        for project, labels in ((None, ["agentic"]),
+                                ({"name": "Wolftac Agentic OS — Product Roadmap"}, []),
+                                (None, ["AGENTIC"]), (None, ["prefix-AgEnTiC-suffix"])):
+            with self.subTest(project=project, labels=labels):
+                row = issue()
+                row.update(project=project, labels=connection([{"name": s} for s in labels]))
+                self.issues["Todo"] = [row, self.crm_issue()]
+                self.baseline()
+                row["description"] = "agentic changed"
+                out = self.tick()
+                self.assertIn("build: changed -> dispatched(pid=1234)", out)
+                self.assertIn("build-crm: unchanged (skip)", out)
+                self.spawn.assert_called_once()
+                self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "builder", "cron", "run", "9b7b5987bcd6"])
+
+    def test_unmatched_change_dispatches_neither_build(self):
+        self.build_lane_fixture()
+        row = issue("WD-OTHER")
+        row.update(project=None, labels=connection([{"name": "Factory Queue"}]))
+        self.issues["Todo"].append(row)
+        self.baseline()
+        row["description"] = "unmatched change"
+        out = self.tick()
+        for lane in ("build", "build-crm"):
+            self.assertIn(f"{lane}: unchanged (skip)", out)
+        self.spawn.assert_not_called()
+
+    def test_empty_crm_and_shared_issue_fingerprints(self):
+        self.baseline()
+        self.assertIn("build-crm: idle", self.tick())
+        self.spawn.assert_not_called()
+        shared = issue("WD-SHARED")
+        shared["project"] = {"name": "WOLFTAC CRM V2 / Pilot"}
+        self.issues["Todo"] = [shared]
+        self.baseline()
+        shared["description"] = "shared change"
+        out = self.tick()
+        state = json.loads(self.state.read_text())
+        for lane in ("build", "build-crm"):
+            self.assertIn(f"{lane}: changed -> dispatched(pid=1234)", out)
+            self.assertEqual(state["fingerprints"][lane], g.lane_fingerprint([shared]))
+        self.assertEqual(self.spawn.call_count, 2)
+
+    def test_shared_todo_pages_are_fetched_once(self):
+        self.issues["Todo"] = [issue(f"WD-{n}") for n in range(100)] + [self.crm_issue()]
+        self.baseline()
+        self.issues["Todo"][-1]["description"] = "last-page CRM change"
+        out = self.tick()
+        pages = [json.loads(r.data)["variables"]["after"] for r in self.requests
+                 if r.data and json.loads(r.data)["variables"].get("state") == "Todo"]
+        self.assertEqual(pages, [None, "100"])
+        self.assertIn("build: unchanged (skip)", out)
+        self.assertIn("build-crm: changed -> dispatched(pid=1234)", out)
+        self.spawn.assert_called_once()
+
+    def test_shared_todo_probe_failure_is_cached(self):
+        self.build_lane_fixture()
+        self.linear_error = TimeoutError("synthetic")
+        out = self.tick()
+        for lane in ("build", "build-crm"):
+            self.assertIn(f"{lane}: probe failed (TimeoutError) -> FAIL-OPEN -> dispatched(pid=1234)", out)
+        self.assertEqual(self.spawn.call_count, 2)
+        self.assertEqual(sum(json.loads(r.data)["variables"].get("state") == "Todo"
+                             for r in self.requests if r.data), 1)
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, {}, None)
+        out = self.tick()
+        for lane in ("build", "build-crm", "review"):
+            self.assertIn(f"{lane}: linear-auth-failed (401) -> skipped", out)
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched(pid=1234) for re-mint", out)
+        self.spawn.assert_called_once()
+        self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "integrator", "cron", "run", "4e7a4d9c5fa4"])
+
+    def test_build_inflight_and_last_run_are_independent(self):
+        self.build_lane_fixture()
+        i = self.args.index("--jobs-path")
+        del self.args[i:i + 2]
+        jobs_path = self.root / "profiles/builder/cron/jobs.json"
+        jobs_path.parent.mkdir(parents=True)
+        stamps = {"build": "2026-09-19T10:00:00Z", "build-crm": "2026-09-19T11:00:00Z"}
+        self.write(jobs_path, {"jobs": [
+            {"id": g.DEFAULT_JOB_MAP[lane][1], "last_run_at": stamp} for lane, stamp in stamps.items()
+        ]})
+        for held, ready in (("build", "build-crm"), ("build-crm", "build")):
+            with self.subTest(held=held):
+                self.baseline()
+                before = json.loads(self.state.read_text())
+                marker = {"dispatched_at": NOW.isoformat(), "job_last_run_at": stamps[held]}
+                before["lanes"][held] = marker
+                self.write(self.state, before)
+                for row in self.issues["Todo"]:
+                    row["description"] += " changed"
+                out = self.tick()
+                self.assertIn(f"{held}: in-flight (skip)", out)
+                self.assertIn(f"{ready}: changed -> dispatched(pid=1234)", out)
+                self.spawn.assert_called_once()
+                self.assertEqual(self.spawn.call_args.args[0][-1], g.DEFAULT_JOB_MAP[ready][1])
+                after = json.loads(self.state.read_text())
+                self.assertEqual(after["lanes"][held], marker)
+                self.assertEqual(after["fingerprints"][held], before["fingerprints"][held])
+                self.assertEqual(after["lanes"][ready]["job_last_run_at"], stamps[ready])
+
+    def test_legacy_state_preserves_markers_and_crm_gets_baseline(self):
+        self.build_lane_fixture()
+        marker = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        before = {
+            "lanes": {lane: dict(marker) for lane in ("build", "review", "integrate")},
+            "fingerprints": {lane: "a" * 64 for lane in ("build", "review", "integrate")},
+            "approval_dispatched": {"WD-OLD": "1789819979.335359"},
+        }
+        self.write(self.state, before)
+        out = self.tick()
+        self.assertIn("build-crm: no-baseline -> dispatched(pid=1234)", out)
+        self.spawn.assert_called_once()
+        after = json.loads(self.state.read_text())
+        for lane in before["lanes"]:
+            self.assertIn(f"{lane}: in-flight (skip)", out)
+            self.assertEqual(after["lanes"][lane], before["lanes"][lane])
+            self.assertEqual(after["fingerprints"][lane], before["fingerprints"][lane])
+        self.assertEqual(after["approval_dispatched"], before["approval_dispatched"])
+        self.assertEqual(after["fingerprints"]["build-crm"], g.lane_fingerprint([self.issues["Todo"][1]]))
+
+    def test_custom_lane_is_unfiltered_and_crm_label_matches(self):
+        row = issue()
+        row.update(project=None, labels=connection([{"name": "Factory Queue"}]))
+        self.issues["Todo"] = [row]
+        out = self.tick("--job-map", json.dumps({"other": ["Todo", "custom"]}))
+        self.assertIn("other: no-baseline -> dispatched(pid=1234)", out)
+        self.spawn.assert_called_once()
+        self.assertFalse(g.lane_matches(row, "Wolftac CRM v2"))
+        row["labels"]["nodes"].append({"name": "prefix WOLFTAC crm V2 suffix"})
+        self.assertTrue(g.lane_matches(row, "Wolftac CRM v2"))
+
+    def test_bad_profile_in_job_map_is_a_lane_error(self):
+        out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
+        self.assertIn("build: LANE-ERROR (", out)
+        self.spawn.assert_not_called()
 
 
 if __name__ == "__main__":
