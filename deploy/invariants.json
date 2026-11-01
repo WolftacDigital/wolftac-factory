@@ -1,5 +1,95 @@
 [
   {
+    "id": "untrusted-content-rule",
+    "description": "Every factory stage distinguishes its verified work order from untrusted content.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-build/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "canonical/wolftac-review/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "canonical/wolftac-spec/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-spec/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-build/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-review/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-spec/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/codex/wolftac-build.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/codex/wolftac-review.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/codex/wolftac-spec.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/hermes/wolftac-build/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/hermes/wolftac-review/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      },
+      {
+        "file": "ports/hermes/wolftac-spec/SKILL.md",
+        "pattern": "UNTRUSTED-CONTENT-RULE"
+      }
+    ]
+  },
+  {
     "id": "one-issue-per-tick",
     "description": "Stages process one issue or feature per invocation/tick.",
     "checks": [
