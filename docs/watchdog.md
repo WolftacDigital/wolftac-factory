@@ -246,7 +246,8 @@ on its own, readable without opening Slack.
 
 ```powershell
 $repo  = "D:\Wolftac\Factory"
-$pwsh  = (Get-Command pwsh).Source          # full path: "pwsh.exe" alone is not on the task's PATH
+$pwsh  = "C:\Program Files\PowerShell\7\pwsh.exe"   # machine-wide MSI install; stable across updates
+if (-not (Test-Path $pwsh)) { throw "Install PowerShell 7 machine-wide first (see below)" }
 $dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\builder\cron;$env:LOCALAPPDATA\hermes\profiles\reviewer\cron;$env:LOCALAPPDATA\hermes\profiles\integrator\cron"
 $arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`" -EnvFile `"$env:LOCALAPPDATA\hermes\.env`""
 $action  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
@@ -267,6 +268,17 @@ Two mechanics that will bite if you change this command:
 
 * **Use the full path to `pwsh.exe`.** A bare `pwsh.exe` fails with Last Result
   `-2147024894` (`0x80070002`, file not found) — the task's PATH is not your shell's.
+* **Never point the task at a Microsoft Store `pwsh.exe`.** The Store install lives in a
+  versioned folder (`C:\Program Files\WindowsApps\Microsoft.PowerShell_7.x.y.0_x64__...`)
+  that disappears on the next PowerShell update, so the task fails with the same
+  `0x80070002`; it was found Disabled for a month this way (2026-09-16 to 2026-10-19).
+  `(Get-Command pwsh).Source` returns that versioned path when only the Store version is
+  installed. Install the machine-wide MSI (`C:\Program Files\PowerShell\7\pwsh.exe`, fixed
+  path, patched by Microsoft Update). Behind Avast HTTPS interception, winget's `msstore`
+  source fails certificate pinning and elevated sessions may not open sources: run
+  `winget download --id Microsoft.PowerShell --exact --source winget --installer-type wix`
+  unelevated, confirm `Get-AuthenticodeSignature` is Valid / Microsoft Corporation, then
+  `msiexec /i <msi> /qn ADD_PATH=0 USE_MU=1 ENABLE_MU=1` from an elevated shell.
 * **Cron directories may be `;`- or `,`-delimited inside ONE quoted argument.**
   `pwsh -File` passes arguments as literal strings rather than binding a list to an
   array parameter, so the script splits either delimiter itself. Accepting commas
@@ -277,15 +289,16 @@ Two mechanics that will bite if you change this command:
 The default watches only `%LOCALAPPDATA%\hermes\cron`. The builder, reviewer and
 integrator workers have separate cron directories, so the command above lists all
 four and explicitly selects the operator's env file. Omitting a worker profile
-leaves it unwatched. This matches the current task's directory arguments; no task
-change is needed for WD-579.
+leaves it unwatched. The isolated `factory-integrate` profile (WD-281) is parked with
+its job disabled, so it is deliberately not listed: watching it would page about a job
+that is meant to be off.
 
 ### Running without an interactive session
 
 The install command above registers the task as the Windows **SYSTEM** service
 account (`LogonType: ServiceAccount`). That needs an elevated PowerShell, but no
 stored user password, interactive login, or batch-logon grant. SYSTEM has been
-verified on this machine with the installed Microsoft Store PowerShell 7 path.
+verified on this machine with the machine-wide PowerShell 7 MSI path (2026-10-19).
 
 Confirm the persisted principal and cadence:
 
