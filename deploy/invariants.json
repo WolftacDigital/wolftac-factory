@@ -512,5 +512,31 @@
         "pattern": "(?=[\\s\\S]*GATE-RUNNER)(?=[\\s\\S]*run_gate\\.py run)(?=[\\s\\S]*check-repo)"
       }
     ]
+  },
+  {
+    "id": "spec-security-gate-prompts",
+    "description": "Spec templates prompt for AI cost controls, pre-launch auth settings and evidence for public claims.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-spec/spec-template.md",
+        "pattern": "(?=[\\s\\S]*model fallback)(?=[\\s\\S]*restore before launch)(?=[\\s\\S]*no compliance, certification or security claim)"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+        "pattern": "(?=[\\s\\S]*model fallback)(?=[\\s\\S]*restore before launch)(?=[\\s\\S]*no compliance, certification or security claim)"
+      },
+      {
+        "file": "ports/codex/wolftac-spec.md",
+        "pattern": "(?=[\\s\\S]*model fallback)(?=[\\s\\S]*restore before launch)(?=[\\s\\S]*no compliance, certification or security claim)"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-spec/SKILL.md",
+        "pattern": "(?=[\\s\\S]*model fallback)(?=[\\s\\S]*restore before launch)(?=[\\s\\S]*no compliance, certification or security claim)"
+      },
+      {
+        "file": "ports/hermes/wolftac-spec/SKILL.md",
+        "pattern": "(?=[\\s\\S]*model fallback)(?=[\\s\\S]*restore before launch)(?=[\\s\\S]*no compliance, certification or security claim)"
+      }
+    ]
   }
 ]

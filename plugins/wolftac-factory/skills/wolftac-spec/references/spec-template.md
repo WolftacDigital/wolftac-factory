@@ -29,6 +29,9 @@ Answer substantively or use `N/A — <feature-specific reason>`.
 
 - Accessibility:
 - Security / privacy:
+  - AI features: state the model fallback, the rate limit and how spend is monitored.
+  - Auth features: list each testing setting to restore before launch, such as email confirmation.
+  - Public claims: no compliance, certification or security claim without evidence the reviewer can check.
 - Rollback / recoverability:
 - Data / migration:
 - Empty / error states:
