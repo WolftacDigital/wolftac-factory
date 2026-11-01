@@ -281,6 +281,12 @@ every task" rule):
    engine initializes, click a homepage program/service link, capture `pageerror`, and verify
    unusable placeholder Mapbox tokens fall back cleanly instead of throwing.
 
+   **WebGL / 3D scene checks:** for three.js / react-three-fiber criteria (frame budgets,
+   tab-hidden pausing, scene clicks, orbit limits, RESET VIEW, touch, WebGL fallback), follow
+   `references/webgl-3d-scene-review.md`. Headless and Playwright Chromium never report a hidden
+   tab; use a self-launched headed Chrome over raw CDP. Run camera steps literally (drag against
+   a limit, then reset) and probe clicks where hover labels overlap meshes.
+
    **Static route shell / no-JS checks:** when acceptance criteria say every route uses a
    shared shell, preserves clean legacy routes, or keeps primary content progressively
    enhanced, follow `references/static-route-shell-no-js-review.md`. Do not trust a passing
