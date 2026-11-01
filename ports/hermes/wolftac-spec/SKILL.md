@@ -85,6 +85,9 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    ## Quality gates
    - Accessibility:
    - Security / privacy:
+     - AI features: state the model fallback, the rate limit and how spend is monitored.
+     - Auth features: list each testing setting to restore before launch, such as email confirmation.
+     - Public claims: no compliance, certification or security claim without evidence the reviewer can check.
    - Rollback / recoverability:
    - Data / migration: (schema/persisted-state changes and migration/rollback path,
      or `N/A — <feature-specific reason>`)
