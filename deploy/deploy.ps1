@@ -17,9 +17,9 @@ Targets listed in deploy\junctions.json that are live directory junctions into t
 repo are neither checked nor written: repo and deployed are one set of bytes. See
 docs\hermes-skill-junctions.md.
 #>
-param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force)
+param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force, [string]$RepoRoot = "")
 
-$Repo = Split-Path $PSScriptRoot -Parent
+$Repo = if ($RepoRoot) { $RepoRoot } else { Split-Path $PSScriptRoot -Parent }
 $Pairs = @(
     @{ Src = "canonical\wolftac-spec\SKILL.md";         Dst = "$env:USERPROFILE\.claude\skills\wolftac-spec\SKILL.md" }
     @{ Src = "canonical\wolftac-spec\spec-template.md"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-spec\spec-template.md" }

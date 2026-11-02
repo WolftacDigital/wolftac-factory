@@ -93,9 +93,8 @@ Junctioned targets are skipped: the repo file *is* the deployed file, so drift i
 possible. Pass `-SkipDrift` to turn the check off; it then carries the previous drift
 state forward rather than asserting a clean result for a check that never ran.
 
-`deploy.ps1` resolves targets through `%USERPROFILE%` and `%LOCALAPPDATA%`. Under the
-SYSTEM task those point at `C:\WINDOWS\system32\config\systemprofile`, where nothing is
-deployed, so the drift check compares against the profile that owns `-EnvFile`
+`deploy.ps1` resolves targets through `%USERPROFILE%` and `%LOCALAPPDATA%`. The task
+runs as the operator, and the drift check compares against the profile that owns `-EnvFile`
 (`<profile>\AppData\Local\hermes\.env`) instead. Pass `-UserProfile C:\Users\<name>` to
 set it explicitly.
 
@@ -147,7 +146,7 @@ separate from liveness and drift.
 - **Snapshot:** whenever the pending content changes, every changed file is copied
   byte-exact (and hash-verified) to
   `%LOCALAPPDATA%\hermes\backups\learn-edits\<UTC-timestamp>\<repo-relative-path>`.
-  The root resolves under the operator profile even under the SYSTEM task, and can be
+  The root resolves under the operator profile and can be
   overridden with `-LearnBackupRoot`. Unchanged content on a later run takes no new
   snapshot. Snapshots older than `-LearnRetentionDays` (default 30) are pruned; the
   most recent is never removed.
@@ -245,25 +244,51 @@ on its own, readable without opening Slack.
 
 ## Install
 
+Only Jonathan performs these steps after merge. From the fast-forwarded
+`D:\Wolftac\.factory-live`, first inspect the default, read-only plan:
+
 ```powershell
-$repo  = "D:\Wolftac\Factory"
-$pwsh  = "C:\Program Files\PowerShell\7\pwsh.exe"   # machine-wide MSI install; stable across updates
-if (-not (Test-Path $pwsh)) { throw "Install PowerShell 7 machine-wide first (see below)" }
-$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\builder\cron;$env:LOCALAPPDATA\hermes\profiles\reviewer\cron;$env:LOCALAPPDATA\hermes\profiles\integrator\cron"
-$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`" -EnvFile `"$env:LOCALAPPDATA\hermes\.env`""
-$action  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes 15)
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" `
-    -LogonType ServiceAccount -RunLevel Limited
-Register-ScheduledTask -TaskName "WolftacFactoryWatchdog" `
-    -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-    -Description "Out-of-band liveness watchdog for the Wolftac factory worker loops (WD-345)."
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf
+# After inspecting the plan, run this from an elevated PowerShell:
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Apply
+# Return to the normal, non-elevated operator session:
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Verify
 ```
 
-`-MultipleInstances IgnoreNew` keeps a slow Slack call from stacking runs.
+Default mode prints five source SHA256 values, the ACL and task definition, without
+creating the install directory, changing ACLs or accessing Task Scheduler. `-Apply`
+refuses non-elevated sessions with exit 2 before writing anything. Re-running Apply
+is idempotent. It installs byte-exact copies of `factory-watchdog.ps1`, `deploy.ps1`,
+`junctions.json`, `approval-policy.json` and `junction-lib.ps1` into
+`C:\ProgramData\WolftacFactory\watchdog\deploy`. The task executes only that copy.
+
+The install directory is owned by `BUILTIN\Administrators`. Its protected DACL
+disables inherited permissions and contains exactly three inheritable ACEs:
+`NT AUTHORITY\SYSTEM` FullControl, `BUILTIN\Administrators` FullControl, and the
+operator ReadAndExecute. The operator cannot edit the monitor that watches its work.
+The helper loads from the protected installed directory, never the writable repo.
+
+`-RepoRoot` defaults to `D:\Wolftac\Factory` in the installer and is passed to the
+copy. Drift and pending `/learn` checks therefore still compare the repo's content,
+not the installed folder. Without `-RepoRoot`, the scripts keep their checkout-root
+default. The installed copy is not in `deploy.ps1`'s ordinary deployment pair list.
+Git calls disable `core.fsmonitor` and optional index locks process-locally; numstat
+also disables external diff/textconv. No wildcard `safe.directory` is set.
+
+When any of the five files differs from the repo (LF-normalized comparison), the
+drift lane reports `WATCHDOG-STALE <repo-relative path>` and asks Jonathan to re-run
+`deploy\install-watchdog-task.ps1 -Apply` after inspecting the plan. Missing or
+unreadable files produce `cannot compare`, not a clean result. `-SkipDrift` skips
+this comparison. Staleness shares drift's transition/nag/recovery and does not
+change the liveness exit code.
+
+`-Verify` prints PASS/FAIL for task principal, S4U logon, run level, action path,
+install-dir owner/ACL and the current non-elevated user's inability to create a file.
+It exits zero only when all checks pass. `-TaskXmlOut` writes plan XML for inspection;
+`-Verify -TaskXmlIn <scratch.xml>` verifies offline XML instead of reading Task Scheduler.
+Workers may use only these scratch seams, never live Verify or elevated Apply.
+
+`MultipleInstancesPolicy IgnoreNew` keeps a slow Slack call from stacking runs.
 
 Two mechanics that will bite if you change this command:
 
@@ -287,19 +312,22 @@ Two mechanics that will bite if you change this command:
   directory and an unmarked false outage page. Passing a real PowerShell array still
   works when you call the script from a session rather than via `-File`.
 
-The default watches only `%LOCALAPPDATA%\hermes\cron`. The builder, reviewer and
-integrator workers have separate cron directories, so the command above lists all
-four and explicitly selects the operator's env file. Omitting a worker profile
+The watchdog alone defaults to `%LOCALAPPDATA%\hermes\cron`. The installer defaults
+to all four cron directories under the named operator's profile: `hermes\cron`,
+`hermes\profiles\builder\cron`, `hermes\profiles\reviewer\cron` and
+`hermes\profiles\integrator\cron`, plus that operator's env file. Override `-CronDir`
+and `-EnvFile` for a nonstandard profile location. Omitting a worker profile
 leaves it unwatched. The isolated `factory-integrate` profile (WD-281) is parked with
 its job disabled, so it is deliberately not listed: watching it would page about a job
 that is meant to be off.
 
 ### Running without an interactive session
 
-The install command above registers the task as the Windows **SYSTEM** service
-account (`LogonType: ServiceAccount`). That needs an elevated PowerShell, but no
-stored user password, interactive login, or batch-logon grant. SYSTEM has been
-verified on this machine with the machine-wide PowerShell 7 MSI path (2026-10-19).
+The installer registers the task as the **operator account**, with `LogonType: S4U`
+and `RunLevel: LeastPrivilege`, not SYSTEM. Registration needs elevation, but S4U
+stores no password and does not require an interactive login. The action uses the
+machine-wide PowerShell 7 path and the protected installed copy. These instructions
+are a post-merge operator procedure, not a claim that the live task has been migrated.
 
 Confirm the persisted principal and cadence:
 
@@ -310,8 +338,14 @@ $task.Triggers.Repetition.Interval
 schtasks /query /tn WolftacFactoryWatchdog /v /fo LIST
 ```
 
-Expected: `UserId: SYSTEM`, `LogonType: ServiceAccount`, interval `PT15M`, and
-`Last Result: 0` after a scheduled tick.
+Expected: `UserId: ai-msi\logan_vwagmmf`, `LogonType: S4U`, `RunLevel: Limited`
+(XML `LeastPrivilege`), interval `PT15M`, and `Last Result: 0` or `1` within 30 minutes,
+not a launch error. Confirm the cron sidecar's `LastWriteTime` advances and that
+sidecars and `/learn` snapshot directories formerly created by SYSTEM are writable
+by the operator. If S4U cannot start, report the launch error and roll back: revert
+the merge, re-run the pre-change register command from the reverted documentation
+in an elevated session, and remove the installed copy. Do not delete rollback
+artifacts or learn backups. Sidecar format is unchanged.
 
 ## Verify
 
@@ -380,10 +414,14 @@ Use `-DryRun` to see findings with no post and no state write.
 
 ## Remove
 
+Post-merge operator only, from an elevated session:
+
 ```powershell
 Unregister-ScheduledTask -TaskName "WolftacFactoryWatchdog" -Confirm:$false
+Remove-Item "C:\ProgramData\WolftacFactory\watchdog" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\hermes\cron\watchdog-state.json" -ErrorAction SilentlyContinue
 ```
 
-The script itself is repo-owned; deleting the task and the sidecar restores the prior
-state completely.
+Remove sidecars in each configured cron directory only if their state is no longer
+needed. The source scripts remain repo-owned; removing the task and installed copy
+does not remove source, learn snapshots or rollback artifacts.
