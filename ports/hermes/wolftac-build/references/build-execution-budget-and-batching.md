@@ -47,6 +47,10 @@ On Windows/Git Bash, the bare `uv` command may resolve to a Linux ELF shim under
 
 ## Windows dependency and test-process lifetime
 
+- Keep combined install/test/lint/build invocations below the transport deadline, even when the terminal accepts a larger timeout. Persist output to an explicit profile-scratch path before long commands; after a transport timeout, inspect exact issue-owned children and wait for exit before rerunning. A later process in an `&&` chain is not a substitute for captured final exit proof.
+- If a disposable Node smoke server exits immediately with `stdin is not a tty` under a non-PTY background terminal, inspect its tracked result and retry with `pty=true` rather than changing the runtime. Prefer a bounded server wrapper that gracefully closes its HTTP server and Next app on a timer; disclose the wrapper instead of claiming the literal CLI start command.
+
+
 - Give `npm ci` a generous foreground timeout (up to 600 seconds), or track it explicitly as a bounded background job. A terminal timeout can leave npm/lifecycle children running; inspect the exact issue-owned command lines before retrying installation. Overlapping `npm ci` attempts can produce misleading EPERM/rmdir failures. Do not kill unrelated processes or reinstall tools to resolve this.
 - After stopping a tracked test-server session, enumerate Node command lines for the exact durable issue path, not only `Process.cwd()`. A cwd-only scan can miss a surviving Next process that still locks the empty worktree directory. Verify its command, parent tree, and issue ownership before stopping only that worker-started process; then verify filesystem and worktree registration removal. A listening port alone is not ownership proof because a proxy may also own that port.
 
@@ -64,6 +68,8 @@ On Windows/Git Bash, the bare `uv` command may resolve to a Linux ELF shim under
 - Serialize npm dependency changes and package.json edits. `npm install --save-dev` writes both package.json and its lockfile, so running a script-entry patch concurrently violates the single-writer rule even though the shell command looks like dependency installation.
 
 ## Windows Node/Bun proof harnesses
+
+- Split real-polling browser proof into independently bounded batches and append results after each case. Several unchanged 60-second source polls can exceed the tool transport deadline even when the terminal timeout requests more time. Preserve partial evidence, inspect whether the exact harness/server processes remain, and rerun only bounded batches; do not shorten production polling or call a timed-out suite passed. Measure animation arrival from the observed stream event, not just the first mesh sample, so React commit/render latency is included in a stream-to-arrival acceptance budget.
 
 - Use `file:///D:/...` URLs (or `pathToFileURL`) for absolute ESM imports under Node; a bare drive-letter import is treated as an unsupported URL scheme.
 - Resolve Bun's native executable with `bun -e 'console.log(process.execPath)'` before spawning it from a sanitized Node environment; a shell-resolved `bun` shim may not be discoverable by `child_process.spawn`.
@@ -83,6 +89,9 @@ On Windows/Git Bash, the bare `uv` command may resolve to a Linux ELF shim under
 On Windows, npm executes package scripts through `cmd.exe`, even when Hermes launched `npm` from Git Bash. A script such as `./node_modules/.bin/tsx ...` can therefore fail with `'.' is not recognized as an internal or external command` despite a correct `npm ci`. For new or issue-owned scripts, use the cross-platform package binary name (`tsx ...`, `tsc ...`, `next ...`) so npm resolves `node_modules/.bin` itself. Do not rewrite unrelated existing scripts merely to fix one issue; patch only the approved script entries, rerun the literal `npm run <script>`, and record the initial failure plus verified correction in proof.
 
 ## Streamed Next.js browser proof
+
+- Copy each `capture_screenshot()` result immediately to a unique proof filename before the next capture; the browser harness may overwrite a fixed `shot.png`. Print the capture path to inspect the image, preserve viewport dimensions, and upload the distinct files before deleting the worktree.
+
 
 - Wait for the actual route heading or work-surface selector after navigation, not only document load or HTTP 200: streamed routes may initially expose only loading skeletons. Assert the hydrated interaction separately when verifying client controls.
 - Scope page-header sibling assertions to the first route header; kanban cards can contain additional nested headers, making an unqualified `main header + *` locator ambiguous.
