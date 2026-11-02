@@ -249,10 +249,12 @@ Only Jonathan performs these steps after merge. From the fast-forwarded
 
 ```powershell
 pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf
+# Pin the expected hashes to the approved merge commit (see "Trust preconditions"):
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -ApprovedCommit <approved merge sha> -ManifestOut <path>\watchdog-manifest.json
 # After inspecting the plan, run this from an elevated PowerShell:
 pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Apply
 # Return to the normal, non-elevated operator session:
-pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Verify
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Verify -ExpectedManifest <path>\watchdog-manifest.json
 ```
 
 Default mode prints five source SHA256 values, the ACL and task definition, without
@@ -265,8 +267,58 @@ is idempotent. It installs byte-exact copies of `factory-watchdog.ps1`, `deploy.
 The install directory is owned by `BUILTIN\Administrators`. Its protected DACL
 disables inherited permissions and contains exactly three inheritable ACEs:
 `NT AUTHORITY\SYSTEM` FullControl, `BUILTIN\Administrators` FullControl, and the
-operator ReadAndExecute. The operator cannot edit the monitor that watches its work.
-The helper loads from the protected installed directory, never the writable repo.
+operator ReadAndExecute. Each installed file is owned by `BUILTIN\Administrators` with
+the same three entries, set through the open file handle. The helper loads from the
+protected installed directory, never the writable repo.
+
+### Threat boundary
+
+The protection is against the operator account's **non-elevated** token only: the
+agents and anything they start. An elevated session of the same account, an
+administrator or SYSTEM can change anything here; that is outside this boundary.
+The installed copy is protected only while no component on its path can be replaced
+by that token. Replacing a folder needs no write access to the folder itself: delete
+on it, delete-child on its parent, `WRITE_DAC`/`WRITE_OWNER` on either, or owning
+either is enough to rename the protected folder away and put another one in its place.
+
+`-Apply` therefore assesses the whole chain before it changes anything: the volume
+root, `C:\ProgramData`, `C:\ProgramData\WolftacFactory`, the install directory,
+`deploy` and the five files. For each existing component it reads the owner and
+DACL, the reparse flag and the physical identity (volume serial plus file id), and
+evaluates the operator's effective rights. The operator SID set is the account SID,
+Everyone, Authenticated Users, Users, INTERACTIVE, BATCH (the S4U task logon),
+LOCAL, CONSOLE LOGON, This Organization, Local account, the account's local groups
+and, when the operator runs Verify itself, its real token's groups. `Administrators`
+and "Local account and member of Administrators" are excluded: in a filtered UAC
+token they are deny-only and never grant access. A group that cannot be resolved
+makes the result UNKNOWN. ACEs are evaluated in order (deny before allow in a
+canonical DACL), inherit-only ACEs are skipped on the object itself and generic
+rights are mapped. A callback/object ACE, an unreadable descriptor or identity, or
+an unresolved account is UNKNOWN, and UNKNOWN is never treated as safe.
+
+* Any component: owned by the operator, or granting it `DELETE`, `WRITE_DAC` or
+  `WRITE_OWNER`, or a reparse point, is unsafe. A directory granting delete-child is
+  unsafe, and so is every child below it.
+* Ordinary create-folder/create-file rights on a system ancestor are allowed:
+  `C:\ProgramData` grants `Users: Write`, and that cannot replace an existing
+  protected folder. Never change `C:\ProgramData` or other system ACLs to satisfy
+  the check.
+* The install directory, `deploy` and the five files must not be writable by the
+  operator at all, and a file with more than one hard link is unsafe.
+
+Apply refuses (exit 3, `APPLY REFUSED: ...` with one `REFUSED <role> <path>: <verdict>
+<reasons>` line per failing component) before copying, setting an ACL or touching
+Task Scheduler. It never takes ownership of or repairs an untrusted component, such
+as a `WolftacFactory` folder that the operator created before Apply: remove or fix
+that folder yourself after confirming what it is, then re-run. A missing
+`WolftacFactory`, install directory or `deploy` folder is created by the elevated
+Apply with an Administrators owner and the protected DACL set at creation. If the
+folder turns out to exist at that moment (raced in), it is treated as existing and
+reassessed. Each directory is then held open without `FILE_SHARE_DELETE`, so it
+cannot be renamed or deleted while Apply runs, and its identity and security are
+reassessed before any file is written through it. After the writes Apply reassesses
+the chain and the file hashes again; any change there exits 4 and the task is not
+registered.
 
 `-RepoRoot` defaults to `D:\Wolftac\Factory` in the installer and is passed to the
 copy. Drift and pending `/learn` checks therefore still compare the repo's content,
@@ -284,9 +336,48 @@ change the liveness exit code.
 
 `-Verify` prints PASS/FAIL for task principal, S4U logon, run level, action path,
 install-dir owner/ACL and the current non-elevated user's inability to create a file.
+It then assesses the same chain as Apply (every ancestor, the install directory,
+`deploy` and all five files) with the same rules, one `PASS`/`FAIL path <role>
+<path>` line each, and compares the SHA-256 of each installed file, read through the
+same held handle, with `-ExpectedManifest`: one `PASS`/`FAIL file <name> sha256`
+line each. A missing manifest, a missing or changed file, an unsafe parent, child or
+file, a reparse point, an identity change or anything UNKNOWN is a named `FAIL`.
+A valid install directory never hides an unsafe parent.
 It exits zero only when all checks pass. `-TaskXmlOut` writes plan XML for inspection;
 `-Verify -TaskXmlIn <scratch.xml>` verifies offline XML instead of reading Task Scheduler.
 Workers may use only these scratch seams, never live Verify or elevated Apply.
+
+What a full `-Verify` PASS proves: at that moment, with the descriptors Windows
+returned, the operator's non-elevated token could not write, delete, rename,
+re-ACL or take ownership of the installed copy or any folder on its path, and the
+five files match the pinned hashes. It does not prove anything about elevated
+sessions, about later ACL changes, or about a manifest that was itself wrong.
+
+### Trust preconditions
+
+* **Expected hashes come from the approved commit, not from a checkout.** Create the
+  manifest with `-ApprovedCommit <sha> -ManifestOut <path>` from the fast-forwarded
+  `D:\Wolftac\.factory-live` at that commit, and compare the five `PLAN COPY` SHA256
+  values with the ones recorded in the approval pack or build report for that commit
+  before using it. A mutable checkout that agents can write is never the authority.
+* **Keep the manifest out of agent reach** (for example in an Administrators-only
+  folder), or re-check its five hashes against the approval pack before each Verify.
+  Verify prints the manifest's commit and its own SHA-256 for that comparison.
+* Verify never runs git, repository hooks or repository code to establish the
+  expected hashes; the plan and the manifest are plain file hashes.
+* Pass long (not 8.3 short) paths; the final-path check fails a short name.
+
+### Required operator live checks
+
+Offline tests use synthetic descriptors and stubbed side effects; they are not
+proof of a live protected install. After Apply, Jonathan checks, from a normal
+non-elevated operator session:
+
+1. `-Verify -ExpectedManifest <manifest>` prints only `PASS` lines and exits 0.
+2. `Get-Acl C:\ProgramData\WolftacFactory | Format-List Owner, AccessToString` shows an
+   Administrators (or SYSTEM) owner and no operator or Users delete, delete-child,
+   `WRITE_DAC`, `WRITE_OWNER` or FullControl entry.
+3. The S4U task check under "Running without an interactive session" below.
 
 `MultipleInstancesPolicy IgnoreNew` keeps a slow Slack call from stacking runs.
 
@@ -342,10 +433,16 @@ Expected: `UserId: ai-msi\logan_vwagmmf`, `LogonType: S4U`, `RunLevel: Limited`
 (XML `LeastPrivilege`), interval `PT15M`, and `Last Result: 0` or `1` within 30 minutes,
 not a launch error. Confirm the cron sidecar's `LastWriteTime` advances and that
 sidecars and `/learn` snapshot directories formerly created by SYSTEM are writable
-by the operator. If S4U cannot start, report the launch error and roll back: revert
-the merge, re-run the pre-change register command from the reverted documentation
-in an elevated session, and remove the installed copy. Do not delete rollback
-artifacts or learn backups. Sidecar format is unchanged.
+by the operator. Sidecar format is unchanged.
+
+If S4U cannot start, report the launch error on WD-584 and disable the task
+(`Disable-ScheduledTask -TaskName WolftacFactoryWatchdog` in an elevated session).
+Do **not** re-register the pre-change task: it ran as SYSTEM from the agent-writable
+repo, which is the exact privilege gap this change removes, and it is not a safe
+fallback. Restoring it, or any other SYSTEM or agent-writable execution path, needs a
+separate explicit decision from Jonathan. Reverting the merge and removing the
+installed copy (see Remove) leave the factory without the watchdog until a fixed
+install is applied. Do not delete rollback artifacts or learn backups.
 
 ## Verify
 

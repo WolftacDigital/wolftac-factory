@@ -180,6 +180,295 @@ $repoRootProbe = Join-Path $Scratch 'repo-root-probe'
 New-Item -ItemType Directory -Path $repoRootProbe | Out-Null
 $r = Run $dot @((Join-Path $checkout 'deploy\deploy.ps1'),$repoRootProbe)
 Ok 'AC-10 explicit RepoRoot' ($r.Out.Contains('RESOLVED=' + $repoRootProbe)) $r.Out
+
+# ── AC-15 / AC-16 (TP12 / TP13): offline path-security controls ─────────────────
+# Synthetic security descriptors on a fictitious Q:\ volume, fed to the shared pure
+# assessor, plus a stub Io whose side-effect seams only append milestones. Nothing
+# here changes an ACL, registers a task or runs a real Apply; -LibraryOnly returns
+# before any plan, file or task work. Real-handle checks below only read scratch.
+$caseLog = Join-Path $Scratch 'tp12-tp13-cases.log'
+function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
+    $io = [pscustomobject]@{ State = $State; Hooks = $Hooks; Log = [Collections.Generic.List[string]]::new(); Next = 0 }
+    $io | Add-Member ScriptMethod Fire { param([string]$Key) if ($this.Hooks.ContainsKey($Key)) { & $this.Hooks[$Key] $this.State } }
+    $io | Add-Member ScriptMethod Info {
+        param([string]$Path)
+        $n = $this.State[$Path]
+        if ($null -eq $n) { return @{ Exists = $false } }
+        if ($n.ContainsKey('Unreadable')) { return @{ Exists = $null } }
+        @{ Exists = $true; Sddl = $n.Sddl; Reparse = $n.Reparse; Identity = $n.Identity
+           FinalPath = $(if ($n.ContainsKey('FinalPath')) { $n.FinalPath } else { $Path })
+           Links = $(if ($n.ContainsKey('Links')) { $n.Links } else { 1 }) }
+    }
+    $io | Add-Member ScriptMethod Milestone { param([string]$Text) $this.Log.Add("milestone $Text") }
+    $io | Add-Member ScriptMethod Read { param([string]$Path, [string]$Kind) $this.Fire("Read:$Path"); $this.Log.Add("read $Path"); $this.Info($Path) }
+    $io | Add-Member ScriptMethod Hold {
+        param([string]$Path, [string]$Kind, [bool]$Writable)
+        $this.Fire("Hold:$Path"); $this.Log.Add("hold $Path")
+        $i = $this.Info($Path); if ($i.Exists) { $i.Token = $Path }; $i
+    }
+    $io | Add-Member ScriptMethod Hash { param([string]$Token) $this.Log.Add("hash $Token"); [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$this.State[$Token].Bytes)) }
+    $io | Add-Member ScriptMethod Release { $this.Log.Add('release') }
+    $io | Add-Member ScriptMethod CreateDirectory {
+        param([string]$Path, [string]$Sddl)
+        $this.Fire("Create:$Path"); $this.Log.Add("create $Path")
+        if ($this.State.ContainsKey($Path)) { return 'Exists' }
+        $this.Next++; $this.State[$Path] = @{ Sddl = $Sddl; Reparse = $false; Identity = "V1:new-$($this.Next)" }; 'Created'
+    }
+    $io | Add-Member ScriptMethod SetSecurity { param([string]$Token, [string]$Sddl) $this.Log.Add("setsecurity $Token"); $this.State[$Token].Sddl = $Sddl }
+    $io | Add-Member ScriptMethod WriteFile {
+        param([string]$Path, [byte[]]$Bytes, [string]$Sddl)
+        $this.Log.Add("write $Path"); $this.Next++
+        $this.State[$Path] = @{ Sddl = $Sddl; Reparse = $false; Identity = "V1:new-$($this.Next)"; Bytes = $Bytes; Links = 1 }
+        $this.Fire("AfterWrite:$Path")
+        $i = $this.Info($Path); $i.Token = $Path; $i
+    }
+    $io | Add-Member ScriptMethod RegisterTask { param([string]$Xml) $this.Log.Add('register') }
+    $io
+}
+& {
+    . $installer -OperatorUser 'FIXTURE\operator' -LibraryOnly
+    $op = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+    $sidSet = New-WdOperatorSidSet -UserSid $op -LocalGroupSids @('S-1-5-32-544', 'S-1-5-32-545')
+    Ok 'AC-15 operator SID set excludes deny-only Administrators' (-not $sidSet.Sids.Contains('S-1-5-32-544') -and $sidSet.ExcludedDenyOnly -contains 'S-1-5-32-544' -and $sidSet.Sids.Contains('S-1-5-3') -and $sidSet.Sids.Contains('S-1-5-4'))
+    $vol = 'Q:\'; $pd = 'Q:\ProgramData'; $app = 'Q:\ProgramData\WolftacFactory'
+    $inst = 'Q:\ProgramData\WolftacFactory\watchdog'; $dep = "$inst\deploy"
+    $sd = @{
+        # Shapes of the live C:\ and C:\ProgramData descriptors: Users may create
+        # children (Users:Write on ProgramData, AU:AppendData on the root) but hold no
+        # delete-child, DELETE, WRITE_DAC or WRITE_OWNER there.
+        Root = 'O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;BU)(A;OICIIO;SDGXGWGR;;;AU)(A;;LC;;;AU)'
+        ProgramData = 'O:SYD:PAI(A;OICIIO;GA;;;CO)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;CI;0x116;;;BU)'
+        Dir = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;$op)"
+        File = "O:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;$op)"
+        # What a non-elevated operator gets by creating WolftacFactory first.
+        OperatorCreated = "O:${op}D:AI(A;ID;FA;;;$op)(A;OICIIOID;GA;;;CO)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1200a9;;;BU)(A;CIID;0x116;;;BU)"
+    }
+    $names = @('factory-watchdog.ps1', 'deploy.ps1', 'junctions.json', 'approval-policy.json', 'junction-lib.ps1')
+    $copies = @(foreach ($name in $names) { $b = [Text.Encoding]::UTF8.GetBytes("synthetic $name`n"); @{ Name = $name; Bytes = $b; Hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($b)) } })
+    $hashes = @{}; foreach ($c in $copies) { $hashes[$c.Name] = $c.Hash }
+    function State([switch]$Empty) {
+        $s = @{ $vol = @{ Sddl = $sd.Root; Reparse = $false; Identity = 'V1:root' }; $pd = @{ Sddl = $sd.ProgramData; Reparse = $false; Identity = 'V1:pd' } }
+        if (-not $Empty) {
+            $s[$app] = @{ Sddl = $sd.Dir; Reparse = $false; Identity = 'V1:app' }
+            $s[$inst] = @{ Sddl = $sd.Dir; Reparse = $false; Identity = 'V1:inst' }
+            $s[$dep] = @{ Sddl = $sd.Dir; Reparse = $false; Identity = 'V1:deploy' }
+            foreach ($c in $copies) { $s["$dep\$($c.Name)"] = @{ Sddl = $sd.File; Reparse = $false; Identity = "V1:$($c.Name)"; Links = 1; Bytes = $c.Bytes } }
+        }
+        $s
+    }
+    function Apply-Case([string]$Name, [hashtable]$State, [hashtable]$Hooks = @{}, $Sids = $sidSet) {
+        $io = Stub-Io $State $Hooks
+        $r = Invoke-WdApplyCore -Io $io -Path $inst -Copies $copies -SidSet $Sids -OperatorSid $op -TaskXml '<Task/>'
+        $out = $r.Lines -join "`n"
+        $effects = @($io.Log | Where-Object { $_ -match '^(setsecurity|write|register)' })
+        [IO.File]::AppendAllText($caseLog, "CASE $Name EXIT=$($r.Code) EFFECTS=$($effects.Count)`n$out`nLOG: $($io.Log -join ' | ')`n`n")
+        Write-Host "  [$Name] exit=$($r.Code) effects=$($effects.Count) :: $(($r.Lines | Select-Object -First 3) -join ' || ')"
+        @{ Code = $r.Code; Out = $out; Log = @($io.Log); Effects = $effects }
+    }
+    function Refused([string]$Name, [hashtable]$Case, [string]$Role, [string]$Reason) {
+        Ok "$Name refused for $Role $Reason with zero protected effects" ($Case.Code -eq 3 -and
+            ($Case.Out -match "(?m)^REFUSED $Role \S.*: (UNSAFE|UNKNOWN) .*\b$([regex]::Escape($Reason))\b") -and
+            $Case.Out.Contains('APPLY REFUSED') -and $Case.Effects.Count -eq 0) $Case.Out
+    }
+
+    # Pure assessor: the live-shaped system ancestors are SAFE despite create-child rights.
+    $chain = Get-WdChain -Path $inst
+    $st = State
+    $recs = @(foreach ($c in $chain) { Join-WdObservation $c ((Stub-Io $st).Info($c.Path)) })
+    $a = Test-WdPathChain -Components $recs -SidSet $sidSet
+    Ok 'AC-15 trusted chain with Users:Write on ProgramData is SAFE' ($a.Ok -and @($a.Results).Count -eq 10 -and ($a.Results | Where-Object Path -eq $pd).Reason -eq 'trusted') (($a.Results | Format-Table Role, Verdict, Reason -AutoSize | Out-String))
+    function Assess([hashtable]$Changes, $Sids = $sidSet) {
+        $s = State; foreach ($k in $Changes.Keys) { $s[$k] = $Changes[$k] }
+        $rs = @(foreach ($c in $chain) { Join-WdObservation $c ((Stub-Io $s).Info($c.Path)) })
+        Test-WdPathChain -Components $rs -SidSet $Sids
+    }
+    function Verdict($Assessment, [string]$Path) { $r = $Assessment.Results | Where-Object Path -eq $Path; "$($r.Verdict) $($r.Reason)" }
+    $v = Verdict (Assess @{ $inst = @{ Sddl = ($sd.Dir + '(A;CI;0x116;;;BU)'); Reparse = $false; Identity = 'V1:inst' } }) $inst
+    Ok 'AC-15 create-child on InstallDir itself is UNSAFE operator-can-write' ($v -match '^UNSAFE .*operator-can-write') $v
+    $v = Verdict (Assess @{ $app = @{ Sddl = ($sd.Dir.Replace('D:PAI', "D:PAI(D;;0xd0040;;;$op)") + '(A;;FA;;;BU)'); Reparse = $false; Identity = 'V1:app' } }) $app
+    Ok 'AC-15 canonical deny-before-allow removes replacement rights' ($v -eq 'SAFE trusted') $v
+    $v = Verdict (Assess @{ $app = @{ Sddl = ($sd.Dir.Replace('D:PAI', 'D:PAI(A;;FA;;;BU)') + "(D;;0xd0040;;;$op)"); Reparse = $false; Identity = 'V1:app' } }) $app
+    Ok 'AC-15 non-canonical allow-before-deny keeps replacement rights (ordered evaluation)' ($v -match '^UNSAFE .*delete-on-component') $v
+    $v = Verdict (Assess @{ $app = @{ Sddl = ($sd.Dir + '(A;;GA;;;BU)'); Reparse = $false; Identity = 'V1:app' } }) $app
+    Ok 'AC-15 GenericAll maps to replacement rights' ($v -match '^UNSAFE .*delete-on-component.*write-dac-or-owner-on-component.*delete-child-on-component') $v
+    $v = Verdict (Assess @{ $app = @{ Sddl = ($sd.Dir + '(A;OICIIO;GA;;;BU)'); Reparse = $false; Identity = 'V1:app' } }) $app
+    Ok 'AC-15 inherit-only ACE skipped on the object itself' ($v -eq 'SAFE trusted') $v
+    $f = "$dep\deploy.ps1"
+    $v = Verdict (Assess @{ $f = @{ Sddl = ($sd.File + '(A;;GW;;;AU)'); Reparse = $false; Identity = 'V1:x'; Links = 1 } }) $f
+    Ok 'AC-15 GenericWrite on an installed file maps to operator-can-write' ($v -match '^UNSAFE .*operator-can-write') $v
+    $v = Verdict (Assess @{ $app = @{ Sddl = ($sd.Dir + '(XA;;FA;;;BU;(WIN://SYSAPPID Contains "x"))'); Reparse = $false; Identity = 'V1:app' } }) $app
+    Ok 'AC-15 callback ACE is UNKNOWN, never SAFE' ($v -match '^UNKNOWN .*unsupported-ace') $v
+    $v = Verdict (Assess @{ $app = @{ Sddl = 'O:BAD:NO_ACCESS_CONTROL'; Reparse = $false; Identity = 'V1:app' } }) $app
+    Ok 'AC-15 null DACL is UNSAFE' ($v -match '^UNSAFE .*null-dacl') $v
+    $broken = New-WdOperatorSidSet -UserSid $op
+    $broken.Sids.Add('S-1-5-32-544') | Out-Null
+    $v = Verdict (Assess @{} $broken) $inst
+    Ok 'AC-15 control: Administrators counted as an allow would make the trusted chain UNSAFE' ($v -match '^UNSAFE .*delete-on-component') $v
+
+    # Apply ordering: safe fresh install and safe re-apply.
+    $c = Apply-Case 'positive-fresh' (State -Empty)
+    $log = $c.Log
+    $firstWrite = [Array]::FindIndex([string[]]$log, [Predicate[string]] { param($x) $x -like 'write *' })
+    $heldDeploy = [Array]::IndexOf([string[]]$log, 'milestone assess-held Deploy ok=True')
+    $reval = [Array]::FindIndex([string[]]$log, [Predicate[string]] { param($x) $x -like 'milestone revalidate ok=True*' })
+    Ok 'AC-15 positive fresh install: create, hold+assess, write, revalidate, register in order' ($c.Code -eq 0 -and $c.Out.Contains('APPLIED') -and
+        @($log | Where-Object { $_ -like 'create *' }).Count -eq 3 -and @($log | Where-Object { $_ -like 'write *' }).Count -eq 5 -and
+        $heldDeploy -ge 0 -and $firstWrite -gt $heldDeploy -and $reval -gt $firstWrite -and [Array]::IndexOf([string[]]$log, 'register') -gt $reval -and
+        -not @($log | Where-Object { $_ -like 'setsecurity *' }).Count) ($log -join "`n")
+    $c = Apply-Case 'positive-existing' (State)
+    Ok 'AC-15 positive re-apply on trusted existing chain' ($c.Code -eq 0 -and @($c.Log | Where-Object { $_ -like 'setsecurity *' }).Count -eq 2 -and $c.Log -contains 'register' -and -not @($c.Log | Where-Object { $_ -like 'create *' }).Count) ($c.Log -join "`n")
+
+    # Negative controls: each refused for its named security reason, zero effects.
+    $s = State -Empty; $s[$app] = @{ Sddl = $sd.OperatorCreated; Reparse = $false; Identity = 'V1:app' }
+    $c = Apply-Case 'operator-owned-parent' $s
+    Refused 'AC-15 operator-owned parent' $c 'AppParent' 'operator-owns-component'
+    Ok 'AC-15 operator-owned parent: no create, no takeover' (-not @($c.Log | Where-Object { $_ -like 'create *' }).Count)
+    $s = State; $s[$app] = @{ Sddl = $sd.OperatorCreated; Reparse = $false; Identity = 'V1:app' }
+    $c = Apply-Case 'operator-owned-parent-valid-child' $s
+    Refused 'AC-15 valid child under operator-owned parent' $c 'InstallDir' 'parent-owned-by-operator'
+    $s = State; $s[$app] = @{ Sddl = ($sd.Dir + '(A;;0x40;;;BU)'); Reparse = $false; Identity = 'V1:app' }
+    $c = Apply-Case 'delete-child-on-parent' $s
+    Refused 'AC-15 delete-child on parent' $c 'AppParent' 'delete-child-on-component'
+    Refused 'AC-15 delete-child on parent (child view)' $c 'InstallDir' 'parent-grants-delete-child'
+    $s = State; $s[$app] = @{ Sddl = ($sd.Dir + '(A;;WD;;;BU)'); Reparse = $false; Identity = 'V1:app' }
+    $c = Apply-Case 'write-dac-on-parent' $s
+    Refused 'AC-15 WRITE_DAC on parent' $c 'AppParent' 'write-dac-or-owner-on-component'
+    $s = State; $s[$app] = @{ Sddl = ($sd.Dir + "(A;;WO;;;$op)"); Reparse = $false; Identity = 'V1:app' }
+    $c = Apply-Case 'write-owner-on-parent' $s
+    Refused 'AC-15 WRITE_OWNER on parent' $c 'AppParent' 'write-dac-or-owner-on-component'
+    $s = State; $s[$app] = @{ Sddl = ($sd.Dir + '(A;;SD;;;AU)'); Reparse = $false; Identity = 'V1:app' }
+    $c = Apply-Case 'delete-on-parent' $s
+    Refused 'AC-15 DELETE on parent' $c 'AppParent' 'delete-on-component'
+    $race = @{ "Create:$app" = { param($st) $st[$app] = @{ Sddl = $sd.OperatorCreated; Reparse = $false; Identity = 'V1:raced' } } }
+    $c = Apply-Case 'parent-created-after-first-check' (State -Empty) $race
+    Refused 'AC-15 parent raced in after the first check' $c 'AppParent' 'operator-owns-component'
+    Ok 'AC-15 raced-in parent detected as already existing, child never created' ($c.Log -contains "milestone raced-in $app" -and -not @($c.Log | Where-Object { $_ -eq "create $inst" }).Count) ($c.Log -join "`n")
+    $swap = @{ "Hold:$app" = { param($st) $st[$app] = @{ Sddl = $sd.Dir; Reparse = $false; Identity = 'V1:replacement' } } }
+    $c = Apply-Case 'parent-replaced-after-first-check' (State) $swap
+    Refused 'AC-15 parent replaced after the first check' $c 'AppParent' 'identity-changed'
+    $s = State; $s[$dep] = @{ Sddl = $sd.Dir; Reparse = $true; Identity = 'V1:deploy' }
+    $c = Apply-Case 'reparse-deploy' $s
+    Refused 'AC-15 reparse point in the chain' $c 'Deploy' 'reparse-point'
+    $drift = @{ "Hold:$inst" = { param($st) $st[$inst].Reparse = $true } }
+    $c = Apply-Case 'reparse-drift-at-hold' (State) $drift
+    Refused 'AC-15 reparse drift after the first check' $c 'InstallDir' 'reparse-point'
+    $redirect = @{ "Hold:$dep" = { param($st) $st[$dep].FinalPath = 'Q:\elsewhere\deploy' } }
+    $c = Apply-Case 'final-path-drift-at-hold' (State) $redirect
+    Refused 'AC-15 final-path drift after the first check' $c 'Deploy' 'path-mismatch'
+    $s = State; $s[$pd] = @{ Sddl = $null; Reparse = $false; Identity = 'V1:pd' }
+    $c = Apply-Case 'unreadable-descriptor' $s
+    Refused 'AC-15 unreadable descriptor' $c 'SystemAncestor' 'descriptor-unreadable'
+    $s = State; $s[$pd] = @{ Sddl = 'not-an-sddl'; Reparse = $false; Identity = 'V1:pd' }
+    $c = Apply-Case 'unparseable-descriptor' $s
+    Refused 'AC-15 unparseable descriptor' $c 'SystemAncestor' 'descriptor-unparseable'
+    $s = State; $s[$app] = @{ Unreadable = $true }
+    $c = Apply-Case 'unknown-existence' $s
+    Refused 'AC-15 unreadable component' $c 'AppParent' 'existence-unknown'
+    $c = Apply-Case 'unresolved-group' (State) @{} (New-WdOperatorSidSet -UserSid $op -Unresolved @('local groups of FIXTURE\operator'))
+    Refused 'AC-15 unresolved operator group' $c 'InstallDir' 'operator-groups-unresolved'
+    $c = Apply-Case 'administrators-counted-as-allow' (State) @{} $broken
+    Refused 'AC-15 control: Administrators as an allow' $c 'InstallDir' 'delete-on-component'
+    $c = Apply-Case 'deny-only-administrators' (State)
+    Ok 'AC-15 deny-only Administrators membership does not count as an allow' ($c.Code -eq 0 -and $sidSet.ExcludedDenyOnly -contains 'S-1-5-32-544') $c.Out
+    $s = State; $s["$dep\deploy.ps1"] = @{ Sddl = ($sd.File + '(A;;0x116;;;BU)'); Reparse = $false; Identity = 'V1:deploy.ps1'; Links = 1; Bytes = $copies[1].Bytes }
+    $c = Apply-Case 'untrusted-existing-file' $s
+    Refused 'AC-15 operator-writable existing file' $c 'File' 'operator-can-write'
+    $late = @{ "AfterWrite:$dep\junction-lib.ps1" = { param($st) $st[$dep].Identity = 'V1:late-swap' } }
+    $c = Apply-Case 'post-write-revalidation' (State) $late
+    Ok 'AC-15 post-write identity drift blocks task registration' ($c.Code -eq 4 -and $c.Out -match 'FAILED Deploy .*identity-changed' -and -not ($c.Log -contains 'register')) $c.Out
+
+    # AC-16: Verify core with the same assessor, pinned manifest and synthetic chain.
+    $manifest = [pscustomobject]@{ ApprovedCommit = ('a' * 40); Files = $hashes; Sha256 = 'synthetic' }
+    function Verify-Case([string]$Name, [hashtable]$State, [hashtable]$Hooks = @{}, $Manifest = $manifest) {
+        $io = Stub-Io $State $Hooks
+        $checks = @(Invoke-WdVerifyCore -Io $io -Path $inst -Manifest $Manifest -SidSet $sidSet)
+        $lines = @(foreach ($k in $checks) { "$(if ($k.Ok) { 'PASS' } else { 'FAIL' }) $($k.Name)$(if ($k.Detail) { ': ' + $k.Detail })" })
+        $effects = @($io.Log | Where-Object { $_ -match '^(create|setsecurity|write|register)' })
+        [IO.File]::AppendAllText($caseLog, "VERIFY $Name EFFECTS=$($effects.Count)`n$($lines -join "`n")`n`n")
+        Write-Host "  [verify $Name] fails: $(@($lines | Where-Object { $_ -like 'FAIL*' }) -join ' || ')"
+        @{ Lines = $lines; Out = ($lines -join "`n"); Fails = @($lines | Where-Object { $_ -like 'FAIL*' }); Effects = $effects }
+    }
+    $c = Verify-Case 'trusted-complete' (State)
+    Ok 'AC-16 trusted complete fixture passes every chain, file and hash check' ($c.Fails.Count -eq 0 -and @($c.Lines | Where-Object { $_ -like 'PASS file * sha256' }).Count -eq 5 -and @($c.Lines | Where-Object { $_ -like 'PASS path *' }).Count -eq 10 -and $c.Effects.Count -eq 0) $c.Out
+    $s = State; $s[$app] = @{ Sddl = $sd.OperatorCreated; Reparse = $false; Identity = 'V1:app' }
+    $c = Verify-Case 'unsafe-parent-valid-child' $s
+    Ok 'AC-16 valid child cannot mask an unsafe parent' ($c.Out -match "(?m)^FAIL path AppParent $([regex]::Escape($app)): UNSAFE .*operator-owns-component" -and $c.Out -match '(?m)^FAIL path InstallDir .*parent-owned-by-operator' -and @($c.Lines | Where-Object { $_ -like 'PASS file * sha256' }).Count -eq 5) $c.Out
+    $s = State; $s["$dep\factory-watchdog.ps1"] = @{ Sddl = ($sd.File + '(A;;0x116;;;BU)'); Reparse = $false; Identity = 'V1:w'; Links = 1; Bytes = $copies[0].Bytes }
+    $c = Verify-Case 'writable-file' $s
+    Ok 'AC-16 one operator-writable installed file FAILs' ($c.Out -match '(?m)^FAIL path File .*factory-watchdog\.ps1: UNSAFE operator-can-write' -and $c.Fails.Count -eq 1) $c.Out
+    $s = State; $s["$dep\junctions.json"] = @{ Sddl = "O:${op}D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;$op)"; Reparse = $false; Identity = 'V1:j'; Links = 1; Bytes = $copies[2].Bytes }
+    $c = Verify-Case 'operator-owned-file' $s
+    Ok 'AC-16 one operator-owned installed file FAILs' ($c.Out -match '(?m)^FAIL path File .*junctions\.json: UNSAFE operator-owns-component' -and $c.Fails.Count -eq 1) $c.Out
+    $s = State; $s["$dep\deploy.ps1"].Bytes = [Text.Encoding]::UTF8.GetBytes("tampered`n")
+    $c = Verify-Case 'changed-file' $s
+    Ok 'AC-16 changed file FAILs on the pinned hash' ($c.Out -match '(?m)^FAIL file deploy\.ps1 sha256: hash-mismatch' -and $c.Fails.Count -eq 1) $c.Out
+    $s = State; $s.Remove("$dep\approval-policy.json")
+    $c = Verify-Case 'missing-file' $s
+    Ok 'AC-16 missing file FAILs' ($c.Out -match '(?m)^FAIL path File .*approval-policy\.json: UNSAFE missing' -and $c.Out -match '(?m)^FAIL file approval-policy\.json sha256: missing') $c.Out
+    $swap = @{ "Read:$dep\junction-lib.ps1" = { param($st) $st["$dep\junction-lib.ps1"].Identity = 'V1:swapped' } }
+    $c = Verify-Case 'identity-swap' (State) $swap
+    Ok 'AC-16 identity swap FAILs' ($c.Out -match '(?m)^FAIL path File .*junction-lib\.ps1: UNSAFE identity-changed') $c.Out
+    $s = State; $s["$dep\deploy.ps1"].Reparse = $true
+    $c = Verify-Case 'reparse-file' $s
+    Ok 'AC-16 reparse swap FAILs' ($c.Out -match '(?m)^FAIL path File .*deploy\.ps1: UNSAFE reparse-point') $c.Out
+    $s = State; $s[$dep].Sddl = $null
+    $c = Verify-Case 'unknown-deploy-descriptor' $s
+    Ok 'AC-16 unknown descriptor FAILs as UNKNOWN' ($c.Out -match '(?m)^FAIL path Deploy .*: UNKNOWN descriptor-unreadable') $c.Out
+    $c = Verify-Case 'no-manifest' (State) @{} $null
+    Ok 'AC-16 no expected input is a named FAIL' ($c.Out -match '(?m)^FAIL expected manifest: not supplied' -and $c.Out -match '(?m)^FAIL file factory-watchdog\.ps1 sha256: no-expected-hash') $c.Out
+
+    # Real-handle reader on scratch only (read-only; no ACL change): reparse, identity
+    # swap and the no-FILE_SHARE_DELETE hold that blocks rename during a write.
+    $real = Join-Path $Scratch 'tp12-real'
+    $dirA = Join-Path $real 'a'; New-Item -ItemType Directory -Force $dirA | Out-Null
+    $io = New-WdReadIo
+    $before = $io.Read($dirA, 'Directory')
+    $h = $io.Hold($dirA, 'Directory', $false)
+    $renameBlocked = $false
+    try { Rename-Item -LiteralPath $dirA -NewName 'a-moved' } catch { $renameBlocked = $true }
+    $io.Release()
+    Ok 'AC-15 held directory handle (no FILE_SHARE_DELETE) blocks rename' ($renameBlocked -and $h.Exists -and $h.Identity -eq $before.Identity -and (Test-Path -LiteralPath $dirA))
+    Rename-Item -LiteralPath $dirA -NewName 'a-moved'
+    New-Item -ItemType Directory $dirA | Out-Null
+    $after = $io.Read($dirA, 'Directory')
+    $pinned = Join-WdObservation @{ Path = $dirA; Role = 'InstallDir'; Kind = 'Directory'; Parent = -1; Name = '' } $after ([string]$before.Identity)
+    $v = (Test-WdPathChain -Components @($pinned) -SidSet $sidSet).Results[0]
+    Ok 'AC-15 real rename-and-replace changes physical identity' ($before.Identity -and $after.Identity -and $before.Identity -ne $after.Identity -and $v.Reason -match 'identity-changed') "$($before.Identity) -> $($after.Identity) $($v.Reason)"
+    $junction = Join-Path $real 'j'
+    New-Item -ItemType Junction -Path $junction -Target (Join-Path $real 'a-moved') | Out-Null
+    $jr = $io.Read($junction, 'Directory')
+    Ok 'AC-15 real junction is read as a reparse point' ($jr.Exists -and $jr.Reparse -eq $true)
+}
+
+# TP13: the real script's offline -Verify -TaskXmlIn with a pinned manifest, on a scratch
+# install the test user owns. Chain/owner checks must FAIL by name; hash checks must
+# follow the manifest, not the checkout.
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$inst3 = Join-Path $Scratch 'inst3'; $xml3 = Join-Path $Scratch 'task3.xml'; $manifest3 = Join-Path $Scratch 'manifest3.json'
+$head = (& git -C $Repo rev-parse HEAD).Trim()
+$common3 = @('-OperatorUser',$me,'-SourceRoot',$Repo,'-RepoRoot',$Repo,'-CronDir',$cron,'-EnvFile',$fixtureEnv,'-PwshPath',$pwsh,'-InstallDir',$inst3)
+$r = Run $installer ($common3 + @('-TaskXmlOut',$xml3,'-ManifestOut',$manifest3,'-ApprovedCommit',$head))
+Ok 'AC-16 plan writes a pinned manifest' ($r.Code -eq 0 -and (Test-Path $manifest3) -and -not (Test-Path $inst3) -and $r.Out.Contains("PLAN MANIFEST")) $r.Out
+$m = Get-Content -Raw $manifest3 | ConvertFrom-Json
+Ok 'AC-16 manifest pins approved commit and five plan hashes' ($m.approvedCommit -eq $head -and @($m.files.PSObject.Properties).Count -eq 5 -and $m.files.'deploy.ps1' -eq (Get-FileHash (Join-Path $Repo 'deploy\deploy.ps1') -Algorithm SHA256).Hash)
+New-Item -ItemType Directory -Force (Join-Path $inst3 'deploy') | Out-Null
+foreach ($name in $files) { Copy-Item -LiteralPath (Join-Path $Repo "deploy\$name") -Destination (Join-Path $inst3 "deploy\$name") }
+$r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$xml3,'-ExpectedManifest',$manifest3))
+Ok 'AC-16 real Verify: manifest and operator identity resolved' ($r.Out.Contains('PASS expected manifest: approvedCommit=' + $head) -and $r.Out.Contains('PASS operator identity')) $r.Out
+Ok 'AC-16 real Verify: all five hashes match the manifest' (@([regex]::Matches($r.Out, '(?m)^PASS file \S+ sha256')).Count -eq 5) $r.Out
+Ok 'AC-16 real Verify: user-owned scratch InstallDir is a named FAIL' ($r.Code -ne 0 -and $r.Out -match "(?m)^FAIL path InstallDir $([regex]::Escape($inst3)): UNSAFE .*operator-owns-component" -and $r.Out -match '(?m)^FAIL path File .*factory-watchdog\.ps1: UNSAFE .*operator-owns-component') $r.Out
+[IO.File]::AppendAllText((Join-Path $inst3 'deploy\deploy.ps1'), "`n# scratch modification`n")
+Remove-Item -LiteralPath (Join-Path $inst3 'deploy\junctions.json')
+$r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$xml3,'-ExpectedManifest',$manifest3))
+Ok 'AC-16 real Verify: changed and missing files are named FAILs' ($r.Code -ne 0 -and $r.Out -match '(?m)^FAIL file deploy\.ps1 sha256: hash-mismatch' -and $r.Out -match '(?m)^FAIL file junctions\.json sha256: missing' -and $r.Out -match '(?m)^FAIL path File .*junctions\.json: UNSAFE missing') $r.Out
+$r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$xml3))
+Ok 'AC-16 real Verify without -ExpectedManifest is a named FAIL' ($r.Code -ne 0 -and $r.Out -match '(?m)^FAIL expected manifest: not supplied') $r.Out
+$badManifest = Join-Path $Scratch 'manifest-bad.json'
+Put $badManifest '{"approvedCommit":"HEAD","files":{}}'
+$r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$xml3,'-ExpectedManifest',$badManifest))
+Ok 'AC-16 real Verify rejects a malformed manifest by name' ($r.Code -ne 0 -and $r.Out -match '(?m)^FAIL expected manifest: invalid') $r.Out
+$r = Run $installer ($common + @('-InstallDir',$inst2,'-Verify','-TaskXmlIn',$xml2))
+Ok 'AC-16 unresolvable operator makes the chain UNKNOWN, never PASS' ($r.Code -ne 0 -and $r.Out -match '(?m)^FAIL operator identity: unresolved' -and $r.Out -match '(?m)^FAIL path InstallDir .*UNKNOWN .*operator-groups-unresolved' -and $r.Out.Contains('PASS task principal')) $r.Out
 Write-Host "RESULT pass=$script:passed fail=0"
 Write-Host "PROOF $Scratch"
 # Keep synthetic proof outside the worktree. No deployment cleanup is performed.
