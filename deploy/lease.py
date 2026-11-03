@@ -1056,6 +1056,11 @@ class Job:
     def active(self):
         return self._query(1, _JobAccounting()).active
 
+    def total(self):
+        # Cumulative admission count also catches descendants that exit between
+        # polls. Observation owns a distinct, serialized job.
+        return self._query(1, _JobAccounting()).total
+
     def members(self):
         capacity = 16
         while capacity <= 1048576:
@@ -1134,7 +1139,7 @@ class ProcApi(ProcessApi):
                                                     child.thread_handle, child.pid, child.ctime)):
             raise LeaseError("REJECTED")
 
-    def create_suspended(self, argv, cwd, env):
+    def create_suspended(self, argv, cwd, env, *, stdio=None):
         if (not isinstance(argv, (list, tuple)) or not argv
                 or any(not isinstance(a, str) or "\0" in a for a in argv)
                 or not Path(argv[0]).is_absolute() or not Path(cwd).is_absolute()
@@ -1152,9 +1157,32 @@ class ProcApi(ProcessApi):
                                                    sorted(env.items(), key=lambda item: item[0].upper())) + "\0\0")
         startup, info = _StartupInfo(), _ProcessInfo()
         startup.cb = ctypes.sizeof(startup)
-        if not k.CreateProcessW(argv[0], command, None, None, False, 0x4 | 0x400,
-                                environment, str(cwd), ctypes.byref(startup), ctypes.byref(info)):
-            raise ctypes.WinError(ctypes.get_last_error())
+        if stdio is None:
+            if not k.CreateProcessW(argv[0], command, None, None, False, 0x4 | 0x400,
+                                    environment, str(cwd), ctypes.byref(startup), ctypes.byref(info)):
+                raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            # CPython constructs STARTUPINFOEX with this explicit handle list.
+            # Only our three scratch streams cross the boundary, not locks/jobs.
+            import _winapi
+            import msvcrt
+            handles = [msvcrt.get_osfhandle(stream.fileno()) for stream in stdio]
+            if len(handles) != 3 or len(set(handles)) != 3:
+                raise LeaseError()
+            si = subprocess.STARTUPINFO()
+            si.dwFlags = subprocess.STARTF_USESTDHANDLES
+            si.hStdInput, si.hStdOutput, si.hStdError = handles
+            si.lpAttributeList = {"handle_list": handles}
+            try:
+                for handle in handles:
+                    os.set_handle_inheritable(handle, True)
+                ph, th, pid, tid = _winapi.CreateProcess(
+                    argv[0], subprocess.list2cmdline(argv), None, None, True,
+                    0x4 | 0x400, env, str(cwd), si)
+                info = _ProcessInfo(ph, th, pid, tid)
+            finally:
+                for handle in handles:
+                    os.set_handle_inheritable(handle, False)
         times = [W.FILETIME() for _ in range(4)]
         k.GetProcessTimes.argtypes = [W.HANDLE] + [ctypes.POINTER(W.FILETIME)] * 4
         k.GetProcessTimes.restype = W.BOOL
@@ -1258,6 +1286,8 @@ class _ExecRecord:
     exit_code: int | None = None
     error: str | None = None
     started: bool = False
+    stdio: tuple | None = None
+    observation_unknown: bool = False
 
 
 class Executor:
@@ -1381,7 +1411,11 @@ class Executor:
             if record.cancelled:
                 return self._outcome(record)
             try:
-                record.child = self.deps.process.create_suspended(record.argv, record.cwd, record.env)
+                if record.stdio is None:
+                    record.child = self.deps.process.create_suspended(record.argv, record.cwd, record.env)
+                else:
+                    record.child = self.deps.process.create_suspended(
+                        record.argv, record.cwd, record.env, stdio=record.stdio)
             except (LeaseError, OSError):
                 self._write(record, "LAUNCH-FAILED")
             else:
@@ -1427,6 +1461,10 @@ class Executor:
         with self.phase_mutex:
             self._write(record, "RESUMED" if resumed == 1 else "RESUME-UNCERTAIN")
         self.deps.barrier.reach(record.phase)
+        return self._wait_and_drain(record)
+
+    def _wait_and_drain(self, record):
+        child = record.child
         code = None
         while code is None:
             code = self.deps.process.wait(child, 50)
@@ -1455,6 +1493,119 @@ def classify_recovered(entries, current_executor=None):
         return "OPERATOR-BLOCKED" if any(p not in TERMINAL_PHASES for p in phases.values()) else "DONE"
     except (LeaseError, OSError, TypeError, ValueError):
         return "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class ObsResult:
+    exit_code: int
+    stdout: bytes
+    obs_id: str
+
+
+class _ObservationExecutor(Executor):
+    """Internal admission, with the SAME M2a launch/D9 state machine."""
+    _baseline: int = 0
+
+    def _write(self, record, phase, **fields):
+        self.ledger.append(record.op_id, "observe", phase, **fields)
+        record.phase = phase
+        record.phases.append(phase)
+
+    def _outcome(self, record):
+        if record.observation_unknown:
+            return Outcome("UNKNOWN", record.phase, record.exit_code)
+        return super()._outcome(record)
+
+    def _wait_and_drain(self, record):
+        child = record.child
+        code = None
+        while code is None:
+            code = self.deps.process.wait(child, 50)
+            with self.phase_mutex:
+                if self.job.total() != self._baseline + 1:
+                    record.observation_unknown = True
+        with self.phase_mutex:
+            self._write(record, "EXITED", code=code)
+            record.exit_code = code
+            if self.job.active() != 0:
+                record.observation_unknown = True
+        self.deps.barrier.reach("EXITED")
+        while self.job.active() != 0:
+            time.sleep(0.01)
+        with self.phase_mutex:
+            if self.job.total() != self._baseline + 1:
+                record.observation_unknown = True
+            self._write(record, "DRAINED", obs_active=0,
+                        unexpected_descendant=record.observation_unknown)
+        self.deps.barrier.reach("DRAINED")
+        return self.status(record.op_id)
+
+
+class ObservationRunner:
+    """Serialized internal child work, never a public op or recursive gate.
+
+    Failure is LeaseError(UNKNOWN/FAILED-STORAGE), not partial stdout. While a
+    descendant remains, status is UNKNOWN and open_entries is nonempty (BUSY).
+    run waits for positive drain before returning or surfacing that descendant
+    failure. Storage/uncertain-launch failures retain original handles/streams
+    and open evidence for the owner; closing a job is never a drain substitute.
+    """
+    def __init__(self, journal, job, proc, deps, phase_mutex):
+        if proc is not deps.process:
+            raise LeaseError()
+        self.journal, self.job, self.proc, self.deps = journal, job, proc, deps
+        self.phase_mutex = phase_mutex
+        self.executor = _ObservationExecutor(journal, job, deps, phase_mutex)
+        self._serial = threading.Lock()
+        self._streams = {}
+
+    def open_entries(self):
+        return self.executor.open_ops()
+
+    def status(self, obs_id):
+        return self.executor.status(obs_id)
+
+    def run(self, parent, argv, cwd, env, *, stdin=b""):
+        if not isinstance(parent, str) or not parent or not isinstance(stdin, bytes):
+            raise LeaseError()
+        if not self._serial.acquire(blocking=False):
+            raise LeaseError("BUSY")
+        obs_id = uuid.uuid4().hex
+        record = None
+        try:
+            with self.phase_mutex:
+                if self.job.active() != 0 or any(self.executor._open(r) for r in self.executor._ops.values()):
+                    raise LeaseError("BUSY")
+                self.executor._baseline = self.job.total()
+                record = _ExecRecord(self.executor, obs_id, tuple(argv), str(cwd), dict(env),
+                                     phase="OBSERVE", phases=["OBSERVE"])
+                self.journal.append(obs_id, "observe", "OBSERVE", obs_id=obs_id, parent=parent)
+                self.executor._ops[obs_id] = record
+            self.deps.barrier.reach("OBSERVE")  # durable journal, no process exists
+            streams = []
+            self._streams[obs_id] = streams
+            for _ in range(3):
+                streams.append(tempfile.TemporaryFile(mode="w+b", dir=self.journal.path.parent))
+            streams[0].write(stdin)
+            streams[0].seek(0)
+            record.stdio = tuple(streams)
+            result = self.executor.run(obs_id)
+            if result.result != "DONE" or result.phase != "DRAINED" or result.exit_code is None:
+                raise LeaseError("FAILED-STORAGE" if self.journal.failed else "UNKNOWN")
+            if self.job.active() != 0:
+                raise LeaseError()
+            streams[1].seek(0)
+            return ObsResult(result.exit_code, streams[1].read(), obs_id)
+        except OSError as exc:
+            raise LeaseError() from exc
+        finally:
+            # Only positively terminal work may discard owned capture/handles.
+            if record is not None and not self.executor._open(record) and self.job.active() == 0:
+                if record.child is not None:
+                    self.proc.close_child(record.child)
+                for stream in self._streams.pop(obs_id, []):
+                    stream.close()
+            self._serial.release()
 
 
 SAFE_GIT_ENV = {

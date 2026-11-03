@@ -1611,5 +1611,178 @@ class TestS1GitPolicy(M2aCase):
         self.assertEqual(list(self.scratch.iterdir()), [])
 
 
+@unittest.skipUnless(os.name == "nt", "Windows S1 fixtures; NOT RUN on non-Windows")
+class S1Case(M2aCase):
+    def setUp(self):
+        super().setUp()
+        import shutil
+        launcher = shutil.which("git")
+        assert launcher is not None
+        self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(self.scratch / "empty-global"),
+                        GIT_TERMINAL_PROMPT="0", GIT_CONFIG_SYSTEM=str(self.scratch / "empty-global"))
+        (self.scratch / "empty-global").touch()
+        result = subprocess.run([launcher, "--exec-path"], env=self.env,
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # cmd/git.exe may be a redirector, an unexpected observation descendant.
+        self.git = Path(result.stdout.strip()).parents[1] / "bin/git.exe"
+        self.assertTrue(self.git.is_file(), str(self.git))
+        self.repo = self.scratch / "repo"
+        self.repo.mkdir()
+        self.setup_git("init", "-b", "fixture-branch")
+        self.setup_git("config", "user.name", "Synthetic Fixture")
+        self.setup_git("config", "user.email", "fixture@example.invalid")
+        self.setup_git("config", "core.autocrlf", "false")
+        (self.repo / "tracked.txt").write_bytes(b"initial\n")
+        self.setup_git("add", "tracked.txt")
+        self.setup_git("commit", "-m", "synthetic initial")
+        self.runner: Any = None
+
+    def setup_git(self, *args, input=None, expected=0):
+        result = subprocess.run([str(self.git), *args], env=self.env, cwd=self.repo,
+                                input=input, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, expected, result.stderr)
+        return result.stdout
+
+    def observation(self, barrier=None, fail_at=None):
+        self.assertIsNone(self.runner)
+        fail = mock.Mock()
+        def check(name):
+            if name == fail_at:
+                raise OSError("fixture injected " + name)
+        fail.check.side_effect = check
+        deps = dataclasses.replace(self.deps, fail=fail, barrier=barrier or self.lease.NoBarrier())
+        original = self.api.create_suspended
+        def create(*args, **kwargs):
+            child = original(*args, **kwargs)
+            self.fixture_children.append((self.api, child, child.pid))
+            return child
+        self.api.create_suspended = create
+        self.runner = self.lease.ObservationRunner(self.ledger(deps), self.job(), self.api, deps, threading.Lock())
+        def check_drained():
+            self.assertEqual(self.runner.job.active(), 0)
+            self.assertEqual(self.runner.job.members(), [])
+            self.assertEqual(self.runner._streams, {})
+        self.addCleanup(check_drained)
+        return self.runner
+
+    def run_git(self, argv, cwd=None, *, stdin=b""):
+        if self.runner is None:
+            self.observation()
+        return self.lease.run_git(argv, cwd or self.repo, runner=self.runner,
+                                  parent="grant gen 1", git=self.git, env=self.env,
+                                  scratch=self.scratch, stdin=stdin)
+
+    def start_observation(self, barrier, argv):
+        runner = self.observation(barrier)
+        results = []
+        def run():
+            try:
+                results.append(runner.run("gate request 1", argv, self.scratch, self.env))
+            except BaseException as exc:
+                results.append(exc)
+        thread = threading.Thread(target=run)
+        def cleanup():
+            barrier.leave.set()
+            (self.scratch / "release").touch()
+            (self.scratch / "grand-release").touch()
+            thread.join(20)
+            self.assertFalse(thread.is_alive())
+        self.addCleanup(cleanup)
+        thread.start()
+        self.assertTrue(barrier.entered.wait(15), results)
+        return runner, thread, results
+
+
+class TestS1Observation(S1Case):
+    def test_s1_ac11_obs_drain_obs_active_zero(self):
+        expected = self.setup_git("rev-parse", "HEAD")
+        code, data = self.run_git(["rev-parse", "HEAD"])
+        self.assertEqual((code, data), (0, expected))
+        self.assertEqual(self.runner.job.active(), 0)
+        self.assertEqual(self.runner.open_entries(), [])
+        rows = self.runner.journal.entries()
+        self.assertEqual([r["phase"] for r in rows], ["OBSERVE", "LAUNCH-ATTEMPTED", "LAUNCHED-SUSPENDED",
+                         "ASSIGNED", "RESUME-ATTEMPTED", "RESUMED", "EXITED", "DRAINED"])
+        self.assertTrue(all(r["kind"] == "observe" for r in rows))
+        self.assertEqual(rows[0]["parent"], "grant gen 1")
+        self.assertEqual(rows[0]["obs_id"], rows[0]["op_id"])
+        self.assertEqual(rows[-1]["obs_active"], 0)
+        self.assertEqual(self.runner.job.total(), 1)
+
+    def test_s1_obs_journal_before_launch(self):
+        barrier = PhaseBarrier("OBSERVE")
+        runner, thread, results = self.start_observation(barrier, self.argv())
+        rows = runner.journal.entries()
+        self.assertEqual([r["phase"] for r in rows], ["OBSERVE"])
+        self.assertEqual(runner.job.total(), 0)
+        self.assertEqual(self.fixture_children, [])
+        self.assertFalse((self.scratch / "marker").exists())
+        (self.scratch / "release").touch()
+        barrier.leave.set()
+        thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(results[0], self.lease.ObsResult)
+
+    def test_s1_obs_failed_journal_append_no_launch(self):
+        runner = self.observation(fail_at="append:OBSERVE")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            runner.run("grant gen 1", self.argv(), self.scratch, self.env)
+        self.assertEqual(self.fixture_children, [])
+        self.assertEqual(runner.job.total(), 0)
+        self.assertTrue(runner.journal.failed)
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_s1_ac11_extra_descendant_unknown_open_until_exit(self):
+        barrier = PhaseBarrier("EXITED")
+        runner, thread, results = self.start_observation(
+            barrier, self.argv() + ["descendant", getattr(sys, "_base_executable")])
+        receipt = json.loads(self.await_file("marker").read_text())
+        grand = json.loads(self.await_file("grand-marker").read_text())
+        self.assertEqual(receipt["parent"], self.fixture_children[0][2])
+        self.assertEqual(receipt["pid"], grand["pid"])
+        self.assertIn(grand["pid"], [m.pid for m in runner.job.members()])
+        obs_id = runner.journal.entries()[0]["obs_id"]
+        self.assertEqual(runner.status(obs_id).result, "UNKNOWN")
+        self.assertEqual(runner.open_entries(), [obs_id])
+        with self.assertRaisesRegex(self.lease.LeaseError, "BUSY"):
+            runner.run("other", self.argv(), self.scratch, self.env)
+        barrier.leave.set()
+        thread.join(0.15)
+        self.assertTrue(thread.is_alive())
+        self.assertNotIn("DRAINED", [r["phase"] for r in runner.journal.entries()])
+        (self.scratch / "grand-release").touch()
+        thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(str(results[0]), "UNKNOWN")
+        self.assertEqual(runner.open_entries(), [])
+        self.assertEqual(runner.job.active(), 0)
+        self.assertTrue(runner.journal.entries()[-1]["unexpected_descendant"])
+
+    def test_s1_obs_capture_bytes_stdin_large_stdout(self):
+        runner = self.observation()
+        data = b"\x00\xff\r\n" * 100000
+        result = runner.run("checkpoint", [getattr(sys, "_base_executable"), "-I", "-S", "-B", "-c",
+                            "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()); sys.exit(17)"],
+                            self.scratch, self.env, stdin=data)
+        self.assertEqual((result.exit_code, result.stdout), (17, data))
+        self.assertEqual(runner.open_entries(), [])
+
+    def test_s1_obs_no_direct_subprocess_outside_runner(self):
+        tree = ast.parse(LEASE.read_text(encoding="utf-8"))
+        functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess":
+                    if node.func.attr in ("Popen", "run", "call", "check_output", "check_call"):
+                        owners = [f.name for f in functions if f.end_lineno is not None
+                                  and f.lineno <= node.lineno <= f.end_lineno]
+                        self.assertEqual(owners, ["spawn_guardian"])
+        adapter = next(f for f in functions if f.name == "run_git")
+        calls = [n.func.attr for n in ast.walk(adapter) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+        self.assertIn("run", calls)
+        self.assertNotIn("create_suspended", calls)
+
+
 if __name__ == "__main__":
     unittest.main()
