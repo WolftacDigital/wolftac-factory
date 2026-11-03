@@ -1566,5 +1566,50 @@ class TestM2bHeartbeat(M2aCase):
         self.assertEqual(json.loads(beat.path.read_bytes())["open_ops"], ["native"])
 
 
+@unittest.skipUnless(os.name == "nt", "Windows S1 fixtures; NOT RUN on non-Windows")
+class TestS1GitPolicy(M2aCase):
+    def test_s1_git_policy_allowlist_and_exit_table(self):
+        import shutil
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        assert git is not None
+        repo = self.scratch / "repo"
+        repo.mkdir()
+        hooks = self.scratch / "hooks"
+        hooks.mkdir()
+        config = self.scratch / "global"
+        config.touch()
+        poisoned = dict(self.env, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="alias.attack",
+                        GIT_CONFIG_VALUE_0="!exit 99", GIT_DIR="wrong", GIT_INDEX_FILE="wrong")
+        commands = [("rev-parse", "HEAD"), ("rev-parse", "refs/heads/main"),
+                    ("symbolic-ref", "HEAD"), ("ls-files", "--stage", "-z"),
+                    ("check-ignore", "-z", "--stdin", "--no-index")]
+        env = {}
+        for argv in commands:
+            command, env, valid = self.lease._git_policy(argv, poisoned, hooks, config)
+            self.assertEqual(valid, (0, 1) if argv[0] == "check-ignore" else (0,))
+            self.assertTrue(all(env[k] == v for k, v in self.lease.SAFE_GIT_ENV.items()))
+            self.assertEqual(env["GIT_CONFIG_GLOBAL"], str(config))
+            self.assertNotIn("GIT_CONFIG_COUNT", env)
+            self.assertNotIn("GIT_DIR", env)
+            self.assertNotIn("GIT_INDEX_FILE", env)
+            self.assertEqual(command[-len(argv):], list(argv))
+        # Real process/repo control for the allowlisted, synthetic environment.
+        result = subprocess.run([git, "init", "-b", "main", str(repo)], env=env,
+                                cwd=self.scratch, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((repo / ".git/HEAD").is_file())
+        for argv in (("diff", "HEAD"), ("status",), ("rev-parse", "--git-dir"),
+                     ("rev-parse", "refs/heads/main:payload")):
+            self.unknown(self.lease._git_policy, argv, poisoned, hooks, config)
+
+    def test_s1_git_no_observation_context_no_launch(self):
+        with self.assertRaisesRegex(self.lease.LeaseError, "UNKNOWN"):
+            self.lease.run_git(["rev-parse", "HEAD"], self.scratch, runner=None,
+                               parent="grant gen 1", git=str(self.scratch / "missing.exe"),
+                               env=self.env, scratch=self.scratch)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

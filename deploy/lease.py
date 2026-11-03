@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Callable, Protocol
@@ -1454,6 +1455,73 @@ def classify_recovered(entries, current_executor=None):
         return "OPERATOR-BLOCKED" if any(p not in TERMINAL_PHASES for p in phases.values()) else "DONE"
     except (LeaseError, OSError, TypeError, ValueError):
         return "UNKNOWN"
+
+
+SAFE_GIT_ENV = {
+    "GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0", "GIT_ATTR_NOSYSTEM": "1",
+}
+
+
+def _git_policy(argv, env, hooks, config):
+    """Allow metadata only; do not inherit Git overrides, transports or config.
+
+    hooks/config are new, empty, caller-owned paths outside the worktree.
+    check-ignore alone accepts exit 1. Parsing its output is a separate duty.
+    """
+    args = tuple(argv)
+    if args == ("check-ignore", "-z", "--stdin", "--no-index"):
+        valid = (0, 1)
+    elif args in (("rev-parse", "HEAD"), ("symbolic-ref", "HEAD"),
+                  ("ls-files", "--stage", "-z")):
+        valid = (0,)
+    elif (len(args) == 2 and args[0] == "rev-parse"
+          and re.fullmatch(r"refs/heads/[^\s\x00]+", args[1])
+          and not any(x in args[1] for x in ("..", "@{", "\\", "~", "^", ":", "?", "*", "["))):
+        valid = (0,)
+    else:
+        raise LeaseError()
+    # In particular drop GIT_CONFIG_COUNT/PARAMETERS, GIT_DIR, GIT_WORK_TREE,
+    # GIT_INDEX_FILE, tracing, alternate objects and inherited command helpers.
+    safe = {k: v for k, v in env.items() if k.upper() in {
+        "SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "SYSTEMDRIVE",
+        "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    }}
+    safe.update(SAFE_GIT_ENV, GIT_CONFIG_GLOBAL=str(config))
+    command = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + str(hooks),
+               "-c", "core.untrackedCache=false", *args]
+    return command, safe, valid
+
+
+def run_git(argv, cwd, *, runner, parent, git, env, scratch, stdin=b""):
+    """Metadata adapter, exclusively through the bound observation runner.
+
+    Bind the keyword context once (e.g. functools.partial) for the fingerprint's
+    (argv, cwd) callable. stdin is bytes for check-ignore's NUL input. Never
+    fall back to a direct subprocess. Safe configuration lives in owned scratch.
+    """
+    if (runner is None or not Path(git).is_absolute() or not Path(cwd).is_absolute()
+            or not Path(scratch).is_absolute() or not isinstance(stdin, bytes)):
+        raise LeaseError()
+    directory = Path(tempfile.mkdtemp(prefix="lease-git-", dir=scratch))
+    hooks, config = directory / "hooks", directory / "global"
+    try:
+        hooks.mkdir()
+        config.touch(exist_ok=False)
+        command, safe, valid = _git_policy(argv, env, hooks, config)
+        result = runner.run(parent, [str(git), *command], cwd, safe, stdin=stdin)
+        if result.exit_code not in valid:
+            raise LeaseError()
+        return result.exit_code, result.stdout
+    finally:
+        # Do not remove observation configuration from a still-running child.
+        # Failed launches/storage leave their own open ledger evidence intact.
+        if not runner.open_entries() and runner.job.active() == 0:
+            if config.exists():
+                config.unlink()
+            if hooks.exists():
+                hooks.rmdir()
+            directory.rmdir()
 
 
 GUARDIAN_FLAGS = 0x00000008 | 0x00000200 | 0x01000000
