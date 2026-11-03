@@ -67,6 +67,11 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    criteria, scope boundaries, technical constraints, verification. If you can read
    the target repo, ground the Technical approach in real file paths. Stop asking when
    further answers wouldn't change what gets built.
+   Where they apply, also ask: the North Star outcome; should this exist (who owns the
+   requirement, what could be deleted or simplified instead of built); the cost of
+   inaction; the source of truth for each piece of data and the integrations touched;
+   the delivery payload; and the always/never behavioral rules. Settle the data model
+   before interfaces. UI work follows `DESIGN.md` in the `wolftac-brand` repo.
    **Verify the requester's facts before writing them into the spec.** Counts, SHAs and
    "zero X" claims from Logan, Sloane or a worker often come from a partial read. Fetch
    every comment on the parent issue (page until `hasNextPage` is false, or spill to a

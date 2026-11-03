@@ -39,6 +39,11 @@ write code in this stage.
    until you could defend every spec section without inventing anything: the problem
    and who has it, success criteria, scope boundaries, technical constraints,
    verification. Stop asking when further answers wouldn't change what gets built.
+   Where they apply, also ask: the North Star outcome; should this exist (who owns the
+   requirement, what could be deleted or simplified instead of built); the cost of
+   inaction; the source of truth for each piece of data and the integrations touched;
+   the delivery payload; and the always/never behavioral rules. Settle the data model
+   before interfaces. UI work follows `DESIGN.md` in the `wolftac-brand` repo.
    Note: from Desktop you usually can't read the target repo — get file paths and
    technical grounding from the user, and say so in Key decisions if unverified.
 

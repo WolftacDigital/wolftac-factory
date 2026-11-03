@@ -90,6 +90,17 @@
     ]
   },
   {
+    "id": "spec-discovery-questions",
+    "description": "Spec discovery asks whether the work should exist and what inaction costs, and settles the data model first (course decision 2026-11-02).",
+    "checks": [
+      { "file": "canonical/wolftac-spec/SKILL.md", "pattern": "Should this exist\\?[\\s\\S]{0,400}Cost of inaction" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-spec/SKILL.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" },
+      { "file": "ports/hermes/wolftac-spec/SKILL.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" },
+      { "file": "ports/codex/wolftac-spec.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" },
+      { "file": "ports/claude-desktop/wolftac-spec/SKILL.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" }
+    ]
+  },
+  {
     "id": "one-issue-per-tick",
     "description": "Stages process one issue or feature per invocation/tick.",
     "checks": [

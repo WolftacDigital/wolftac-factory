@@ -41,6 +41,19 @@ inventing anything:
 - Ask in batches of at most 4 focused questions (use AskUserQuestion when available).
 - Cover: the problem and who has it, success criteria, scope boundaries, technical
   constraints, and how we'll know it works.
+- Also cover these discovery questions where they apply:
+  - **North Star:** the one outcome this work serves.
+  - **Should this exist?** Who owns the requirement, and what could be deleted or
+    simplified instead of built or automated? Delete before you automate.
+  - **Cost of inaction:** what not doing it costs (time, money or risk per month). It
+    sets the priority.
+  - **Source of truth and integrations:** which system owns each piece of data, and
+    which systems this touches.
+  - **Delivery payload:** exactly what the user or the downstream system receives.
+  - **Behavioral rules:** what it must always do and must never do.
+- Settle the data model (entities, fields, owner of each) before interfaces or code
+  detail.
+- UI work: the spec states it follows `DESIGN.md` in the `wolftac-brand` repo.
 - If the current working directory is the target repo, ground yourself in it: read the
   repo's CLAUDE.md and the files the feature touches so the Technical approach names
   real paths, not guesses.
