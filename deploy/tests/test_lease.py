@@ -2034,5 +2034,76 @@ class TestS1Fingerprint(S1Case):
             self.assertEqual(child.returncode, 0, errors)
 
 
+class TestS1Reader(S1Case):
+    def launch_reader(self, mode):
+        state = self.scratch / ("reader-" + uuid.uuid4().hex)
+        state.mkdir()
+        names = [".env.fixture", "private.key", "token.txt", "secret.json", ".npmrc",
+                 "service-account.json", "id_ed25519", "config.yaml", "prod-credentials.ini"]
+        forbidden = []
+        for name in names:
+            path = self.repo / name
+            path.write_bytes(b"synthetic fixture not credentials")
+            forbidden.append(str(path))
+        request = state / "request.json"
+        request.write_text(json.dumps({"repo": str(self.repo), "state": str(state),
+                                      "git": str(self.git), "mode": mode, "forbidden": forbidden}),
+                           encoding="utf-8")
+        child = subprocess.Popen([getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                  str(ENTRY.with_name("s1_reader.py")), str(request)],
+                                 cwd=self.scratch, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pid = child.pid  # Parent launch receipt, not a PID supplied by the result.
+        try:
+            out, err = child.communicate(timeout=30)
+            self.assertEqual(child.returncode, 0, err.decode("utf-8", errors="replace"))
+            self.assertEqual(out, b"")
+        finally:
+            self.assertEqual(child.pid, pid)
+            self.assertNotEqual(pid, os.getpid())
+            if child.poll() is None:
+                child.terminate()  # This exact test-spawned reader only.
+            child.wait(timeout=15)
+            for stream in (child.stdout, child.stderr):
+                assert stream is not None
+                stream.close()
+        return pid, state / f"audit-component-{pid}.json"
+
+    def verify_reader_results(self, receipts):
+        self.assertTrue(receipts)
+        self.assertEqual(len({pid for pid, _ in receipts}), len(receipts))
+        for pid, path in receipts:
+            self.assertTrue(path.is_file(), "missing reader result")
+            value = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(value["pid"], pid)
+            self.assertIs(value["loaded"], True, "unloaded reader")
+            self.assertIs(value["hook_before_import"], True)
+            self.assertEqual(value["role"], "component")
+            self.assertEqual(value["count"], 0, "forbidden open attempted")
+            self.assertEqual(value["mutation_caught"], 0)
+            self.assertEqual(value["observations"], 5)
+            self.assertRegex(value["digest"], r"^[0-9a-f]{64}$")
+
+    def test_s1_ac13_reader_hook_before_import_handshake_zero(self):
+        receipts = [self.launch_reader("normal") for _ in range(2)]
+        self.verify_reader_results(receipts)
+
+    def test_s1_ac13_mutation_control_caught_in_same_reader(self):
+        receipt = self.launch_reader("mutation")
+        value = json.loads(receipt[1].read_text(encoding="utf-8"))
+        self.assertEqual(value["pid"], receipt[0])
+        self.assertIs(value["loaded"], True)
+        self.assertGreaterEqual(value["count"], 1)
+        self.assertEqual(value["count"], value["mutation_caught"])
+        self.assertEqual(value["observations"], 5)
+        with self.assertRaisesRegex(AssertionError, "forbidden open attempted"):
+            self.verify_reader_results([receipt])
+
+    def test_s1_ac13_missing_or_unloaded_result_fails(self):
+        for mode, message in (("missing", "missing reader result"), ("unloaded", "unloaded reader")):
+            receipt = self.launch_reader(mode)
+            with self.assertRaisesRegex(AssertionError, message):
+                self.verify_reader_results([receipt])
+
+
 if __name__ == "__main__":
     unittest.main()
