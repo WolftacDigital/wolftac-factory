@@ -11,6 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lease
 
 FP = "a" * 64
@@ -62,9 +63,16 @@ class FixtureAudit:
 
 
 def fixture_deps(config):
-    return lease.Deps(FixtureBoot(), FixtureBarrier(config.get("barrier")),
+    if config.get("action", "").startswith("m2b-"):
+        from m2b_context import FileBarrier
+        barrier = FileBarrier(config)
+        process = lease.ProcApi()
+    else:
+        barrier = FixtureBarrier(config.get("barrier"))
+        process = FixtureProcess(config.get("denied", False))
+    return lease.Deps(FixtureBoot(), barrier,
                       FixtureFail(config.get("fail")), FixtureAudit(),
-                      FixtureProcess(config.get("denied", False)),
+                      process,
                       lambda: time.time() + config.get("clock_shift", 0))
 
 
@@ -78,6 +86,9 @@ def make_state(gen, deps, branch, restriction="none"):
 def run(config):
     deps = fixture_deps(config)
     action = config["action"]
+    if action.startswith("m2b-"):
+        from m2b_context import run as run_context
+        return run_context(config, deps)
     if action == "identity":
         wt, br = lease.resource_ids(config["worktree"], config["branch"])
         reply(result="OK", wt=wt, br=br)
@@ -234,8 +245,8 @@ def main():
         config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
         if config["action"] == "emit-result":
             return lease.emit(config["result"])
-        run(config)
-        return 0
+        code = run(config)
+        return code if isinstance(code, int) else 0
     except lease.LeaseError as exc:
         reply(result=exc.result)
         return lease.RESULTS[exc.result][0]

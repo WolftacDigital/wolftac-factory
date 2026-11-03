@@ -1,4 +1,4 @@
-"""WD-618 M1/M2a: Windows identity, publication and execution primitives.
+"""WD-618: Windows identity, publication and execution primitives.
 
 The public entry is deliberately inert until the guardian and observation stages
 exist. These library primitives do not establish observation/drain evidence.
@@ -1456,12 +1456,175 @@ def classify_recovered(entries, current_executor=None):
         return "UNKNOWN"
 
 
+GUARDIAN_FLAGS = 0x00000008 | 0x00000200 | 0x01000000
+HEARTBEAT_SECONDS = 60
+
+
+def guardian_self_check():
+    """Reject job membership before opening a resource or creating any child.
+
+    Launch flags alone are not proof: a venv redirector can place its interpreter
+    in a new job even when the redirector successfully broke away from its caller.
+    """
+    k = _kernel()
+    k.GetCurrentProcess.argtypes = []
+    k.GetCurrentProcess.restype = W.HANDLE
+    k.IsProcessInJob.argtypes = [W.HANDLE, W.HANDLE, ctypes.POINTER(W.BOOL)]
+    k.IsProcessInJob.restype = W.BOOL
+    inside = W.BOOL()
+    if not k.IsProcessInJob(k.GetCurrentProcess(), None, ctypes.byref(inside)):
+        raise LeaseError("UNSUPPORTED-CONTEXT")
+    if inside.value:
+        raise LeaseError("UNSUPPORTED-CONTEXT")
+
+
+def spawn_guardian(argv, *, cwd, env, entry=None):
+    """Start only the base interpreter, detached and with explicit breakaway.
+
+    No protected file is written by the caller. The returned Popen is a launch
+    receipt, NOT a grant. The guardian must pass its own self-check and complete
+    the grant transaction before any client may write. entry is a constructor
+    seam for the fixture-only Python entry, never an environment/CLI override.
+    """
+    if os.name != "nt":
+        raise LeaseError("UNSUPPORTED-CONTEXT")
+    base = getattr(sys, "_base_executable", None)
+    entry = Path(__file__).resolve() if entry is None else Path(entry)
+    if (not base or not Path(base).is_absolute() or not entry.is_absolute()
+            or not Path(cwd).is_absolute() or not isinstance(env, dict)
+            or not isinstance(argv, (list, tuple))
+            or any(not isinstance(a, str) or "\0" in a for a in argv)):
+        raise LeaseError("UNSUPPORTED-CONTEXT")
+    try:
+        return subprocess.Popen([base, "-I", "-S", "-B", str(entry), *argv],
+                                cwd=str(cwd), env=env, close_fds=True,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, creationflags=GUARDIAN_FLAGS)
+    except (OSError, ValueError) as exc:
+        raise LeaseError("UNSUPPORTED-CONTEXT") from exc
+
+
+class GuardianBootstrap:
+    """Validated process context and empty containment jobs, not lease authority.
+
+    No resource path is touched here. Operational startup must attach the locked
+    transaction, ledger and observation runner before publication. Keeping this
+    boundary separate makes unsupported contexts refuse before protected setup.
+    """
+    def __init__(self, deps):
+        guardian_self_check()
+        self.deps = deps
+        self.boot_id = deps.boot.read()
+        _integer(self.boot_id)
+        if self.boot_id > 0xffffffff:
+            raise LeaseError()
+        self.identity = deps.process.current()
+        _proc(self.identity.record())
+        self.phase_mutex = threading.Lock()
+        self.job = Job.create(deps)
+        try:
+            self.observation_job = Job.create(deps)
+        except BaseException:
+            self.job.close()
+            raise
+
+    def close_empty(self):
+        # Never confuse closing a handle with positive cessation. This bootstrap
+        # owns no child handles and consequently has no termination authority.
+        if self.job.active() or self.observation_job.active():
+            raise LeaseError("BUSY")
+        self.observation_job.close()
+        self.job.close()
+
+
+class GuardianHeartbeat:
+    """Health-only snapshot under the SAME mutex as ledger phase transitions.
+
+    Caller owns both resource locks and invokes tick from its nonblocking loop.
+    Scheduling uses monotonic time; the recorded wall clock never grants, frees
+    or expires a resource. Persistence/inspection failure latches UNKNOWN health.
+    The request loop must treat failed as a refusal to admit or release.
+    """
+    def __init__(self, pair: Pair, gen, boot_id, ledger, job, observation_job, phase_mutex):
+        pair.require()
+        _integer(gen, 1)
+        _integer(boot_id)
+        if boot_id > 0xffffffff:
+            raise LeaseError()
+        directory = pair.wt.path / f"gen-{gen}"
+        if ledger.path != directory / "ledger.jsonl":
+            raise LeaseError("REJECTED")
+        self.pair, self.ledger = pair, ledger
+        self.job, self.observation_job = job, observation_job
+        self.phase_mutex, self.boot_id = phase_mutex, boot_id
+        self.path = directory / "heartbeat.json"
+        self.failed = False
+        self._next = None
+
+    def tick(self):
+        now = time.monotonic()
+        if self.failed or self.ledger.failed:
+            self.failed = True
+            raise LeaseError("UNKNOWN")
+        if self._next is not None and now < self._next:
+            return False
+        try:
+            with self.phase_mutex:
+                self.pair.require()
+                if self.ledger.failed or self.ledger._stream is None:
+                    raise LeaseError()
+                rows = self.ledger.entries()
+                phases = {row["op_id"]: row["phase"] for row in rows}
+                # A truncated or externally altered ledger cannot become a
+                # healthy heartbeat merely because its writer has cached phases.
+                if len(rows) != self.ledger._seq or phases != self.ledger._phases:
+                    raise LeaseError()
+                job_active = self.job.active()
+                obs_active = self.observation_job.active()
+                members = self.job.members() + self.observation_job.members()
+                if (len(members) != job_active + obs_active
+                        or job_active != self.job.active()
+                        or obs_active != self.observation_job.active()):
+                    raise LeaseError()
+                value = {"ts": self.pair.deps.clock(), "boot_id": self.boot_id,
+                         "ledger_seq": self.ledger._seq, "job_active": job_active,
+                         "obs_active": obs_active,
+                         "members": [member.record() for member in members],
+                         "open_ops": sorted(op for op, phase in phases.items()
+                                            if phase not in TERMINAL_PHASES)}
+                StateStore(self.pair).write(self.path, value, "heartbeat")
+            self._next = now + HEARTBEAT_SECONDS
+            return True
+        except (LeaseError, OSError):
+            self.failed = True
+            raise LeaseError("UNKNOWN")
+
+
+def guardian_main(deps=None):
+    """Bootstrap entry; never publish through missing operational prerequisites.
+
+    R7 unit 1 ends at this boundary. The request loop, transaction/checkpoint and
+    IPC wiring are still incomplete, so even valid startup returns UNKNOWN.
+    """
+    bootstrap = GuardianBootstrap(deps or default_deps())
+    try:
+        bootstrap.deps.barrier.reach("guardian-started")
+        return "UNKNOWN"
+    finally:
+        bootstrap.close_empty()
+
+
 def main(argv=None):
     if any(name.startswith("LEASE_TEST_") for name in os.environ):
         return emit("TEST-OVERRIDE-REJECTED")
     if os.name != "nt":
         return emit("UNSUPPORTED-CONTEXT")
-    return emit("UNKNOWN")  # Every CLI verb remains unavailable in M1.
+    if list(argv or []) == ["--guardian"]:
+        try:
+            return emit(guardian_main())
+        except (LeaseError, OSError) as exc:
+            return emit(exc.result if isinstance(exc, LeaseError) else "UNKNOWN")
+    return emit("UNKNOWN")  # Missing IPC/checkpoint prerequisites never grant.
 
 
 if __name__ == "__main__":

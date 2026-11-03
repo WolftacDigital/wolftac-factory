@@ -1,4 +1,4 @@
-"""WD-618 M1/M2a primitive tests. All state is synthetic harness-owned scratch.
+"""WD-618 primitive tests. All state is synthetic harness-owned scratch.
 
 M2 guardian/IPC, M3 observation, M4 recover/adopt and M5 integration are PENDING.
 No test here asserts whole-criterion or deployed lease acceptance.
@@ -1252,6 +1252,318 @@ class TestM2aContainment(M2aExecutorCase):
 
     def test_m2a_drained_waits_for_grandchild_exit(self):
         self.containment("descendant", getattr(sys, "_base_executable"))
+
+
+@unittest.skipUnless(os.name == "nt", "Windows M2b fixtures; NOT RUN on non-Windows")
+class TestM2bStartup(M2aCase):
+    """Real startup contexts; grants/operational hold integration still pending."""
+    def setUp(self):
+        super().setUp()
+        for role in ("guardian", "caller", "parent"):
+            (self.scratch / (role + "-config.json")).write_text(json.dumps({
+                "action": "m2b-" + role, "fixture_root": str(self.scratch)}), encoding="utf-8")
+        self.context_children = []
+        self.addCleanup(self.drain_context)
+
+    def drain_context(self):
+        (self.scratch / "continue").touch()
+        for process, pid in reversed(self.context_children):
+            self.assertEqual(process.pid, pid)
+            self.assertNotEqual(pid, os.getpid())
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.terminate()  # Exact Popen-owned fixture only, asserted above.
+                process.wait(timeout=15)
+        # Descendant receipts are from our fixture launches, never PID searches.
+        receipt = self.scratch / "caller-result.json"
+        if receipt.exists():
+            value = json.loads(receipt.read_text())
+            if "guardian" in value:
+                identity = self.lease.ProcIdentity(**value["guardian"])
+                deadline = time.monotonic() + 15
+                while self.lease.liveness(identity, self.api) == "alive":
+                    self.assertLess(time.monotonic(), deadline, "fixture guardian did not exit")
+                    time.sleep(0.01)
+                self.assertEqual(self.lease.liveness(identity, self.api), "dead")
+
+    def launch(self, role="guardian", executable=None):
+        if executable is None:
+            process = self.lease.spawn_guardian([str(self.scratch / (role + "-config.json"))],
+                                                cwd=self.scratch, env=self.env, entry=ENTRY)
+        else:
+            process = subprocess.Popen([str(executable), "-I", "-S", "-B", str(ENTRY),
+                                        str(self.scratch / (role + "-config.json"))],
+                                       cwd=self.scratch, env=self.env,
+                                       creationflags=self.lease.GUARDIAN_FLAGS,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+        self.context_children.append((process, process.pid))
+        return process
+
+    def receipt(self, name):
+        path = self.await_file(name + ".json")
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except PermissionError:
+                # Windows may expose the destination during the rename's brief
+                # sharing lock. Retry only that OS sharing error, never malformed
+                # JSON or a failed assertion, and retain a bounded hard failure.
+                self.assertLess(time.monotonic(), deadline, "fixture receipt sharing timeout")
+                time.sleep(0.01)
+
+    def caller_job(self, flags=0):
+        # The caller fixture only may have kill-on-close. Never a guardian job.
+        self.assertIn(flags, (0, 0x800 | 0x2000))
+        job = self.lease.Job.create(self.deps)
+        self.addCleanup(job.close)
+        if flags:
+            limits = self.lease._JobExtendedLimit()
+            limits.basic.flags = flags
+            k = self.lease._kernel()
+            k.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                                  ctypes.c_void_p, ctypes.c_uint32]
+            k.SetInformationJobObject.restype = ctypes.c_int
+            self.assertTrue(k.SetInformationJobObject(job.handle, 9, ctypes.byref(limits),
+                                                       ctypes.sizeof(limits)))
+            self.assertEqual(job._query(9, self.lease._JobExtendedLimit()).basic.flags, flags)
+        argv = [getattr(sys, "_base_executable"), "-I", "-S", "-B", str(ENTRY),
+                str(self.scratch / "caller-config.json")]
+        child = self.api.create_suspended(argv, str(self.scratch), self.env)
+        self.fixture_children.append((self.api, child, child.pid))
+        self.api.assign(job, child)
+        self.assertTrue(job.contains(child))
+        self.assertEqual(self.api.resume(child), 1)
+        return job, child
+
+    def test_m2b_start_base_self_check_no_authority(self):
+        child = self.launch()
+        ready = self.receipt("ready")
+        self.assertEqual(ready["pid"], child.pid)
+        self.assertEqual(ready["barrier"], "guardian-started")
+        self.assertGreater(ready["ctime"], 0)
+        self.assertIsNone(child.poll())
+        self.assertFalse((self.scratch / ".leases").exists())
+        (self.scratch / "continue").touch()
+        self.assertEqual(child.wait(timeout=15), 6)
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNKNOWN")
+
+    def test_m2b_ac16_context_no_breakaway_refused_nothing_written(self):
+        job, child = self.caller_job()
+        value = self.receipt("caller-result")
+        self.assertEqual(value, {"result": "UNSUPPORTED-CONTEXT", "pid": child.pid})
+        self.assertEqual(self.api.wait(child, 15000), 6)
+        self.assertEqual(job.active(), 0)
+        self.assertFalse((self.scratch / "ready.json").exists())
+        self.assertFalse((self.scratch / "guardian-result.json").exists())
+        self.assertFalse((self.scratch / ".leases").exists())
+
+    def test_m2b_ac16_context_venv_self_check_refuses(self):
+        directory = self.scratch / "fixture-venv"
+        venv.EnvBuilder(with_pip=False).create(directory)
+        executable = directory / "Scripts/python.exe"
+        self.assertNotEqual(executable.resolve(), Path(getattr(sys, "_base_executable")).resolve())
+        child = self.launch(executable=executable)
+        self.assertEqual(child.wait(timeout=15), 6)
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNSUPPORTED-CONTEXT")
+        self.assertFalse((self.scratch / "ready.json").exists())
+        self.assertFalse((self.scratch / ".leases").exists())
+
+    def test_m2b_ac16_context_base_survives_caller_job_close(self):
+        job, caller = self.caller_job(0x800 | 0x2000)
+        receipt = self.receipt("caller-result")
+        ready = self.receipt("ready")
+        self.assertEqual(receipt["caller"]["pid"], caller.pid)
+        self.assertEqual(ready["pid"], receipt["guardian"]["pid"])
+        self.assertEqual(ready["ctime"], receipt["guardian"]["ctime"])
+        self.assertTrue(job.contains(caller))
+        self.assertEqual(job.members(), [self.lease.ProcIdentity(caller.pid, caller.ctime)])
+        # Only our asserted fixture caller is in this kill-on-close job.
+        job.close()
+        self.assertIsNotNone(self.api.wait(caller, 15000))
+        identity = self.lease.ProcIdentity(**receipt["guardian"])
+        self.assertEqual(self.lease.liveness(identity, self.api), "alive")
+        self.assertFalse((self.scratch / "guardian-result.json").exists())
+        (self.scratch / "continue").touch()
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNKNOWN")
+
+    def test_m2b_ac16_context_base_survives_caller_and_parent_termination(self):
+        parent = self.launch("parent")
+        parent_receipt = self.receipt("parent-result")
+        caller_receipt = self.receipt("caller-result")
+        ready = self.receipt("ready")
+        self.assertEqual(parent_receipt["parent"]["pid"], parent.pid)
+        self.assertEqual(parent_receipt["caller"], caller_receipt["caller"])
+        self.assertEqual(ready["pid"], caller_receipt["guardian"]["pid"])
+        # Terminate only the child identified by this parent's own launch receipt.
+        caller = caller_receipt["caller"]
+        self.assertEqual(self.api.creation_time(caller["pid"]), caller["ctime"])
+        self.assertNotIn(caller["pid"], (os.getpid(), parent.pid, ready["pid"]))
+        k = self.lease._kernel()
+        k.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        k.OpenProcess.restype = ctypes.c_void_p
+        handle = k.OpenProcess(0x101001, False, caller["pid"])
+        self.assertTrue(handle)
+        try:
+            k.GetProcessId.argtypes = [ctypes.c_void_p]
+            k.GetProcessId.restype = ctypes.c_uint32
+            self.assertEqual(k.GetProcessId(handle), caller["pid"])
+            # Kill the parent first so it cannot exit naturally after the caller.
+            self.assertEqual(parent.pid, parent_receipt["parent"]["pid"])
+            parent.terminate()
+            parent.wait(timeout=15)
+            k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            k.TerminateProcess.restype = ctypes.c_int
+            self.assertTrue(k.TerminateProcess(handle, 92))
+            k.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            k.WaitForSingleObject.restype = ctypes.c_uint32
+            self.assertEqual(k.WaitForSingleObject(handle, 15000), 0)
+        finally:
+            k.CloseHandle(handle)
+        identity = self.lease.ProcIdentity(**caller_receipt["guardian"])
+        self.assertEqual(self.lease.liveness(identity, self.api), "alive")
+        self.assertFalse((self.scratch / "guardian-result.json").exists())
+        (self.scratch / "continue").touch()
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNKNOWN")
+
+    def test_m2b_start_flags_and_base_interpreter(self):
+        with mock.patch.object(self.lease.subprocess, "Popen", wraps=subprocess.Popen) as start:
+            child = self.launch()
+        argv = start.call_args.args[0]
+        self.assertEqual(argv[:4], [getattr(sys, "_base_executable"), "-I", "-S", "-B"])
+        self.assertEqual(start.call_args.kwargs["creationflags"],
+                         subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP |
+                         subprocess.CREATE_BREAKAWAY_FROM_JOB)
+        self.receipt("ready")
+        (self.scratch / "continue").touch()
+        self.assertEqual(child.wait(timeout=15), 6)
+
+
+    def test_m2b_incomplete_commands_and_recovery_never_grant(self):
+        for command in ("hold", "gate", "begin-native", "end-native", "exec",
+                        "status", "cancel", "release", "recover", "adopt"):
+            with self.subTest(command=command):
+                result = subprocess.run([getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                         str(LEASE), command], cwd=self.scratch, env=self.env,
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (6, "UNKNOWN\n", ""))
+        self.assertFalse((self.scratch / ".leases").exists())
+
+
+@unittest.skipUnless(os.name == "nt", "Windows M2b fixtures; NOT RUN on non-Windows")
+class TestM2bHeartbeat(M2aCase):
+    def heartbeat(self, deps=None):
+        deps = deps or self.deps
+        root = self.scratch / ".leases"
+        pair = self.lease.acquire_pair(self.lease.ResourceDir(root, "wt-1-1"),
+                                       self.lease.ResourceDir(root, "br-" + "a" * 64), deps)
+        self.assertIsInstance(pair, self.lease.Pair)
+        assert isinstance(pair, self.lease.Pair)
+        self.addCleanup(pair.close)
+        gen = self.lease.next_gen(pair)
+        self.lease.txn_open(pair, gen, "fixture-branch")
+        ledger = self.ledger(deps, pair.wt.path / f"gen-{gen}")
+        job, obs = self.job(), self.job()
+        mutex = threading.Lock()
+        beat = self.lease.GuardianHeartbeat(pair, gen, 10, ledger, job, obs, mutex)
+        return beat
+
+    def test_m2b_heartbeat_real_jobs_members_ledger_and_open_ops(self):
+        beat = self.heartbeat()
+        child = self.child()
+        observation = self.child()
+        self.api.assign(beat.job, child)
+        self.api.assign(beat.observation_job, observation)
+        with beat.phase_mutex:
+            beat.ledger.append("native", "native", "NATIVE-OPEN")
+            beat.ledger.append("obs", "observe", "OBSERVE", parent="grant gen 1")
+            beat.ledger.append("done", "exec", "LAUNCH-FAILED")
+        self.assertTrue(beat.tick())
+        value = self.lease.StateStore(beat.pair).read(beat.path, "heartbeat")
+        assert value is not None
+        self.assertEqual(value["ledger_seq"], 3)
+        self.assertEqual(value["boot_id"], 10)
+        self.assertEqual(value["job_active"], 1)
+        self.assertEqual(value["obs_active"], 1)
+        self.assertEqual(value["open_ops"], ["native", "obs"])
+        self.assertEqual(value["members"], [{"pid": child.pid, "ctime": child.ctime},
+                                           {"pid": observation.pid, "ctime": observation.ctime}])
+        # These are test-created suspended fixtures, not admitted guardian ops.
+        self.assertFalse((beat.pair.wt.path / "state.json").exists())
+        self.assertIsNone(self.api.wait(child, 0))
+        self.assertIsNone(self.api.wait(observation, 0))
+
+    def test_m2b_heartbeat_sixty_seconds_monotonic_wall_clock_not_authority(self):
+        clock = mock.Mock(return_value=1000.0)
+        beat = self.heartbeat(dataclasses.replace(self.deps, clock=clock))
+        with mock.patch.object(self.lease.time, "monotonic", return_value=100.0) as monotonic:
+            self.assertTrue(beat.tick())
+            original = beat.path.read_bytes()
+            for shift in (-86400, 86400):
+                clock.return_value = 1000.0 + shift
+                monotonic.return_value = 159.999
+                self.assertFalse(beat.tick())
+                self.assertEqual(beat.path.read_bytes(), original)
+            monotonic.return_value = 160.0
+            self.assertTrue(beat.tick())
+            self.assertEqual(json.loads(beat.path.read_bytes())["ts"], 87400.0)
+        self.assertFalse((beat.pair.wt.path / "state.json").exists())
+
+    def test_m2b_heartbeat_truncated_ledger_unknown_no_replacement(self):
+        beat = self.heartbeat()
+        beat.ledger.append("exec", "exec", "ADMITTED")
+        with beat.ledger.path.open("ab") as stream:
+            stream.write(b'{"seq":2')
+        self.unknown(beat.tick)
+        self.assertTrue(beat.failed)
+        self.assertFalse(beat.path.exists())
+        self.unknown(beat.tick)
+
+    def test_m2b_heartbeat_storage_failure_latches_unknown(self):
+        fail = mock.Mock()
+        beat = self.heartbeat(dataclasses.replace(self.deps, fail=fail))
+        fail.check.side_effect = OSError("fixture heartbeat storage fault")
+        self.unknown(beat.tick)
+        fail.check.side_effect = None
+        self.unknown(beat.tick)
+        self.assertFalse(beat.path.exists())
+
+    def test_m2b_heartbeat_failed_ledger_refuses_before_next_tick(self):
+        beat = self.heartbeat()
+        self.assertTrue(beat.tick())
+        original = beat.path.read_bytes()
+        beat.ledger.failed = True
+        self.unknown(beat.tick)
+        self.assertTrue(beat.failed)
+        self.assertEqual(beat.path.read_bytes(), original)
+
+    def test_m2b_heartbeat_ledger_sequence_mismatch_unknown(self):
+        beat = self.heartbeat()
+        beat.ledger.append("exec", "exec", "ADMITTED")
+        # Valid JSON is insufficient: the durable sequence must match the writer.
+        beat.ledger.path.write_bytes(b"")
+        self.unknown(beat.tick)
+        self.assertFalse(beat.path.exists())
+
+    def test_m2b_heartbeat_shared_mutex_serializes_snapshot(self):
+        beat = self.heartbeat()
+        started = threading.Event()
+        results = []
+        def tick():
+            started.set()
+            results.append(beat.tick())
+        with beat.phase_mutex:
+            thread = threading.Thread(target=tick)
+            thread.start()
+            self.assertTrue(started.wait(10))
+            self.assertFalse(beat.path.exists())
+            beat.ledger.append("native", "native", "NATIVE-OPEN")
+        thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results, [True])
+        self.assertEqual(json.loads(beat.path.read_bytes())["open_ops"], ["native"])
 
 
 if __name__ == "__main__":
