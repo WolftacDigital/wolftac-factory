@@ -1821,5 +1821,218 @@ class TestS1Exclusions(S1Case):
                               and f.lineno <= node.lineno <= f.end_lineno], ["dir_identity"])
 
 
+class TestS1Fingerprint(S1Case):
+    def fingerprint(self, run_git=None, branch="fixture-branch"):
+        return self.lease.compute_fingerprint(self.repo, branch, run_git or self.run_git)
+
+    def fault_metadata(self, command, output, exit_code=0):
+        # Corrupt ONLY an explicitly selected reply, using a real scratch-owned
+        # observation process. All preceding/other metadata still comes from Git.
+        def run(argv, cwd, **kwargs):
+            original = self.run_git(argv, cwd, **kwargs)
+            if argv[0] != command:
+                return original
+            result = self.runner.run("fault-control", [getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                     "-c", "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1])); sys.exit(int(sys.argv[2]))",
+                                     output.hex(), str(exit_code)], self.scratch, self.env)
+            return result.exit_code, result.stdout
+        return run
+
+    def install_filters(self):
+        import shlex
+        markers = {name: self.scratch / (name + "-marker") for name in
+                   ("clean", "smudge", "process", "fsmonitor", "post-index-change")}
+        script = ENTRY.with_name("s1_filter.py")
+        python = Path(getattr(sys, "_base_executable")).as_posix()
+        for mode in ("clean", "smudge", "process"):
+            command = " ".join(shlex.quote(arg) for arg in
+                               (python, "-I", "-S", "-B", script.as_posix(), mode, markers[mode].as_posix()))
+            self.setup_git("config", "filter.fixture-" + mode + "." + mode, command)
+        (self.repo / ".gitattributes").write_text(
+            "tracked.txt filter=fixture-clean\nsmudge.txt filter=fixture-smudge\nprocess.txt filter=fixture-process\n",
+            encoding="utf-8", newline="\n")
+        (self.repo / "smudge.txt").write_bytes(b"smudge fixture\n")
+        (self.repo / "process.txt").write_bytes(b"process fixture\n")
+        hooks = self.repo / ".git/hooks"
+        for name in ("fsmonitor", "post-index-change"):
+            hook = hooks / name
+            hook.write_text("#!/bin/sh\nprintf observed > " + shlex.quote(markers[name].as_posix()) + "\n",
+                            encoding="utf-8", newline="\n")
+            hook.chmod(0o755)
+        self.setup_git("config", "core.fsmonitor", (hooks / "fsmonitor").as_posix())
+        return markers
+
+    def test_s1_ac11_filters_hooks_markers_absent(self):
+        markers = self.install_filters()
+        before = (self.repo / ".git/index").read_bytes()
+        result = self.fingerprint()
+        self.assertIsInstance(result, self.lease.Fingerprint)
+        self.assertEqual(len(result.digest), 64)
+        self.assertEqual((self.repo / ".git/index").read_bytes(), before)
+        self.assertTrue(all(not marker.exists() for marker in markers.values()), markers)
+        self.assertEqual(self.runner.job.total(), 5)
+        self.assertEqual(self.runner.job.active(), 0)
+
+    def test_s1_ac11_control_git_diff_fires(self):
+        markers = self.install_filters()
+        (self.repo / "tracked.txt").write_bytes(b"changed\n")
+        self.setup_git("diff", "HEAD")
+        self.assertTrue(markers["clean"].is_file())
+        self.assertGreater(int(markers["clean"].read_text()), 0)
+        # Positive controls for the process and smudge definitions too.
+        self.setup_git("add", "process.txt", "smudge.txt")
+        self.assertTrue(markers["process"].is_file())
+        (self.repo / "smudge.txt").unlink()
+        self.setup_git("checkout", "--", "smudge.txt")
+        self.assertTrue(markers["smudge"].is_file())
+        self.assertTrue(markers["fsmonitor"].is_file())
+        self.assertTrue(markers["post-index-change"].is_file())
+
+    def test_s1_ac12_check_ignore_exit_policy(self):
+        argv = ["check-ignore", "-z", "--stdin", "--no-index"]
+        self.assertEqual(self.run_git(argv, stdin=b"tracked.txt\0"), (1, b""))
+        self.assertIsInstance(self.fingerprint(), self.lease.Fingerprint)
+        empty = self.scratch / "not-repo"
+        empty.mkdir()
+        def failing(argv, cwd, **kwargs):
+            return self.run_git(argv, empty if argv[0] == "check-ignore" else cwd, **kwargs)
+        self.unknown(self.fingerprint, failing)
+        self.assertEqual(self.runner.journal.entries()[-2]["code"], 128)
+        for code, data in ((1, b"tracked.txt\0"), (0, b""), (0, b"foreign\0"),
+                           (0, b"tracked.txt"), (0, b"tracked.txt\0tracked.txt\0")):
+            self.unknown(self.fingerprint, self.fault_metadata("check-ignore", data, code))
+
+    def test_s1_ac12_rev_parse_failure_unknown(self):
+        self.setup_git("update-ref", "-d", "refs/heads/fixture-branch")
+        self.unknown(self.fingerprint)
+        self.assertEqual(self.runner.journal.entries()[-2]["code"], 128)
+        self.assertEqual(self.runner.open_entries(), [])
+
+    def test_s1_ac12_malformed_ls_files_unknown(self):
+        valid = self.setup_git("ls-files", "--stage", "-z")
+        for data in (valid[:-1], valid + b"\0", valid + valid, b"bad\0",
+                     valid.replace(b"100644", b"100666"), valid.replace(b" 0\t", b" 4\t"),
+                     valid.replace(b"tracked.txt", b"../outside"), valid.replace(b"tracked.txt", b"\xff")):
+            with self.subTest(data=data):
+                self.unknown(self.fingerprint, self.fault_metadata("ls-files", data))
+
+    def test_s1_ac12_symbolic_ref_mismatch_foreign_write(self):
+        self.setup_git("switch", "-c", "other")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FOREIGN-WRITE"):
+            self.fingerprint()
+
+    def test_s1_ac12_never_partial_fingerprint(self):
+        prior = self.fingerprint()
+        with self.assertRaisesRegex(self.lease.LeaseError, "UNKNOWN"):
+            self.fingerprint(self.fault_metadata("check-ignore", b"", 128))
+        self.assertEqual(self.fingerprint(), prior)
+        self.assertEqual(self.runner.open_entries(), [])
+        # A genuine share-denied regular entry fails the entire result too.
+        path = self.repo / "unreadable.txt"
+        path.write_bytes(b"scratch fixture")
+        k = self.lease._kernel()
+        k.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                                 ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+        k.CreateFileW.restype = ctypes.c_void_p
+        handle = k.CreateFileW(str(path), 0x80000000, 0, None, 3, 0, None)
+        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
+        try:
+            self.unknown(self.fingerprint)
+        finally:
+            self.assertTrue(k.CloseHandle(handle))
+
+    def test_s1_ac14_staged_only_changes_digest(self):
+        prior = self.fingerprint()
+        path = self.repo / "tracked.txt"
+        original = path.read_bytes()
+        path.write_bytes(b"staged-only\n")
+        self.setup_git("add", "tracked.txt")
+        path.write_bytes(original)
+        after = self.fingerprint()
+        self.assertNotEqual(prior.digest, after.digest)
+        self.assertEqual([e for e in prior.entries if e[0] == "file"],
+                         [e for e in after.entries if e[0] == "file"])
+
+    def test_s1_ac14_raw_bytes_index_unchanged_changes_digest(self):
+        prior = self.fingerprint()
+        index = (self.repo / ".git/index").read_bytes()
+        (self.repo / "tracked.txt").write_bytes(b"raw\x00\xff\n")
+        self.assertNotEqual(prior.digest, self.fingerprint().digest)
+        self.assertEqual((self.repo / ".git/index").read_bytes(), index)
+
+    def test_s1_ac14_foreign_edit_after_checkpoint_differs(self):
+        checkpoint = self.fingerprint()
+        (self.repo / "untracked.txt").write_bytes(b"foreign write\n")
+        self.assertNotEqual(checkpoint.digest, self.fingerprint().digest)
+
+    def test_s1_ac14_branch_switch_or_rename(self):
+        self.fingerprint()
+        self.setup_git("branch", "-m", "renamed")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FOREIGN-WRITE"):
+            self.fingerprint()
+        self.setup_git("switch", "-c", "fixture-branch")
+        self.assertIsInstance(self.fingerprint(), self.lease.Fingerprint)
+        self.setup_git("switch", "renamed")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FOREIGN-WRITE"):
+            self.fingerprint()
+
+    def test_s1_ac14_blind_spots_asserted(self):
+        (self.repo / ".gitignore").write_bytes(b"ignored.txt\n")
+        ignored, excluded = self.repo / "ignored.txt", self.repo / ".env.fixture"
+        ignored.write_bytes(b"before")
+        excluded.write_bytes(b"synthetic one")
+        info = excluded.stat()
+        prior = self.fingerprint()
+        path = self.repo / "tracked.txt"
+        original = path.read_bytes()
+        path.write_bytes(b"temporary change")
+        path.write_bytes(original)
+        self.assertEqual(prior, self.fingerprint())
+        ignored.write_bytes(b"different size and bytes")
+        self.assertEqual(prior, self.fingerprint())
+        excluded.write_bytes(b"synthetic two")
+        os.utime(excluded, ns=(info.st_atime_ns, info.st_mtime_ns))
+        self.assertEqual(prior, self.fingerprint())
+        os.utime(excluded, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000000))
+        self.assertNotEqual(prior.digest, self.fingerprint().digest)
+
+    def test_s1_ac14_reparse_recorded_not_followed(self):
+        target = self.scratch / "target"
+        target.mkdir()
+        (target / "payload").write_bytes(b"outside")
+        junction = self.repo / "junction"
+        result = subprocess.run([self.env["COMSPEC"], "/d", "/c", "mklink", "/J", str(junction), str(target)],
+                                env=self.env, cwd=self.scratch, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.addCleanup(junction.rmdir)
+        self.assertTrue(self.lease._is_reparse(junction.lstat()))
+        prior = self.fingerprint()
+        self.assertIn(("reparse", "junction", os.readlink(junction)), prior.entries)
+        self.assertFalse(any("junction/payload" in entry for entry in prior.entries))
+        (target / "payload").write_bytes(b"outside changed")
+        self.assertEqual(prior, self.fingerprint())
+        self.unknown(self.lease._open_content, junction / "payload")
+
+    def test_s1_ac14_special_entry_unknown(self):
+        # AF_UNIX on Windows is a real special/reparse filesystem entry. The
+        # child binds relative to its explicit full-path owned scratch cwd.
+        child = subprocess.Popen([getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                  str(ENTRY.with_name("s1_special.py"))],
+                                 cwd=self.repo, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        spawned = child.pid
+        try:
+            assert child.stdout is not None
+            self.assertEqual(child.stdout.readline().strip(), str(spawned))
+            special = self.repo / "special.sock"
+            self.assertTrue(special.exists())
+            self.unknown(self.fingerprint)
+        finally:
+            self.assertEqual(child.pid, spawned)
+            self.assertNotEqual(spawned, os.getpid())
+            _, errors = child.communicate("exit\n", timeout=15)
+            self.assertEqual(child.returncode, 0, errors)
+
+
 if __name__ == "__main__":
     unittest.main()

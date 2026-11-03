@@ -1740,6 +1740,145 @@ def _open_content(path):
         raise LeaseError() from exc
 
 
+@dataclass(frozen=True)
+class Fingerprint:
+    digest: str
+    entries: tuple
+
+
+def _nul_records(data):
+    if not isinstance(data, bytes) or (data and not data.endswith(b"\0")):
+        raise LeaseError()
+    rows = data[:-1].split(b"\0") if data else []
+    if any(not row for row in rows):
+        raise LeaseError()
+    return rows
+
+
+def _relative_name(raw):
+    try:
+        name = raw.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise LeaseError() from exc
+    if (not name or "\\" in name or ":" in name or "\0" in name
+            or any(part in ("", ".", "..") or part.lower() == ".git" for part in name.split("/"))):
+        raise LeaseError()
+    return name
+
+
+def _index_entries(data, oid_length):
+    entries, seen = [], set()
+    for row in _nul_records(data):
+        match = re.fullmatch(rb"(100644|100755|120000|160000) ([0-9a-f]+) ([0-3])\t(.+)", row, re.DOTALL)
+        if match is None or len(match[2]) != oid_length:
+            raise LeaseError()
+        name, stage = _relative_name(match[4]), int(match[3])
+        if (name, stage) in seen or (stage and (name, 0) in seen) or (stage == 0 and any(n == name for n, _ in seen)):
+            raise LeaseError()
+        seen.add((name, stage))
+        entries.append(("index", name, match[1].decode("ascii"), match[2].decode("ascii"), stage))
+    return sorted(entries)
+
+
+def compute_fingerprint(root, branch, run_git):
+    """Complete G4 component, or an exception. Never publish partial evidence.
+
+    run_git is a bound metadata adapter, with stdin=bytes for check-ignore.
+    No timestamp-based shortcut replaces raw-byte reads. Reverted edits, ignored
+    content, credential content with unchanged metadata, alternate streams and
+    changes outside root remain documented blind spots. Gate comparison and
+    authority publication are deliberately not implemented here.
+    """
+    root = Path(root).absolute()
+    if (not isinstance(branch, str) or not branch or branch.startswith(("-", "/"))
+            or branch.endswith(("/", ".")) or ".." in branch or "@{" in branch
+            or any(c.isspace() or ord(c) < 32 or c in "~^:?*[\\" for c in branch)
+            or any(not p or p.startswith(".") or p.endswith(".lock") for p in branch.split("/"))):
+        raise LeaseError()
+
+    def metadata(argv, *, stdin=None):
+        result = run_git(argv, root) if stdin is None else run_git(argv, root, stdin=stdin)
+        code, data = result
+        valid = (0, 1) if argv[0] == "check-ignore" else (0,)
+        if type(code) is not int or code not in valid or not isinstance(data, bytes):
+            raise LeaseError()
+        return code, data
+
+    def oid(argv):
+        _, data = metadata(argv)
+        if not re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\n", data):
+            raise LeaseError()
+        return data[:-1].decode("ascii")
+
+    try:
+        info = root.lstat()
+        if _is_reparse(info) or not stat.S_ISDIR(info.st_mode):
+            raise LeaseError()
+        head = oid(["rev-parse", "HEAD"])
+        _, symbolic = metadata(["symbolic-ref", "HEAD"])
+        if not symbolic.endswith(b"\n") or b"\n" in symbolic[:-1] or b"\0" in symbolic:
+            raise LeaseError()
+        if symbolic != ("refs/heads/" + branch + "\n").encode("utf-8"):
+            raise LeaseError("FOREIGN-WRITE")
+        ref = oid(["rev-parse", "refs/heads/" + branch])
+        if len(head) != len(ref):
+            raise LeaseError()
+        _, staged = metadata(["ls-files", "--stage", "-z"])
+        entries = [("HEAD", head), ("branch", branch, ref), *_index_entries(staged, len(head))]
+        walked = []
+
+        def walk(directory):
+            for path in sorted(directory.iterdir()):
+                if path.name.lower() == ".git":
+                    continue
+                rel = path.relative_to(root).as_posix()
+                _relative_name(rel.encode("utf-8"))
+                before = path.lstat()
+                if _is_reparse(before):
+                    # Unknown/opaque reparse tags fail readlink, never traverse.
+                    walked.append((path, rel, before, "reparse", os.readlink(path)))
+                elif stat.S_ISREG(before.st_mode) or stat.S_ISDIR(before.st_mode):
+                    kind = "file" if stat.S_ISREG(before.st_mode) else "directory"
+                    walked.append((path, rel, before, kind, None))
+                    if kind == "directory" and not is_excluded(rel):
+                        walk(path)
+                else:
+                    raise LeaseError()
+
+        walk(root)
+        paths = {rel for _, rel, _, _, _ in walked}
+        input_paths = b"".join(rel.encode("utf-8") + b"\0" for rel in sorted(paths))
+        code, ignored_data = metadata(["check-ignore", "-z", "--stdin", "--no-index"], stdin=input_paths)
+        ignored_list = [_relative_name(raw) for raw in _nul_records(ignored_data)]
+        ignored = set(ignored_list)
+        if (not ignored <= paths or len(ignored) != len(ignored_list)
+                or (code == 1 and ignored) or (code == 0 and not ignored)):
+            raise LeaseError()
+        for path, rel, before, kind, target in walked:
+            if kind == "reparse":
+                entries.append(("reparse", rel, target))
+            elif is_excluded(rel):
+                entries.append(("excluded", rel, kind, before.st_size, before.st_mtime_ns))
+            elif rel in ignored:
+                entries.append(("ignored", rel))
+            elif kind == "directory":
+                entries.append(("directory", rel))
+            else:
+                data = _open_content(path)
+                entries.append(("file", rel, hashlib.sha256(data).hexdigest()))
+            after = path.lstat()
+            # Detect an entry replacement during observation, even for ignored
+            # paths; these metadata are not included in their resulting digest.
+            if ((before.st_dev, before.st_ino, before.st_mode) != (after.st_dev, after.st_ino, after.st_mode)
+                    or _is_reparse(before) != _is_reparse(after)):
+                raise LeaseError()
+        frozen = tuple(entries)
+        encoded = json.dumps(frozen, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        return Fingerprint(hashlib.sha256(encoded).hexdigest(), frozen)
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise LeaseError() from exc
+
+
 GUARDIAN_FLAGS = 0x00000008 | 0x00000200 | 0x01000000
 HEARTBEAT_SECONDS = 60
 
