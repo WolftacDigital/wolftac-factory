@@ -36,6 +36,19 @@ tab-hidden pausing, scene clicks, orbit/zoom limits, RESET VIEW, touch, WebGL fa
   `controls.update()` replays it, snapping back to the limit. Fix pattern: flush with
   `enableDamping=false; update(); enableDamping=prev` before applying the pose.
 
+## Scene access in a production build
+- To sample world positions or the camera without importing app/engine modules (which a
+  hashed prod bundle does not expose), use an `addInitScript` that sets
+  `window.__THREE_DEVTOOLS__ = new EventTarget()` and listens for `observe`. three.js
+  dispatches it for each `Scene` and `WebGLRenderer`. Wrap the renderer instance's `render` to
+  capture `(scene, camera)`, then read `scene.children` groups and `camera.position` and
+  `quaternion` every rAF. This works against the shipped `dist` served by the real server.
+- Run the same probe against clean `origin/main` as a negative control. A probe that also
+  passes on main proves nothing about the fix.
+- To speed up fixture-driven SSE tests, a scratch wrapper can shorten one server poll interval
+  by patching `globalThis.setInterval` before it imports the unchanged server. Measure all
+  timing from the SSE event and disclose the acceleration in the report.
+
 ## Other proofs that worked
 - Fixture dynamics: mutate a scratch fixture copy; track a crate label's screen position every
   rAF/50 ms from the moment its zone count changes (glide timing, reduced-motion jump).
