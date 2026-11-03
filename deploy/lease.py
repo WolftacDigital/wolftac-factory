@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1673,6 +1674,70 @@ def run_git(argv, cwd, *, runner, parent, git, env, scratch, stdin=b""):
             if hooks.exists():
                 hooks.rmdir()
             directory.rmdir()
+
+
+_CREDENTIAL_WORDS = r"secrets?|tokens?|credentials?|apikeys?|api[-_]keys?|passwords?|passwd"
+_CREDENTIAL_EXTS = r"json|ya?ml|toml|ini|txt|conf|cfg|xml|properties|env"
+# WD-349 deploy/junction-lib.ps1 set, plus G4's broader .env*/token/secret.
+_CREDENTIAL_NAMES = re.compile(
+    r"^(?:\.npmrc|\.netrc|\.git-credentials|\.htpasswd|"
+    r"id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|"
+    r"auth(?:\.(?:json|ya?ml|toml|ini|txt))?|"
+    r"(?:service[-_]?account|serviceaccount|client[-_]secret|sa[-_]key)(?:\.(?:json|ya?ml|toml|ini|txt))?|"
+    r"config\.(?:ya?ml|json|toml|ini)|settings\.local\.json|"
+    r"(?:" + _CREDENTIAL_WORDS + r")(?:\.(?:" + _CREDENTIAL_EXTS + r"))?)$|"
+    r"\.(?:pem|pfx|p12|key|keystore|jks|ppk|asc|gpg|kdbx)$|"
+    r"[-_.](?:" + _CREDENTIAL_WORDS + r")\.(?:" + _CREDENTIAL_EXTS + r")$",
+    re.IGNORECASE,
+)
+
+
+def is_excluded(relpath):
+    """Path-only, case-insensitive, including every ancestor component.
+
+    No resolve/stat/open is needed to decide this. Trim Win32 name aliases;
+    checking an absolute path is deliberately more conservative than relative.
+    """
+    parts = str(relpath).replace("\\", "/").split("/")
+    return any(name.startswith(".env") or "token" in name or "secret" in name
+               or _CREDENTIAL_NAMES.search(name) is not None
+               for name in (part.rstrip(" .").lower() for part in parts))
+
+
+def _is_reparse(info):
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
+
+
+def _open_content(path):
+    """The single raw-worktree content reader; exclusions precede any open.
+
+    Refuse reparses (including ancestors), special entries and detected races.
+    This is cooperative detection, not a sandbox for hostile same-user races.
+    """
+    path = Path(path).absolute()
+    if is_excluded(path):
+        raise LeaseError()
+    try:
+        before = path.lstat()
+        if _is_reparse(before) or not stat.S_ISREG(before.st_mode):
+            raise LeaseError()
+        for parent in path.parents:
+            info = parent.lstat()
+            if _is_reparse(info) or not stat.S_ISDIR(info.st_mode):
+                raise LeaseError()
+        with path.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (opened.st_dev, opened.st_ino, opened.st_mode) != (before.st_dev, before.st_ino, before.st_mode):
+                raise LeaseError()
+            data = stream.read()
+            after = os.fstat(stream.fileno())
+        final = path.lstat()
+        signature = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns)
+        if signature(before) != signature(after) or signature(before) != signature(final):
+            raise LeaseError()
+        return data
+    except OSError as exc:
+        raise LeaseError() from exc
 
 
 GUARDIAN_FLAGS = 0x00000008 | 0x00000200 | 0x01000000

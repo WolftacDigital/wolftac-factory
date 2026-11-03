@@ -1784,5 +1784,42 @@ class TestS1Observation(S1Case):
         self.assertNotIn("create_suspended", calls)
 
 
+class TestS1Exclusions(S1Case):
+    def test_s1_exclusions_path_first_wd349_and_ancestors(self):
+        names = [".env", ".environment", ".ENV.local", "x.KEY", "wordtoken.md", "secret-notes.md",
+                 ".npmrc", ".netrc", ".git-credentials", ".htpasswd", "id_rsa", "id_ed25519.pub",
+                 "key.pem", "key.pfx", "key.p12", "key.keystore", "key.jks", "key.ppk", "key.asc",
+                 "key.gpg", "key.kdbx", "credentials", "apikeys.txt", "api-keys.ini", "passwords",
+                 "passwd", "auth.json", "service-account.json", "sa_key.yaml", "prod-credentials.ini",
+                 "config.yaml", "config.json", "config.toml", "config.ini", "settings.local.json",
+                 "config.yaml. "]
+        for name in names:
+            with self.subTest(name=name):
+                self.assertTrue(self.lease.is_excluded(name))
+                self.assertTrue(self.lease.is_excluded("nested/" + name + "/ordinary.txt"))
+                self.assertTrue(self.lease.is_excluded("nested\\" + name + "\\ordinary.txt"))
+        for name in ("tracked.txt", "src/main.py", "readme.md", "password-review.md"):
+            self.assertFalse(self.lease.is_excluded(name))
+        forbidden = self.repo / "service-account.json"
+        forbidden.write_bytes(b"synthetic not a credential")
+        # Refusal of a missing excluded name proves exclusion before lstat too.
+        self.unknown(self.lease._open_content, self.repo / ".env-does-not-exist")
+        self.unknown(self.lease._open_content, forbidden)
+
+    def test_s1_open_content_raw_bytes_and_unreadable_unknown(self):
+        regular = self.repo / "bytes.dat"
+        regular.write_bytes(b"\x00\xff\r\nraw")
+        self.assertEqual(self.lease._open_content(regular), b"\x00\xff\r\nraw")
+        self.unknown(self.lease._open_content, self.repo / "missing")
+        self.unknown(self.lease._open_content, self.repo)
+        tree = ast.parse(LEASE.read_text(encoding="utf-8"))
+        functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        handles = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "CreateFileW"]
+        self.assertTrue(handles)
+        for node in handles:
+            self.assertEqual([f.name for f in functions if f.end_lineno is not None
+                              and f.lineno <= node.lineno <= f.end_lineno], ["dir_identity"])
+
+
 if __name__ == "__main__":
     unittest.main()
