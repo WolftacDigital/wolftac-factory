@@ -1,4 +1,4 @@
-"""WD-618 M1: Windows identity, exclusion and durable publication primitives.
+"""WD-618 M1/M2a: Windows identity, publication and execution primitives.
 
 The public entry is deliberately inert until the guardian and observation stages
 exist. These library primitives do not establish observation/drain evidence.
@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes as W
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
+import threading
 import time
 from typing import Callable, Protocol
 import uuid
@@ -144,7 +146,7 @@ class Deps:
 
 
 def default_deps():
-    return Deps(RegistryBoot(), NoBarrier(), NoFailure(), NoAudit(), ProcessApi(), time.time)
+    return Deps(RegistryBoot(), NoBarrier(), NoFailure(), NoAudit(), ProcApi(), time.time)
 
 
 def _kernel():
@@ -861,6 +863,597 @@ def adopt_AD2(pub):
         raise LeaseError("REJECTED")
     branch["restricted_by"] = {}
     pub.br_write(branch, "AD2")
+
+
+# M2a / M2b interface: Ledger owns persistence, Job owns only its job handle,
+# ProcApi owns original Child handles, and Executor owns a per-instance op table.
+# The caller supplies the shared phase mutex. Barriers run OUTSIDE that mutex.
+# Admission captures BootSource once per op; every subsequent line binds to it.
+# No library operation below publishes authority or enables the public CLI.
+LEDGER_PHASES = frozenset((
+    "ADMITTED LAUNCH-ATTEMPTED LAUNCH-CANCELLED LAUNCHED-SUSPENDED LAUNCH-FAILED "
+    "ASSIGNED ASSIGN-FAILED RESUME-ATTEMPTED RESUMED RESUME-UNCERTAIN EXITED "
+    "DRAINED TERMINATED-UNRUN CANCELLED NOT-ADMITTED NATIVE-OPEN NATIVE-CLOSED OBSERVE"
+).split())
+TERMINAL_PHASES = frozenset((
+    "LAUNCH-CANCELLED LAUNCH-FAILED DRAINED TERMINATED-UNRUN CANCELLED "
+    "NOT-ADMITTED NATIVE-CLOSED"
+).split())
+
+
+class Ledger:
+    """One exclusive writer; open_existing is classification-only, never resume.
+
+    Caller serializes appends with its phase mutex. A failed write/fsync poisons
+    this writer permanently, even if the bytes happen to look complete later.
+    """
+    def __init__(self, path, deps, stream=None):
+        self.path, self.deps, self._stream = Path(path), deps, stream
+        self.failed = False
+        self._seq = 0
+        self._phases = {}
+        self._boots = {}
+        self._kinds = {}
+        self._writer = stream is not None
+
+    @classmethod
+    def create(cls, gen_dir, deps):
+        path = Path(gen_dir) / "ledger.jsonl"
+        try:
+            stream = path.open("xb")
+        except OSError as exc:
+            raise LeaseError("FAILED-STORAGE") from exc
+        return cls(path, deps, stream)
+
+    @classmethod
+    def open_existing(cls, path, deps):
+        ledger = cls(path, deps)
+        ledger.entries()  # Fail closed immediately, including a missing file.
+        return ledger
+
+    @staticmethod
+    def validate(rows):
+        seq, bindings = 0, {}
+        for row in rows:
+            if not isinstance(row, dict) or not {"seq", "op_id", "kind", "phase", "boot_id"} <= row.keys():
+                raise LeaseError()
+            _integer(row["seq"], 1)
+            if row["seq"] != seq + 1:
+                raise LeaseError()
+            seq = row["seq"]
+            if (not isinstance(row["op_id"], str) or not row["op_id"]
+                    or row["kind"] not in ("exec", "observe", "native")
+                    or row["phase"] not in LEDGER_PHASES):
+                raise LeaseError()
+            _integer(row["boot_id"])
+            if row["boot_id"] > 0xffffffff:
+                raise LeaseError()
+            binding = (row["kind"], row["boot_id"])
+            if bindings.setdefault(row["op_id"], binding) != binding:
+                raise LeaseError()
+        return rows
+
+    def entries(self):
+        try:
+            data = self.path.read_bytes()
+            if data and not data.endswith(b"\n"):
+                raise LeaseError()
+            return self.validate([_decode(line.decode("utf-8")) for line in data.splitlines()])
+        except (OSError, UnicodeError, TypeError) as exc:
+            raise LeaseError() from exc
+
+    def append(self, op_id, kind, phase, **fields):
+        if self.failed or self._stream is None:
+            raise LeaseError("FAILED-STORAGE")
+        # An unreadable admission boot is UNKNOWN, not an admitted operation.
+        boot = self._boots.get(op_id)
+        if boot is None:
+            try:
+                boot = self.deps.boot.read()
+                _integer(boot)
+                if boot > 0xffffffff:
+                    raise LeaseError()
+            except Exception as exc:
+                raise LeaseError() from exc
+        try:
+            if {"seq", "op_id", "kind", "phase", "boot_id"} & fields.keys():
+                raise LeaseError()
+            row = dict(fields, seq=self._seq + 1, op_id=op_id, kind=kind,
+                       phase=phase, boot_id=boot)
+            self.validate([dict(row, seq=1)])
+            if op_id in self._kinds and self._kinds[op_id] != kind:
+                raise LeaseError()
+            self.deps.fail.check("append:" + phase)
+            data = (json.dumps(row, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+            if self._stream.write(data) != len(data):
+                raise OSError("short ledger write")
+            self._stream.flush()
+            os.fsync(self._stream.fileno())
+        except Exception as exc:
+            self.failed = True
+            raise LeaseError("FAILED-STORAGE") from exc
+        self._seq = row["seq"]
+        self._boots[op_id] = boot
+        self._kinds[op_id] = kind
+        self._phases[op_id] = phase
+        return self._seq
+
+    def phase(self, op_id):
+        if self._writer:
+            return self._phases.get(op_id)
+        return next((r["phase"] for r in reversed(self.entries()) if r["op_id"] == op_id), None)
+
+    def close(self):
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
+
+
+class _JobBasicLimit(ctypes.Structure):
+    _fields_ = [("process_time", ctypes.c_int64), ("job_time", ctypes.c_int64),
+                ("flags", W.DWORD), ("min_ws", ctypes.c_size_t),
+                ("max_ws", ctypes.c_size_t), ("active_limit", W.DWORD),
+                ("affinity", ctypes.c_size_t), ("priority", W.DWORD),
+                ("scheduling", W.DWORD)]
+
+
+class _IoCounters(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint64) for name in
+                ("read_ops", "write_ops", "other_ops", "read_bytes", "write_bytes", "other_bytes")]
+
+
+class _JobExtendedLimit(ctypes.Structure):
+    _fields_ = [("basic", _JobBasicLimit), ("io", _IoCounters),
+                ("process_memory", ctypes.c_size_t), ("job_memory", ctypes.c_size_t),
+                ("peak_process", ctypes.c_size_t), ("peak_job", ctypes.c_size_t)]
+
+
+class _JobAccounting(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_int64) for name in
+                ("user", "kernel", "period_user", "period_kernel")] + [
+                (name, W.DWORD) for name in ("faults", "total", "active", "terminated")]
+
+
+class Job:
+    """Unnamed containment, never kill-on-close or breakaway. Close is not drain."""
+    def __init__(self, handle, deps):
+        self.handle, self.deps = handle, deps
+
+    @classmethod
+    def create(cls, deps):
+        k = _kernel()
+        k.CreateJobObjectW.argtypes = [W.LPVOID, W.LPCWSTR]
+        k.CreateJobObjectW.restype = W.HANDLE
+        handle = k.CreateJobObjectW(None, None)
+        if not handle:
+            raise LeaseError()
+        job = cls(handle, deps)
+        try:
+            job.flags()
+            return job
+        except BaseException:
+            job.close()
+            raise
+
+    def _query(self, kind, value):
+        if self.handle is None:
+            raise LeaseError()
+        k = _kernel()
+        k.QueryInformationJobObject.argtypes = [W.HANDLE, ctypes.c_int, W.LPVOID,
+                                                W.DWORD, ctypes.POINTER(W.DWORD)]
+        k.QueryInformationJobObject.restype = W.BOOL
+        if not k.QueryInformationJobObject(self.handle, kind, ctypes.byref(value), ctypes.sizeof(value), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return value
+
+    def flags(self):
+        flags = self._query(9, _JobExtendedLimit()).basic.flags
+        if flags & (0x800 | 0x1000 | 0x2000):
+            raise LeaseError()  # BREAKAWAY_OK, SILENT_BREAKAWAY_OK, KILL_ON_JOB_CLOSE
+        return flags
+
+    def active(self):
+        return self._query(1, _JobAccounting()).active
+
+    def members(self):
+        capacity = 16
+        while capacity <= 1048576:
+            class Pids(ctypes.Structure):
+                _fields_ = [("assigned", W.DWORD), ("count", W.DWORD),
+                            ("pids", ctypes.c_size_t * capacity)]
+            try:
+                data = self._query(3, Pids())
+            except OSError as exc:
+                if exc.winerror != 234:  # ERROR_MORE_DATA
+                    raise LeaseError() from exc
+                capacity *= 2
+                continue
+            result = []
+            for pid in data.pids[:data.count]:
+                ctime = self.deps.process.creation_time(pid)
+                if ctime is None:
+                    raise LeaseError()  # Snapshot raced exit: never guess an identity.
+                result.append(ProcIdentity(pid, ctime))
+            return result
+        raise LeaseError()
+
+    def contains(self, child):
+        if self.handle is None or child.closed:
+            raise LeaseError()
+        k = _kernel()
+        k.IsProcessInJob.argtypes = [W.HANDLE, W.HANDLE, ctypes.POINTER(W.BOOL)]
+        k.IsProcessInJob.restype = W.BOOL
+        inside = W.BOOL()
+        if not k.IsProcessInJob(child.process_handle, self.handle, ctypes.byref(inside)):
+            raise LeaseError()
+        return bool(inside.value)
+
+    def close(self):
+        if self.handle is not None:
+            if not _kernel().CloseHandle(self.handle):
+                raise LeaseError()
+            self.handle = None
+
+
+@dataclass(eq=False)
+class Child:
+    process_handle: int
+    thread_handle: int
+    pid: int
+    ctime: int
+    closed: bool = False
+
+
+class _StartupInfo(ctypes.Structure):
+    _fields_ = [("cb", W.DWORD), ("reserved", W.LPWSTR), ("desktop", W.LPWSTR),
+                ("title", W.LPWSTR)] + [(name, W.DWORD) for name in
+                ("x", "y", "xsize", "ysize", "xchars", "ychars", "fill", "flags")] + [
+                ("show", W.WORD), ("reserved_size", W.WORD), ("reserved_bytes", W.LPVOID),
+                ("stdin", W.HANDLE), ("stdout", W.HANDLE), ("stderr", W.HANDLE)]
+
+
+class _ProcessInfo(ctypes.Structure):
+    _fields_ = [("process", W.HANDLE), ("thread", W.HANDLE), ("pid", W.DWORD), ("tid", W.DWORD)]
+
+
+class ProcApi(ProcessApi):
+    """Creation-handle ownership is local to this API AND the executor record.
+
+    The original handle tuple is retained independently of mutable Child fields.
+    A PID, reconstructed Child, foreign executor, or resumed child is never D9.
+    """
+    def __init__(self):
+        self._children = {}
+        self._resume_calls = set()
+        self._owner_pid = os.getpid()
+
+    def _owned(self, child):
+        if (not isinstance(child, Child) or child.closed or self._owner_pid != os.getpid()
+                or self._children.get(id(child)) != (child, child.process_handle,
+                                                    child.thread_handle, child.pid, child.ctime)):
+            raise LeaseError("REJECTED")
+
+    def create_suspended(self, argv, cwd, env):
+        if (not isinstance(argv, (list, tuple)) or not argv
+                or any(not isinstance(a, str) or "\0" in a for a in argv)
+                or not Path(argv[0]).is_absolute() or not Path(cwd).is_absolute()
+                or not isinstance(env, dict)
+                or any(not isinstance(k, str) or not k or "=" in k or "\0" in k
+                       or not isinstance(v, str) or "\0" in v for k, v in env.items())):
+            raise LeaseError("REJECTED")
+        k = _kernel()
+        k.CreateProcessW.argtypes = [W.LPCWSTR, W.LPWSTR, W.LPVOID, W.LPVOID, W.BOOL,
+                                     W.DWORD, W.LPVOID, W.LPCWSTR,
+                                     ctypes.POINTER(_StartupInfo), ctypes.POINTER(_ProcessInfo)]
+        k.CreateProcessW.restype = W.BOOL
+        command = ctypes.create_unicode_buffer(subprocess.list2cmdline(argv))
+        environment = ctypes.create_unicode_buffer("\0".join(k + "=" + v for k, v in
+                                                   sorted(env.items(), key=lambda item: item[0].upper())) + "\0\0")
+        startup, info = _StartupInfo(), _ProcessInfo()
+        startup.cb = ctypes.sizeof(startup)
+        if not k.CreateProcessW(argv[0], command, None, None, False, 0x4 | 0x400,
+                                environment, str(cwd), ctypes.byref(startup), ctypes.byref(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        times = [W.FILETIME() for _ in range(4)]
+        k.GetProcessTimes.argtypes = [W.HANDLE] + [ctypes.POINTER(W.FILETIME)] * 4
+        k.GetProcessTimes.restype = W.BOOL
+        child = Child(info.process, info.thread, info.pid, 0)
+        # Preserve handles even on a metadata failure; caller must not infer that
+        # CreateProcess failed after it returned a real child.
+        self._children[id(child)] = (child, child.process_handle, child.thread_handle, child.pid, 0)
+        if k.GetProcessTimes(info.process, *(ctypes.byref(t) for t in times)):
+            child.ctime = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+            self._children[id(child)] = (child, child.process_handle, child.thread_handle, child.pid, child.ctime)
+        return child
+
+    def assign(self, job, child):
+        self._owned(child)
+        k = _kernel()
+        k.AssignProcessToJobObject.argtypes = [W.HANDLE, W.HANDLE]
+        k.AssignProcessToJobObject.restype = W.BOOL
+        if not k.AssignProcessToJobObject(job.handle, child.process_handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def resume(self, child):
+        self._owned(child)
+        self._resume_calls.add(id(child))
+        k = _kernel()
+        k.ResumeThread.argtypes = [W.HANDLE]
+        k.ResumeThread.restype = W.DWORD
+        return k.ResumeThread(child.thread_handle)
+
+    def wait(self, child, timeout_ms):
+        self._owned(child)
+        k = _kernel()
+        k.WaitForSingleObject.argtypes = [W.HANDLE, W.DWORD]
+        k.WaitForSingleObject.restype = W.DWORD
+        value = k.WaitForSingleObject(child.process_handle, timeout_ms)
+        if value == 258:
+            return None
+        if value != 0:
+            raise LeaseError()
+        code = W.DWORD()
+        k.GetExitCodeProcess.argtypes = [W.HANDLE, ctypes.POINTER(W.DWORD)]
+        k.GetExitCodeProcess.restype = W.BOOL
+        if not k.GetExitCodeProcess(child.process_handle, ctypes.byref(code)):
+            raise LeaseError()
+        return code.value
+
+    def terminate_unrun(self, child, proof):
+        """D9 only. Called with the same live executor's mutex held and record.
+
+        Persistence failure before RESUME-ATTEMPTED is a permitted D9 trigger;
+        recovered bytes never constitute this proof. Confirmation uses the SAME
+        process handle, never PID lookup, and precedes the terminal ledger line.
+        """
+        self._owned(child)
+        if (not isinstance(proof, _ExecRecord) or proof.child is not child
+                or proof.executor.deps.process is not self
+                or proof.executor._ops.get(proof.op_id) is not proof
+                or proof.executor.owner_pid != os.getpid()
+                or not proof.executor.phase_mutex.locked()
+                or "LAUNCHED-SUSPENDED" not in proof.phases
+                or "RESUME-ATTEMPTED" in proof.phases
+                or id(child) in self._resume_calls
+                or proof.cleanup_reason not in ("ASSIGN-FAILED", "cancel", "resume-storage")):
+            raise LeaseError("REJECTED")
+        k = _kernel()
+        k.TerminateProcess.argtypes = [W.HANDLE, W.UINT]
+        k.TerminateProcess.restype = W.BOOL
+        if not k.TerminateProcess(child.process_handle, 1):
+            raise LeaseError()
+        if self.wait(child, 30000) is None:
+            raise LeaseError()
+
+    def close_child(self, child):
+        self._owned(child)
+        k = _kernel()
+        if not k.CloseHandle(child.thread_handle) or not k.CloseHandle(child.process_handle):
+            raise LeaseError()
+        child.closed = True
+        self._children.pop(id(child))
+        self._resume_calls.discard(id(child))
+
+
+@dataclass(frozen=True)
+class Outcome:
+    result: str
+    phase: str | None = None
+    exit_code: int | None = None
+
+
+@dataclass(eq=False)
+class _ExecRecord:
+    executor: Executor
+    op_id: str
+    argv: tuple
+    cwd: str
+    env: dict
+    phase: str = "ADMITTED"
+    phases: list = field(default_factory=lambda: ["ADMITTED"])
+    child: Child | None = None
+    cancelled: bool = False
+    cleanup_reason: str | None = None
+    exit_code: int | None = None
+    error: str | None = None
+    started: bool = False
+
+
+class Executor:
+    """Shared exec/observation launch mechanics, not a guardian or authority.
+
+    run is the worker-thread entry and waits for positive job drain. status and
+    cancel never run the target, and barriers never hold the caller's mutex.
+    Handles remain available for evidence until close_child, even after D9.
+    M2b owns checkpoint/observation-before-parent-close and release integration.
+    """
+    def __init__(self, ledger, job, deps, phase_mutex):
+        self.ledger, self.job, self.deps = ledger, job, deps
+        self.phase_mutex = phase_mutex
+        self.owner_pid = os.getpid()
+        self._ops = {}
+        self._runner = threading.Lock()
+
+    def _write(self, record, phase, **fields):
+        self.ledger.append(record.op_id, "exec", phase, **fields)
+        record.phase = phase
+        record.phases.append(phase)
+
+    def _outcome(self, record):
+        if self.ledger.failed or record.error:
+            return Outcome("UNKNOWN", record.phase, record.exit_code)
+        if record.phase in ("CANCELLED", "LAUNCH-CANCELLED", "TERMINATED-UNRUN"):
+            return Outcome("CANCELLED", record.phase)
+        if record.phase in TERMINAL_PHASES:
+            return Outcome("DONE", record.phase, record.exit_code)
+        return Outcome("RUNNING", record.phase, record.exit_code)
+
+    def _open(self, record):
+        return bool(record.error) or record.phase not in TERMINAL_PHASES
+
+    def admit(self, op_id, argv, cwd, env):
+        with self.phase_mutex:
+            if self.ledger.failed:
+                raise LeaseError("FAILED-STORAGE")
+            if (not isinstance(op_id, str) or not op_id or not isinstance(argv, (list, tuple))
+                    or not argv or any(not isinstance(a, str) or "\0" in a for a in argv)
+                    or not isinstance(env, dict)):
+                raise LeaseError("REJECTED")
+            if op_id in self._ops:
+                old = self._ops[op_id]
+                if (old.argv, old.cwd, old.env) != (tuple(argv), str(cwd), env):
+                    raise LeaseError("REJECTED")
+                return "ADMITTED"  # Creation replay only; run never executes twice.
+            if any(self._open(r) for r in self._ops.values()):
+                raise LeaseError("BATCH-OPEN")
+            record = _ExecRecord(self, op_id, tuple(argv), str(cwd), dict(env))
+            self.ledger.append(op_id, "exec", "ADMITTED", argv=list(argv), cwd=str(cwd))
+            self._ops[op_id] = record
+        self.deps.barrier.reach("ADMITTED")
+        return "ADMITTED"
+
+    def status(self, op_id):
+        with self.phase_mutex:
+            record = self._ops.get(op_id)
+            return self._outcome(record) if record else Outcome("REJECTED")
+
+    def open_ops(self):
+        with self.phase_mutex:
+            return [op_id for op_id, record in self._ops.items() if self._open(record)]
+
+    def _cleanup(self, record, reason):
+        record.cleanup_reason = reason
+        self.deps.process.terminate_unrun(record.child, record)
+        self._write(record, "TERMINATED-UNRUN")
+        self._write(record, "CANCELLED")
+
+    def cancel(self, op_id):
+        with self.phase_mutex:
+            record = self._ops.get(op_id)
+            if record is None:
+                return Outcome("REJECTED")  # IPC tombstones are M2b.
+            if not self._open(record):
+                return self._outcome(record)
+            if "RESUME-ATTEMPTED" in record.phases:
+                return Outcome("RUNNING", record.phase, record.exit_code)
+            record.cancelled = True
+            try:
+                if record.child is not None:
+                    self._cleanup(record, "cancel")
+                elif record.phase == "LAUNCH-ATTEMPTED":
+                    self._write(record, "LAUNCH-CANCELLED")
+                    self._write(record, "CANCELLED")
+                else:
+                    self._write(record, "CANCELLED")
+            except (LeaseError, OSError) as exc:
+                record.error = str(exc)
+            return self._outcome(record)
+
+    def run(self, op_id):
+        if not self._runner.acquire(blocking=False):
+            return self.status(op_id)
+        try:
+            with self.phase_mutex:
+                record = self._ops.get(op_id)
+                if record is None:
+                    return Outcome("REJECTED")
+                if record.started or not self._open(record):
+                    return self._outcome(record)
+                record.started = True
+            try:
+                return self._run(record)
+            except (LeaseError, OSError) as exc:
+                with self.phase_mutex:
+                    record.error = str(exc)
+                    return Outcome("FAILED-STORAGE" if self.ledger.failed else "UNKNOWN", record.phase)
+        finally:
+            self._runner.release()
+
+    def _run(self, record):
+        with self.phase_mutex:
+            if record.cancelled:
+                return self._outcome(record)
+            self._write(record, "LAUNCH-ATTEMPTED")
+        self.deps.barrier.reach("LAUNCH-ATTEMPTED")
+        with self.phase_mutex:
+            # This is the last check before CreateProcess, serialized with cancel.
+            if record.cancelled:
+                return self._outcome(record)
+            try:
+                record.child = self.deps.process.create_suspended(record.argv, record.cwd, record.env)
+            except (LeaseError, OSError):
+                self._write(record, "LAUNCH-FAILED")
+            else:
+                self._write(record, "LAUNCHED-SUSPENDED", pid=record.child.pid, ctime=record.child.ctime)
+        self.deps.barrier.reach(record.phase)
+        with self.phase_mutex:
+            if record.cancelled or record.error or not self._open(record):
+                return self._outcome(record)
+            child = record.child
+            if child is None or child.ctime <= 0:
+                raise LeaseError()  # Preserve an uncertain created child, no resume.
+            try:
+                self.deps.fail.check("assign")
+                self.deps.process.assign(self.job, child)
+                if not self.job.contains(child):
+                    raise LeaseError()
+            except (LeaseError, OSError):
+                try:
+                    self._write(record, "ASSIGN-FAILED")
+                finally:
+                    self._cleanup(record, "ASSIGN-FAILED")
+                return self._outcome(record)
+            self._write(record, "ASSIGNED")
+        self.deps.barrier.reach("ASSIGNED")
+        with self.phase_mutex:
+            if record.cancelled or record.error or not self._open(record):
+                return self._outcome(record)
+            try:
+                self._write(record, "RESUME-ATTEMPTED")
+            except LeaseError:
+                # The ledger latch prevents terminal persistence too; D9 confirms
+                # cessation but the op remains open/UNKNOWN for later recovery.
+                self._cleanup(record, "resume-storage")
+                raise
+        self.deps.barrier.reach("RESUME-ATTEMPTED")
+        try:
+            self.deps.fail.check("resume")
+            resumed = self.deps.process.resume(child)
+        except (LeaseError, OSError):
+            resumed = 0xffffffff
+        if resumed == 1:
+            self.deps.barrier.reach("after-os-resume")
+        with self.phase_mutex:
+            self._write(record, "RESUMED" if resumed == 1 else "RESUME-UNCERTAIN")
+        self.deps.barrier.reach(record.phase)
+        code = None
+        while code is None:
+            code = self.deps.process.wait(child, 50)
+        with self.phase_mutex:
+            self._write(record, "EXITED", code=code)
+            record.exit_code = code
+        self.deps.barrier.reach("EXITED")
+        while self.job.active() != 0:
+            time.sleep(0.01)
+        with self.phase_mutex:
+            self._write(record, "DRAINED")
+        self.deps.barrier.reach("DRAINED")
+        return self.status(record.op_id)
+
+
+def classify_recovered(entries, current_executor=None):
+    """Read-only conservative classification, never a D9 or drain procedure.
+
+    current_executor cannot turn persisted bytes into live ownership proof.
+    Even with that optional context, only terminal ledger entries classify DONE.
+    Boot-boundary validation and guardian recovery remain M4 responsibilities.
+    """
+    try:
+        rows = entries.entries() if isinstance(entries, Ledger) else Ledger.validate(entries)
+        phases = {row["op_id"]: row["phase"] for row in rows}
+        return "OPERATOR-BLOCKED" if any(p not in TERMINAL_PHASES for p in phases.values()) else "DONE"
+    except (LeaseError, OSError, TypeError, ValueError):
+        return "UNKNOWN"
 
 
 def main(argv=None):

@@ -1,9 +1,11 @@
-"""WD-618 M1 real-process primitive tests. All state is synthetic C: scratch.
+"""WD-618 M1/M2a primitive tests. All state is synthetic harness-owned scratch.
 
 M2 guardian/IPC, M3 observation, M4 recover/adopt and M5 integration are PENDING.
 No test here asserts whole-criterion or deployed lease acceptance.
 """
 import ctypes
+import ast
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -13,8 +15,12 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+from unittest import mock
+from typing import Any
 import uuid
+import venv
 
 ROOT = Path(__file__).resolve().parents[2]
 ENTRY = ROOT / "deploy/tests/lease_fixtures/test_entry.py"
@@ -711,6 +717,541 @@ sys.exit(result)
     def test_m1_non_windows_override_refusal_precedes_platform(self):
         self.assertEqual(self.invoke(LEASE, override=True).stdout, "TEST-OVERRIDE-REJECTED\n")
         self.assertFalse(any(self.scratch.iterdir()))
+
+
+@unittest.skipUnless(os.name == "nt", "Windows M2a fixtures; NOT RUN on non-Windows")
+class M2aCase(unittest.TestCase):
+    def setUp(self):
+        from deploy import lease
+        self.lease = lease
+        self.temp = tempfile.TemporaryDirectory(prefix="wd618-m2a-", dir=scratch_root(os.environ))
+        self.scratch = Path(self.temp.name).resolve()
+        self.assertTrue(self.scratch.is_relative_to(scratch_root(os.environ)))
+        self.addCleanup(self.temp.cleanup)
+        self.boot = mock.Mock()
+        self.boot.read.return_value = 10
+        self.deps = lease.Deps(self.boot, lease.NoBarrier(), lease.NoFailure(),
+                               lease.NoAudit(), lease.ProcessApi(), time.time)
+        self.env = {key: os.environ[key] for key in
+                    ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "SYSTEMDRIVE")
+                    if key in os.environ}
+        for key in ("TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+            self.env[key] = str(self.scratch)
+        self.api: Any = lease.ProcApi()  # Methods gain fixture-only recording spies.
+        self.deps = dataclasses.replace(self.deps, process=self.api)
+        self.fixture_children = []
+        self.addCleanup(self.drain_fixture_children)
+
+    def drain_fixture_children(self):
+        for api, child, pid in self.fixture_children:
+            self.assertEqual(child.pid, pid)
+            self.assertNotEqual(pid, os.getpid())
+            if child.closed:
+                continue
+            if api.wait(child, 0) is None:
+                # Test exception NG-8(a), not production D9. Original handles only.
+                k = self.lease._kernel()
+                k.GetProcessId.argtypes = [ctypes.c_void_p]
+                k.GetProcessId.restype = ctypes.c_uint32
+                self.assertEqual(k.GetProcessId(child.process_handle), pid)
+                k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+                k.TerminateProcess.restype = ctypes.c_int
+                self.assertTrue(k.TerminateProcess(child.process_handle, 91))
+            self.assertIsNotNone(api.wait(child, 15000))
+            api.close_child(child)
+        self.assertTrue(all(child.closed for _, child, _ in self.fixture_children))
+
+    def argv(self, marker="marker", release="release"):
+        return [getattr(sys, "_base_executable"), "-B", str(ENTRY.with_name("m2a_child.py")),
+                str(self.scratch), marker, release]
+
+    def child(self, api=None):
+        api = api or self.api
+        child = api.create_suspended(self.argv(), str(self.scratch), self.env)
+        self.fixture_children.append((api, child, child.pid))
+        return child
+
+    def job(self):
+        job = self.lease.Job.create(self.deps)
+        self.addCleanup(job.close)
+        return job
+
+    def await_file(self, name):
+        path = self.scratch / name
+        deadline = time.monotonic() + 15
+        while not path.exists():
+            self.assertLess(time.monotonic(), deadline, "fixture marker timeout: " + name)
+            time.sleep(0.01)
+        return path
+
+    def ledger(self, deps=None, directory=None):
+        ledger = self.lease.Ledger.create(directory or self.scratch, deps or self.deps)
+        self.addCleanup(ledger.close)
+        return ledger
+
+    def unknown(self, function, *args):
+        with self.assertRaises(self.lease.LeaseError) as caught:
+            function(*args)
+        self.assertEqual(caught.exception.result, "UNKNOWN")
+
+
+class TestM2aLedger(M2aCase):
+    def test_m2a_ledger_seq_fsync_strict_read(self):
+        ledger = self.ledger()
+        assert ledger._stream is not None
+        with mock.patch.object(self.lease.os, "fsync", wraps=os.fsync) as sync:
+            self.assertEqual(ledger.append("one", "exec", "ADMITTED"), 1)
+            self.assertEqual(ledger.append("one", "exec", "LAUNCH-ATTEMPTED"), 2)
+            self.assertEqual(sync.call_count, 2)
+            self.assertEqual(sync.call_args.args, (ledger._stream.fileno(),))
+        self.assertEqual(ledger.phase("one"), "LAUNCH-ATTEMPTED")
+        reader = self.lease.Ledger.open_existing(ledger.path, self.deps)
+        self.assertEqual(reader.phase("one"), "LAUNCH-ATTEMPTED")
+        self.assertEqual([r["seq"] for r in reader.entries()], [1, 2])
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            reader.append("two", "exec", "ADMITTED")
+        ledger.close()
+        original = ledger.path.read_bytes()
+        for bad in (b'{}\n', b'not-json\n', original.replace(b'LAUNCH-ATTEMPTED', b'BAD-PHASE')):
+            with self.subTest(bad=bad):
+                ledger.path.write_bytes(bad)
+                self.unknown(reader.entries)
+
+    def test_m2a_ledger_truncated_last_line_unknown(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        ledger.close()
+        with ledger.path.open("ab") as stream:
+            stream.write(b'{"seq":2,"phase":"RESUME-ATTEMPTED"')
+        self.unknown(self.lease.Ledger.open_existing, ledger.path, self.deps)
+
+    def test_m2a_ledger_nonincreasing_seq_unknown(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        ledger.close()
+        row = json.loads(ledger.path.read_bytes())
+        for seq in (1, 0, 3, None, True):
+            with self.subTest(seq=seq):
+                other = dict(row, seq=seq)
+                ledger.path.write_text(json.dumps(row) + "\n" + json.dumps(other) + "\n", newline="\n")
+                self.unknown(ledger.entries)
+        del row["seq"]
+        ledger.path.write_text(json.dumps(row) + "\n", newline="\n")
+        self.unknown(ledger.entries)
+
+    def test_m2a_ledger_append_failure_latches_failed_storage(self):
+        for source in ("injection", "fsync", "flush", "write"):
+            with self.subTest(source=source):
+                directory = self.scratch / source
+                directory.mkdir()
+                fail = mock.Mock()
+                fail.check.side_effect = OSError("injected") if source == "injection" else None
+                ledger = self.ledger(dataclasses.replace(self.deps, fail=fail), directory)
+                if source in ("flush", "write"):
+                    stream = mock.Mock(wraps=ledger._stream)
+                    getattr(stream, source).side_effect = OSError(source)
+                    ledger._stream = stream
+                with mock.patch.object(self.lease.os, "fsync", side_effect=OSError("fsync") if source == "fsync" else None):
+                    with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+                        ledger.append("one", "exec", "ADMITTED")
+                self.assertTrue(ledger.failed)
+                self.assertIsNone(ledger.phase("one"))
+                self.assertEqual(ledger._seq, 0)
+                with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+                    ledger.append("one", "exec", "ADMITTED")
+
+    def test_m2a_ledger_records_admission_boot_id(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        self.boot.read.return_value = 11
+        ledger.append("one", "exec", "LAUNCH-ATTEMPTED")
+        ledger.append("two", "exec", "ADMITTED")
+        self.assertEqual([r["boot_id"] for r in ledger.entries()], [10, 10, 11])
+        self.boot.read.side_effect = OSError("unreadable boot")
+        before = ledger.path.read_bytes()
+        self.unknown(ledger.append, "three", "exec", "ADMITTED")
+        self.assertEqual(ledger.path.read_bytes(), before)
+        self.assertIsNone(ledger.phase("three"))
+
+    def test_m2a_ledger_never_reopens_existing(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        ledger.close()
+        before = ledger.path.read_bytes()
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            self.lease.Ledger.create(self.scratch, self.deps)
+        self.assertEqual(ledger.path.read_bytes(), before)
+
+
+class TestM2aJob(M2aCase):
+    def test_m2a_job_flags_no_breakaway_no_kill_on_close(self):
+        job = self.job()
+        self.assertEqual(job.flags() & 0x3800, 0)
+        self.assertEqual(job.active(), 0)
+        self.assertEqual(job.members(), [])
+        child = self.child()
+        self.assertGreater(child.ctime, 0)
+        self.assertIsNone(self.api.wait(child, 0))
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.assign(job, child)
+        self.assertTrue(job.contains(child))
+        self.assertEqual(job.active(), 1)
+        self.assertEqual(job.members(), [self.lease.ProcIdentity(child.pid, child.ctime)])
+        self.assertEqual(self.api.resume(child), 1)
+        self.assertEqual(json.loads(self.await_file("marker").read_text())["pid"], child.pid)
+        (self.scratch / "release").touch()
+        self.assertEqual(self.api.wait(child, 15000), 0)
+        self.assertEqual(job.active(), 0)
+
+    def test_m2a_job_close_terminates_nothing(self):
+        job = self.job()
+        child = self.child()
+        self.api.assign(job, child)
+        self.assertTrue(job.contains(child))
+        self.assertEqual(self.api.resume(child), 1)
+        self.assertEqual(json.loads(self.await_file("marker").read_text())["pid"], child.pid)
+        job.close()
+        self.assertIsNone(self.api.wait(child, 200))
+        self.assertEqual(self.api.creation_time(child.pid), child.ctime)
+        (self.scratch / "release").touch()
+        self.assertEqual(self.api.wait(child, 15000), 0)
+
+
+class PhaseBarrier:
+    def __init__(self, phase):
+        self.phase = phase
+        self.entered, self.leave = threading.Event(), threading.Event()
+
+    def reach(self, phase):
+        if phase == self.phase:
+            self.entered.set()
+            if not self.leave.wait(30):
+                raise AssertionError("fixture barrier timeout: " + phase)
+
+
+class M2aExecutorCase(M2aCase):
+    def executor(self, fail_at=(), barrier=None, argv=None):
+        fail = mock.Mock()
+        def check(name):
+            if name in fail_at:
+                raise OSError("injected " + name)
+        fail.check.side_effect = check
+        deps = dataclasses.replace(self.deps, fail=fail, barrier=barrier or self.lease.NoBarrier())
+        original_create = self.api.create_suspended
+        def create(*args):
+            child = original_create(*args)
+            self.fixture_children.append((self.api, child, child.pid))
+            return child
+        self.api.create_suspended = mock.Mock(side_effect=create)
+        self.api.resume = mock.Mock(wraps=self.api.resume)
+        self.api.terminate_unrun = mock.Mock(wraps=self.api.terminate_unrun)
+        ledger = self.ledger(deps)
+        executor = self.lease.Executor(ledger, self.job(), deps, threading.Lock())
+        self.assertEqual(executor.admit("op", argv or self.argv(), str(self.scratch), self.env), "ADMITTED")
+        return executor
+
+    def start(self, executor, barrier):
+        results = []
+        def run():
+            try:
+                results.append(executor.run("op"))
+            except BaseException as exc:
+                results.append(exc)
+        thread = threading.Thread(target=run)
+        def cleanup():
+            barrier.leave.set()
+            (self.scratch / "release").touch()
+            (self.scratch / "grand-release").touch()
+            thread.join(20)
+            self.assertFalse(thread.is_alive(), "fixture executor did not drain")
+        self.addCleanup(cleanup)
+        thread.start()
+        self.assertTrue(barrier.entered.wait(15), results)
+        return thread, results
+
+    def finish(self, thread, results, barrier):
+        barrier.leave.set()
+        thread.join(20)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], self.lease.Outcome)
+        return results[0]
+
+    def phases(self, executor):
+        return [row["phase"] for row in executor.ledger.entries()]
+
+class TestM2aExecutor(M2aExecutorCase):
+    def test_m2a_failed_cancel_never_continues_to_resume(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        self.api.terminate_unrun.side_effect = self.lease.LeaseError("UNKNOWN")
+        self.assertEqual(executor.cancel("op").result, "UNKNOWN")
+        self.assertEqual(self.finish(thread, results, barrier).result, "UNKNOWN")
+        self.api.resume.assert_not_called()
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.assertIsNone(self.api.wait(self.fixture_children[0][1], 0))
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_resume_attempted_refuses_d9_before_os_resume(self):
+        barrier = PhaseBarrier("RESUME-ATTEMPTED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        record = executor._ops["op"]
+        with executor.phase_mutex:
+            record.cleanup_reason = "cancel"
+            with self.assertRaisesRegex(self.lease.LeaseError, "REJECTED"):
+                self.api.terminate_unrun(record.child, record)
+        self.assertEqual(executor.cancel("op").result, "RUNNING")
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.resume.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+
+    def test_m2a_create_failure_launch_failed_nothing_ran(self):
+        executor = self.executor(argv=[str(self.scratch / "missing.exe")])
+        result = executor.run("op")
+        self.assertEqual(result.phase, "LAUNCH-FAILED")
+        self.assertEqual(executor.open_ops(), [])
+        self.assertEqual(self.phases(executor), ["ADMITTED", "LAUNCH-ATTEMPTED", "LAUNCH-FAILED"])
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.resume.assert_not_called()
+        self.api.terminate_unrun.assert_not_called()
+
+    def test_m2a_assign_failed_d9_terminated_unrun_marker_absent(self):
+        executor = self.executor(fail_at={"assign"})
+        self.assertEqual(executor.run("op").result, "CANCELLED")
+        self.assertEqual(self.phases(executor), ["ADMITTED", "LAUNCH-ATTEMPTED", "LAUNCHED-SUSPENDED",
+                                                "ASSIGN-FAILED", "TERMINATED-UNRUN", "CANCELLED"])
+        self.api.terminate_unrun.assert_called_once()
+        child = self.fixture_children[0][1]
+        self.assertEqual(self.api.wait(child, 0), 1)
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.resume.assert_not_called()
+        self.assertEqual(executor.open_ops(), [])
+
+    def test_m2a_resume_attempted_append_fail_no_resume_d9(self):
+        executor = self.executor(fail_at={"append:RESUME-ATTEMPTED"})
+        self.assertEqual(executor.run("op").result, "FAILED-STORAGE")
+        self.api.resume.assert_not_called()
+        self.api.terminate_unrun.assert_called_once()
+        self.assertEqual(self.api.wait(self.fixture_children[0][1], 0), 1)
+        self.assertFalse((self.scratch / "marker").exists())
+        self.assertNotIn("RESUME-ATTEMPTED", self.phases(executor))
+        self.assertEqual(executor.status("op").result, "UNKNOWN")
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.assertTrue(executor.ledger.failed)
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            executor.admit("next", self.argv(), str(self.scratch), self.env)
+
+    def test_m2a_terminated_unrun_append_fail_op_open_status_unknown(self):
+        executor = self.executor(fail_at={"assign", "append:TERMINATED-UNRUN"})
+        self.assertEqual(executor.run("op").result, "FAILED-STORAGE")
+        self.api.terminate_unrun.assert_called_once()
+        self.assertEqual(self.api.wait(self.fixture_children[0][1], 0), 1)
+        self.assertEqual(executor.ledger.phase("op"), "ASSIGN-FAILED")
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.assertEqual(executor.status("op").result, "UNKNOWN")
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_truncated_resume_attempted_recovered_unknown_no_d9(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        recovered = self.scratch / "recovered.jsonl"
+        recovered.write_bytes(executor.ledger.path.read_bytes() + b'{"phase":"RESUME-ATTEMPTED"')
+        reader = self.lease.Ledger(recovered, self.deps)
+        self.assertEqual(self.lease.classify_recovered(reader), "UNKNOWN")
+        self.assertEqual(self.lease.classify_recovered(reader, executor), "UNKNOWN")
+        self.api.terminate_unrun.assert_not_called()
+        self.assertIsNone(self.api.wait(self.fixture_children[0][1], 0))
+        # The original live executor, not recovery, drains normally after proof.
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+        self.api.terminate_unrun.assert_not_called()
+
+    def test_m2a_after_os_resume_before_resumed_marker_appears_cancel_running(self):
+        barrier = PhaseBarrier("after-os-resume")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        child = self.fixture_children[0][1]
+        self.assertEqual(json.loads(self.await_file("marker").read_text())["pid"], child.pid)
+        self.assertEqual(executor.ledger.phase("op"), "RESUME-ATTEMPTED")
+        self.assertEqual(executor.cancel("op").result, "RUNNING")
+        self.assertEqual(executor.status("op").result, "RUNNING")
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.api.terminate_unrun.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+        self.assertEqual(executor.open_ops(), [])
+
+    def test_m2a_resume_uncertain_no_cleanup_normal_drain(self):
+        barrier = PhaseBarrier("RESUME-UNCERTAIN")
+        executor = self.executor(barrier=barrier)
+        original_resume = self.api.resume
+        def uncertain(child):
+            self.assertEqual(original_resume(child), 1)  # Real OS effect, uncertain reported result.
+            return 0xffffffff
+        self.api.resume = mock.Mock(side_effect=uncertain)
+        thread, results = self.start(executor, barrier)
+        self.await_file("marker")
+        self.assertEqual(executor.cancel("op").result, "RUNNING")
+        self.api.terminate_unrun.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+        self.assertEqual(self.phases(executor)[-3:], ["RESUME-UNCERTAIN", "EXITED", "DRAINED"])
+
+    def test_m2a_old_generation_suspended_child_no_termination_operator_blocked(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        reader = self.lease.Ledger.open_existing(executor.ledger.path, self.deps)
+        later = self.scratch / "later-generation"
+        later.mkdir()
+        new_executor = self.lease.Executor(self.ledger(directory=later), executor.job,
+                                           self.deps, threading.Lock())
+        self.assertEqual(self.lease.classify_recovered(reader, new_executor), "OPERATOR-BLOCKED")
+        self.assertEqual(new_executor.cancel("op").result, "REJECTED")
+        self.assertIsNone(self.api.wait(self.fixture_children[0][1], 0))
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.terminate_unrun.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+
+    def test_m2a_pre_create_cancel_launch_cancelled_no_terminate_call(self):
+        barrier = PhaseBarrier("LAUNCH-ATTEMPTED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        self.assertEqual(executor.status("op").result, "RUNNING")
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(executor.status("op").result, "CANCELLED")
+        self.assertEqual(self.finish(thread, results, barrier).result, "CANCELLED")
+        self.assertEqual(self.phases(executor)[-2:], ["LAUNCH-CANCELLED", "CANCELLED"])
+        self.api.create_suspended.assert_not_called()
+        self.api.terminate_unrun.assert_not_called()
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_d9_refuses_pid_and_foreign_child(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        child = self.fixture_children[0][1]
+        foreign_api = self.lease.ProcApi()
+        foreign = self.child(foreign_api)
+        record = executor._ops["op"]
+        with executor.phase_mutex:
+            record.cleanup_reason = "cancel"
+            for wrong in (child.pid, foreign, dataclasses.replace(child)):
+                with self.assertRaisesRegex(self.lease.LeaseError, "REJECTED"):
+                    self.api.terminate_unrun(wrong, record)
+        self.assertIsNone(self.api.wait(child, 0))
+        self.assertIsNone(foreign_api.wait(foreign, 0))
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(self.api.wait(child, 0), 1)
+        self.assertFalse((self.scratch / "marker").exists())
+        self.assertEqual(self.finish(thread, results, barrier).result, "CANCELLED")
+        # Foreign child cleanup belongs solely to its test creator, never D9.
+
+    def test_m2a_cancel_admitted_no_create(self):
+        executor = self.executor()
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(executor.run("op").result, "CANCELLED")
+        self.api.create_suspended.assert_not_called()
+
+    def test_m2a_cancel_assigned_d9(self):
+        barrier = PhaseBarrier("ASSIGNED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(self.finish(thread, results, barrier).result, "CANCELLED")
+        self.api.resume.assert_not_called()
+        self.api.terminate_unrun.assert_called_once()
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_static_terminateprocess_only_in_d9_no_taskkill_os_kill(self):
+        source = LEASE.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        occurrences = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "TerminateProcess"]
+        self.assertTrue(occurrences)
+        for node in occurrences:
+            owner = [f.name for f in functions if f.end_lineno is not None and f.lineno <= node.lineno <= f.end_lineno]
+            self.assertEqual(owner, ["terminate_unrun"])
+        self.assertNotIn("taskkill", source.lower())
+        self.assertFalse(any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                             and n.value.id == "os" and n.attr == "kill" for n in ast.walk(tree)))
+        d9 = next(n for n in functions if n.name == "terminate_unrun")
+        self.assertEqual([a.arg for a in d9.args.args], ["self", "child", "proof"])
+        segment = ast.get_source_segment(source, d9)
+        assert segment is not None
+        self.assertIn('"RESUME-ATTEMPTED" in proof.phases', segment)
+
+
+class TestM2aContainment(M2aExecutorCase):
+    def containment(self, mode, executable):
+        barrier = PhaseBarrier("EXITED")
+        executor = self.executor(barrier=barrier, argv=self.argv() + [mode, str(executable)])
+        thread, results = self.start(executor, barrier)
+        receipt = json.loads(self.await_file("marker").read_text())
+        child = self.fixture_children[0][1]
+        self.assertEqual(receipt["parent"], child.pid)
+        self.assertEqual(self.api.wait(child, 0), 0)
+        self.assertEqual(executor.ledger.phase("op"), "EXITED")
+        if receipt["result"] == "REFUSED":
+            self.assertEqual(mode, "breakaway")
+            self.assertEqual(receipt["winerror"], 5)
+            self.assertFalse((self.scratch / "grand-marker").exists())
+            self.assertEqual(executor.job.active(), 0)
+        else:
+            self.assertEqual(receipt["result"], "SPAWNED")
+            grand = json.loads(self.await_file("grand-marker").read_text())
+            members = executor.job.members()
+            pids = {m.pid for m in members}
+            self.assertIn(receipt["pid"], pids)
+            self.assertIn(grand["pid"], pids)  # Includes venv redirector's actual interpreter.
+            self.assertNotEqual(grand["pid"], child.pid)
+            for pid in {receipt["pid"], grand["pid"]}:
+                k = self.lease._kernel()
+                k.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+                k.OpenProcess.restype = ctypes.c_void_p
+                handle = k.OpenProcess(0x1000, False, pid)
+                self.assertTrue(handle)
+                try:
+                    ctime = self.api.creation_time(pid)
+                    assert ctime is not None
+                    probe = self.lease.Child(handle, 0, pid, ctime)
+                    self.assertTrue(executor.job.contains(probe))
+                finally:
+                    k.CloseHandle(handle)
+            self.assertGreater(executor.job.active(), 0)
+            barrier.leave.set()
+            thread.join(0.2)
+            self.assertTrue(thread.is_alive(), "DRAINED before descendant cessation")
+            self.assertEqual(executor.status("op").phase, "EXITED")
+            self.assertEqual(executor.open_ops(), ["op"])
+            self.assertNotIn("DRAINED", self.phases(executor))
+            (self.scratch / "grand-release").touch()
+        outcome = self.finish(thread, results, barrier)
+        self.assertEqual(outcome.result, "DONE")
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertEqual(executor.job.active(), 0)
+        self.assertEqual(executor.job.members(), [])
+        self.api.terminate_unrun.assert_not_called()
+        print(f"AC17 mode={mode} executable={executable} result={receipt['result']} drained=0", flush=True)
+
+    def test_m2a_grandchild_breakaway_direct_refused_or_in_job(self):
+        self.containment("breakaway", getattr(sys, "_base_executable"))
+
+    def test_m2a_grandchild_breakaway_venv_refused_or_in_job(self):
+        directory = self.scratch / "fixture-venv"
+        venv.EnvBuilder(with_pip=False).create(directory)
+        executable = directory / "Scripts/python.exe"
+        self.assertTrue(executable.is_file())
+        self.assertNotEqual(executable.resolve(), Path(getattr(sys, "_base_executable")).resolve())
+        self.containment("breakaway", executable)
+
+    def test_m2a_drained_waits_for_grandchild_exit(self):
+        self.containment("descendant", getattr(sys, "_base_executable"))
 
 
 if __name__ == "__main__":
