@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,74 @@ ROOT = Path(__file__).resolve().parents[2]
 ENTRY = ROOT / "deploy/tests/lease_fixtures/test_entry.py"
 LEASE = ROOT / "deploy/lease.py"
 FP = "a" * 64
+
+
+def scratch_root(environ):
+    """Require an explicit harness-owned long path, not Python's temp fallback."""
+    value = next((environ[key] for key in ("TEMP", "TMP", "TMPDIR") if environ.get(key)), None)
+    if not value or not Path(value).is_absolute() or re.search(r"~[0-9]", value):
+        raise AssertionError("BLOCKED fixture root: explicit full-path TEMP/TMP/TMPDIR required")
+    root = Path(value).resolve(strict=True)
+    if not root.is_dir():
+        raise AssertionError("BLOCKED fixture root: not a directory")
+    return root
+
+
+class OwnedSubst:
+    """A test mapping receipt; cleanup never deletes an unverified definition."""
+    def __init__(self, drive, target, env):
+        self.drive, self.target, self.env = drive, Path(target).resolve(), env
+        self.executable = str(Path(env["SYSTEMROOT"]) / "System32/subst.exe")
+        self.created_definition = None
+
+    @staticmethod
+    def unused_drive():
+        mask = ctypes.WinDLL("kernel32", use_last_error=True).GetLogicalDrives()
+        if not mask:
+            raise AssertionError("BLOCKED subst: GetLogicalDrives failed")
+        for i in range(25, 3, -1):
+            if not mask & (1 << i):
+                return chr(65 + i) + ":"
+        raise AssertionError("BLOCKED subst: no unused drive")
+
+    def definition(self):
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        query = k.QueryDosDeviceW
+        query.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        query.restype = ctypes.c_uint32
+        buf = ctypes.create_unicode_buffer(32768)
+        if not query(self.drive, buf, len(buf)):
+            if ctypes.get_last_error() == 2:
+                return None
+            raise AssertionError("BLOCKED subst: cannot verify current target")
+        return buf.value
+
+    def create(self):
+        if self.definition() is not None:
+            raise AssertionError("BLOCKED subst: occupied letter")
+        result = subprocess.run([self.executable, self.drive, str(self.target)], env=self.env,
+                                capture_output=True, timeout=20)
+        if result.returncode:
+            raise AssertionError(f"BLOCKED subst: creation failed ({result.returncode})")
+        expected = "\\??\\" + str(self.target)
+        actual = self.definition()
+        if actual != expected:
+            raise AssertionError(f"BLOCKED subst: created target mismatch {actual!r} != {expected!r}")
+        self.created_definition = actual
+        print(f"SUBST CREATED {self.drive} => {actual}", flush=True)
+
+    def cleanup(self):
+        if self.created_definition is None:
+            return "NOT-OWNED"
+        actual = self.definition()
+        if actual != self.created_definition:
+            raise AssertionError(f"BLOCKED subst: target replaced; preserved {self.drive} => {actual!r}")
+        result = subprocess.run([self.executable, self.drive, "/D"], env=self.env,
+                                capture_output=True, timeout=20)
+        if result.returncode or self.definition() is not None:
+            raise AssertionError("BLOCKED subst: owned cleanup failed")
+        self.created_definition = None
+        return "REMOVED-OWNED"
 
 
 class FixtureProcess:
@@ -85,12 +154,13 @@ class FixtureProcess:
         assert self.process.poll() is not None
 
 
+@unittest.skipUnless(os.name == "nt", "Windows identity/locking/process fixtures; NOT RUN on non-Windows")
 class M1Case(unittest.TestCase):
     def setUp(self):
-        # A full long path on C:, not the inherited LOGAN_~1 temporary path.
-        base = Path(os.environ["USERPROFILE"]) / "AppData/Local/hermes/profiles/builder/cache/scratch"
+        base = scratch_root(os.environ)
         self.temp = tempfile.TemporaryDirectory(prefix="wd618-m1-", dir=base)
-        self.scratch = Path(self.temp.name)
+        self.scratch = Path(self.temp.name).resolve()
+        self.assertTrue(self.scratch.is_relative_to(base))
         self.state = self.scratch / "state"
         self.worktree = self.scratch / "Worktree Long Identity Name"
         self.worktree.mkdir()
@@ -109,6 +179,9 @@ class M1Case(unittest.TestCase):
         for child in reversed(self.children):
             child.close()
         self.assertTrue(all(c.process.poll() is not None for c in self.children))
+        self.assertTrue(self.scratch.is_relative_to(scratch_root(os.environ)))
+        for path in self.scratch.rglob("*"):
+            self.assertTrue(path.resolve().is_relative_to(self.scratch), str(path))
         self.temp.cleanup()
 
     def spawn(self, action="owner", **changes):
@@ -440,26 +513,58 @@ class TestM1Identity(M1Case):
         self.probe("HELD", worktree=buf.value)
 
     def test_m1_ac15_alias_drive_subst(self):
-        k = ctypes.WinDLL("kernel32", use_last_error=True)
-        mask = k.GetLogicalDrives()
-        self.assertNotEqual(mask, 0)
-        letter = next((chr(65 + i) for i in range(25, 3, -1) if not mask & (1 << i)), None)
-        self.assertIsNotNone(letter, "BLOCKED alias-drive-subst: no unused drive")
-        assert letter is not None
-        drive = letter + ":"
-        executable = str(Path(self.env["SYSTEMROOT"]) / "System32/subst.exe")
-        added = False
+        mapping = OwnedSubst(OwnedSubst.unused_drive(), self.scratch, self.env)
         try:
-            result = subprocess.run([executable, drive, str(self.scratch)], env=self.env, capture_output=True, timeout=20)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            added = True
+            mapping.create()
             self.owner()
-            self.probe("HELD", worktree=drive + "\\" + self.worktree.name)
+            self.probe("HELD", worktree=mapping.drive + "\\" + self.worktree.name)
         finally:
-            if added:
-                result = subprocess.run([executable, drive, "/D"], env=self.env, capture_output=True, timeout=20)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertFalse(Path(drive + "\\").exists())
+            self.assertEqual(mapping.cleanup(), "REMOVED-OWNED")
+        self.assertIsNone(mapping.definition())
+
+    def test_m1_subst_occupied_and_failed_create_remove_nothing(self):
+        owner = OwnedSubst(OwnedSubst.unused_drive(), self.scratch, self.env)
+        owner.create()
+        try:
+            occupied = OwnedSubst(owner.drive, self.worktree, self.env)
+            with self.assertRaisesRegex(AssertionError, "occupied letter"):
+                occupied.create()
+            self.assertEqual(occupied.cleanup(), "NOT-OWNED")
+            self.assertEqual(owner.definition(), owner.created_definition)
+        finally:
+            self.assertEqual(owner.cleanup(), "REMOVED-OWNED")
+        failed = OwnedSubst(owner.drive, self.scratch / "does-not-exist", self.env)
+        with self.assertRaisesRegex(AssertionError, "creation failed"):
+            failed.create()
+        self.assertEqual(failed.cleanup(), "NOT-OWNED")
+        self.assertIsNone(failed.definition())
+
+    def test_m1_subst_replaced_target_is_preserved_and_reported(self):
+        original = OwnedSubst(OwnedSubst.unused_drive(), self.scratch, self.env)
+        original.create()
+        # A second test-owned actor removes only the verified original mapping.
+        replacer = OwnedSubst(original.drive, self.scratch, self.env)
+        replacer.created_definition = original.created_definition
+        self.assertEqual(replacer.cleanup(), "REMOVED-OWNED")
+        replacement = OwnedSubst(original.drive, self.worktree, self.env)
+        replacement.create()
+        try:
+            with self.assertRaisesRegex(AssertionError, "target replaced; preserved") as caught:
+                original.cleanup()
+            print(str(caught.exception), flush=True)
+            self.assertEqual(replacement.definition(), replacement.created_definition)
+            self.assertTrue(Path(replacement.drive + "\\").is_dir())
+        finally:
+            self.assertEqual(replacement.cleanup(), "REMOVED-OWNED")
+        self.assertIsNone(replacement.definition())
+
+    def test_m1_fixture_root_is_explicit_and_confined(self):
+        self.assertTrue(self.scratch.is_relative_to(scratch_root(os.environ)))
+        for env in ({}, {"TEMP": "relative"}, {"TMP": "C:/SHORT~1/scratch"}):
+            with self.subTest(env=env), self.assertRaisesRegex(AssertionError, "explicit full-path"):
+                scratch_root(env)
+        for key in ("TEMP", "TMP", "TMPDIR"):
+            self.assertEqual(scratch_root({key: str(self.scratch)}), self.scratch)
 
     def test_m1_ac15_root_is_reparse(self):
         alias = self.scratch / "root-is-reparse"
@@ -522,6 +627,90 @@ class TestM1Entry(M1Case):
         self.probe("ORPHANED")
         self.assertEqual(self.invoke("recover", {"LEASE_TEST_BOOT_ID": "99"}), "TEST-OVERRIDE-REJECTED")
         self.probe("ORPHANED")
+
+
+class TestM1PlatformRefusal(unittest.TestCase):
+    """Unskipped Linux proof; Windows simulation is explicitly not Linux proof."""
+    def setUp(self):
+        harness = dict(os.environ)
+        # GitHub supplies its session-owned scratch as RUNNER_TEMP, not TMPDIR.
+        # Make that explicit for this test harness, without a system-temp fallback.
+        if os.name != "nt" and not any(harness.get(k) for k in ("TEMP", "TMP", "TMPDIR")):
+            harness["TMPDIR"] = harness.get("RUNNER_TEMP", "")
+        base = scratch_root(harness)
+        self.temp = tempfile.TemporaryDirectory(prefix="wd618-platform-", dir=base)
+        self.addCleanup(self.temp.cleanup)
+        self.scratch = Path(self.temp.name).resolve()
+        self.assertTrue(self.scratch.is_relative_to(base))
+        self.env = {k: os.environ[k] for k in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT")
+                    if k in os.environ}
+        for key in ("TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+            self.env[key] = str(self.scratch)
+
+    def invoke(self, path, override=False, instrument=False):
+        env = dict(self.env)
+        if override:
+            env["LEASE_TEST_BOOT_ID"] = "99"
+        args = [getattr(sys, "_base_executable", sys.executable), "-I", "-S", "-B"]
+        if instrument or os.name == "nt":
+            # Installed in the actual child before main, never a parent-only trace.
+            code = '''
+import os, runpy, sys, types
+module = runpy.run_path(sys.argv[1], run_name="lease_platform_probe")
+if os.name == "nt":
+    module["main"].__globals__["os"] = types.SimpleNamespace(name="posix", environ=os.environ)
+effects = []
+def audit(event, args):
+    writing = event == "open" and ((isinstance(args[1], str) and any(c in args[1] for c in "wax+")) or
+                                  (isinstance(args[2], int) and args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC)))
+    if writing or event.startswith(("subprocess.", "winreg.", "msvcrt.", "os.spawn", "os.exec", "os.fork")) or event in (
+            "os.mkdir", "os.remove", "os.rename", "os.rmdir", "os.system", "ctypes.dlopen"):
+        effects.append(event)
+        raise AssertionError("protected effect: " + event)
+sys.addaudithook(audit)
+result = module["main"](["hold", "--resource", sys.argv[2]])
+print("EFFECT-AUDIT loaded=true effects=" + str(len(effects)), file=sys.stderr)
+sys.exit(result)
+'''
+            args += ["-c", code, str(path), str(self.scratch / "state")]
+        else:
+            args += [str(path), "hold", "--resource", str(self.scratch / "state")]
+        before = {str(p.relative_to(self.scratch)): p.read_bytes() if p.is_file() else None
+                  for p in self.scratch.rglob("*")}
+        result = subprocess.run(args, env=env, cwd=self.scratch, capture_output=True, text=True, timeout=20)
+        after = {str(p.relative_to(self.scratch)): p.read_bytes() if p.is_file() else None
+                 for p in self.scratch.rglob("*")}
+        self.assertEqual(before, after, "normal entry wrote protected state")
+        self.assertEqual(result.returncode, 6, result.stderr)
+        if instrument or os.name == "nt":
+            self.assertEqual(result.stderr, "EFFECT-AUDIT loaded=true effects=0\n")
+        else:
+            self.assertEqual(result.stderr, "")
+        return result
+
+    def assert_unsupported(self, result):
+        self.assertEqual(result.stdout, "UNSUPPORTED-CONTEXT\n")
+        self.assertEqual(result.returncode, 6)
+
+    def test_m1_non_windows_cli_exact_refusal_no_effects(self):
+        self.assert_unsupported(self.invoke(LEASE))
+        self.assert_unsupported(self.invoke(LEASE, instrument=True))
+        self.assertFalse(any(self.scratch.iterdir()))
+
+    def test_m1_non_windows_unknown6_negative_control(self):
+        source = LEASE.read_text(encoding="utf-8")
+        guard = '    if os.name != "nt":\n        return emit("UNSUPPORTED-CONTEXT")\n'
+        self.assertEqual(source.count(guard), 1)
+        mutant = self.scratch / "lease_without_platform_guard.py"
+        mutant.write_text(source.replace(guard, ""), encoding="utf-8", newline="\n")
+        result = self.invoke(mutant)
+        self.assertEqual(result.stdout, "UNKNOWN\n")
+        with self.assertRaisesRegex(AssertionError, "UNSUPPORTED-CONTEXT"):
+            self.assert_unsupported(result)
+
+    def test_m1_non_windows_override_refusal_precedes_platform(self):
+        self.assertEqual(self.invoke(LEASE, override=True).stdout, "TEST-OVERRIDE-REJECTED\n")
+        self.assertFalse(any(self.scratch.iterdir()))
 
 
 if __name__ == "__main__":

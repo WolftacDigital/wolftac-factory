@@ -866,6 +866,8 @@ def adopt_AD2(pub):
 def main(argv=None):
     if any(name.startswith("LEASE_TEST_") for name in os.environ):
         return emit("TEST-OVERRIDE-REJECTED")
+    if os.name != "nt":
+        return emit("UNSUPPORTED-CONTEXT")
     return emit("UNKNOWN")  # Every CLI verb remains unavailable in M1.
 
 
