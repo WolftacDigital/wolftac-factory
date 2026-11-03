@@ -3,7 +3,7 @@
 **Repo:** <absolute path or git URL> | **Priority:** <Urgent/High/Medium/Low> | **Estimate:** <points>
 
 ## Problem
-What's broken or missing, for whom, and why it matters now. One tight paragraph.
+What's broken or missing, for whom, why it matters now, and what not doing it costs. One tight paragraph.
 
 ## Goals
 - Concrete outcomes that define success. Each one observable after shipping.
@@ -17,9 +17,9 @@ Step-by-step of what the user sees and does once this ships. Number the steps.
 
 ## Technical approach
 - **Entry points / affected files:** real paths verified against the repo, not guesses
-- **Data model:** tables/fields added or changed; migrations needed?
+- **Data model:** tables/fields added or changed and the source of truth for each; migrations needed? Settle this before interfaces.
 - **APIs / interfaces:** endpoints, params, auth requirements
-- **Key decisions:** chosen approach and why; alternatives considered and rejected
+- **Key decisions:** chosen approach and why; alternatives considered and rejected, including what was deleted or simplified instead of built. UI work: follows `DESIGN.md` in `wolftac-brand`.
 - **Dependencies:** libraries, env vars, external services
 
 ## Acceptance criteria

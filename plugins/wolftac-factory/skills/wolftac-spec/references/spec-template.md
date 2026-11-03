@@ -4,6 +4,8 @@
 
 ## Problem
 
+What's broken or missing, for whom, why it matters now, and what not doing it costs.
+
 ## Goals
 
 ## Non-goals
@@ -13,9 +15,9 @@
 ## Technical approach
 
 - **Entry points / affected files:** real paths verified against the repository
-- **Data model:** tables/fields and migrations
+- **Data model:** tables/fields, source of truth for each, and migrations; settle before interfaces
 - **APIs / interfaces:** endpoints, parameters, authorization
-- **Key decisions:** selected approach and rejected alternatives
+- **Key decisions:** selected approach and rejected alternatives, including what was deleted or simplified instead of built; UI work follows `DESIGN.md` in `wolftac-brand`
 - **Dependencies:** libraries, environment variables, external services
 
 ## Acceptance criteria

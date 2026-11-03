@@ -36,6 +36,11 @@ Create one approved, build-ready Linear specification. Do not write code.
 1. Treat the skill arguments or surrounding user request as the raw idea. If empty,
    ask for the idea. Ask at most four focused questions per batch until the problem,
    user, success measures, boundaries, constraints, and verification are unambiguous.
+   Where they apply, also ask: the North Star outcome; should this exist (who owns the
+   requirement, what could be deleted or simplified instead of built); the cost of
+   inaction; the source of truth for each piece of data and the integrations touched;
+   the delivery payload; and the always/never behavioral rules. Settle the data model
+   before interfaces. UI work follows `DESIGN.md` in the `wolftac-brand` repo.
 2. When the target repository is accessible, read its `AGENTS.md`/`CLAUDE.md` and the
    affected code. Use verified paths and interfaces; do not invent architecture.
 3. Read [references/spec-template.md](references/spec-template.md) and fill every

@@ -43,6 +43,11 @@ Feature idea (raw, from the user): $ARGUMENTS
    the target repo, ground the Technical approach in real file paths (read AGENTS.md /
    CLAUDE.md and the files the feature touches). Stop asking when further answers would
    not change what gets built.
+   Where they apply, also ask: the North Star outcome; should this exist (who owns the
+   requirement, what could be deleted or simplified instead of built); the cost of
+   inaction; the source of truth for each piece of data and the integrations touched;
+   the delivery payload; and the always/never behavioral rules. Settle the data model
+   before interfaces. UI work follows `DESIGN.md` in the `wolftac-brand` repo.
 
 2. **Draft the spec** using exactly this template (no placeholders, no TBD — if you
    can't fill a section, go back to step 1):
