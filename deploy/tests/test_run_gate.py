@@ -213,6 +213,46 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.invoke(["check-repo", "--repo-path", str(self.repo)]).returncode, 4)
         self.assertEqual(self.run_gate("print('must not start')").returncode, 4)
 
+    def test_exact_entry_default_deny_native(self):
+        data = json.loads((ROOT / "deploy/repo-allowlist.json").read_text(encoding="utf-8-sig"))
+        academy = self.root / "wolftac-academy"
+        academy.mkdir()
+        original_rows = [dict(row) for row in data["repos"]]
+        matches = [row for row in data["repos"] if row["path"] == r"D:\Wolftac\wolftac-academy"]
+        self.assertEqual(len(matches), 1)
+        matches[0]["path"] = str(academy)
+        self.assertEqual(data["repos"][:-1], original_rows[:-1])
+        self.policy.write_text(json.dumps(data), encoding="utf-8")
+        for path, expected in ((academy, 0), (self.root / "wolftac-academy-evil", 3),
+                               (academy / "sub", 3), (self.root / "Academy", 3)):
+            with self.subTest(path=path):
+                result = self.invoke(["check-repo", "--repo-path", str(path)])
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertEqual(len(result.stdout.splitlines()), 1)
+                self.assertEqual(json.loads(result.stdout)["exit_code"], expected)
+                self.assertEqual(result.stderr, "")
+        matches[0]["path"] = "wolftac-academy"
+        self.policy.write_text(json.dumps(data), encoding="utf-8")
+        result = self.invoke(["check-repo", "--repo-path", str(academy)])
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertEqual(json.loads(result.stdout)["exit_code"], 4)
+        self.assertEqual(result.stderr, "")
+
+    @unittest.skipUnless(os.name == "nt", "Windows path semantics; mandatory TP7 on a Windows host")
+    def test_academy_literal_windows_cli(self):
+        shutil.copyfile(ROOT / "deploy/repo-allowlist.json", self.policy)
+        academy = r"D:\Wolftac\wolftac-academy"
+        for path, expected in ((academy, 0), (academy.swapcase().replace("\\", "/") + "/", 0),
+                               (academy + "-evil", 3), (academy + r"\sub", 3),
+                               (r"D:\Wolftac\Academy", 3)):
+            with self.subTest(path=path):
+                result = self.invoke(["check-repo", "--repo-path", path])
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertEqual(len(result.stdout.splitlines()), 1)
+                self.assertEqual(json.loads(result.stdout)["exit_code"], expected)
+                self.assertEqual(result.stderr, "")
+
     def test_worktree_identity_and_fsmonitor_disabled(self):
         other = self.root / "foreign"
         self.git("init", str(other))
@@ -260,14 +300,26 @@ class RunnerTests(unittest.TestCase):
 
 class PackagingTests(unittest.TestCase):
     def test_exact_seed_list(self):
-        data = json.loads((ROOT / "deploy/repo-allowlist.json").read_text())
+        data = json.loads((ROOT / "deploy/repo-allowlist.json").read_text(encoding="utf-8-sig"))
         self.assertEqual(data["version"], 1)
-        names = ["Factory", "atlas_raw_only", "wolftac-digital-site", "peptide-vault", "factory-console",
-                 "retty-labs-design", "retty-ops", "Warchest", "logan-hermes-config", "MissionControl", "omas-relief-site"]
-        expected = {"D:\\Wolftac\\" + name for name in names}
-        expected.add(r"C:\Users\logan_vwagmmf\OneDrive\Wolftac Digital\Codex\wolftac-crm")
-        self.assertEqual(len(data["repos"]), 12)
-        self.assertEqual({r["path"] for r in data["repos"]}, expected)
+        expected = [
+            (r"D:\Wolftac\Factory", "WolftacDigital/wolftac-factory"),
+            (r"D:\Wolftac\atlas_raw_only", "WolftacDigital/atlas_raw_only"),
+            (r"C:\Users\logan_vwagmmf\OneDrive\Wolftac Digital\Codex\wolftac-crm", "WolftacDigital/wolftac-crm"),
+            (r"D:\Wolftac\wolftac-digital-site", "WolftacDigital/wolftac-digital-site"),
+            (r"D:\Wolftac\peptide-vault", None),
+            (r"D:\Wolftac\factory-console", "WolftacDigital/factory-console"),
+            (r"D:\Wolftac\retty-labs-design", None),
+            (r"D:\Wolftac\retty-ops", None),
+            (r"D:\Wolftac\Warchest", None),
+            (r"D:\Wolftac\logan-hermes-config", "WolftacDigital/logan-hermes-config"),
+            (r"D:\Wolftac\MissionControl", "WolftacDigital/wolftac-mission-control"),
+            (r"D:\Wolftac\omas-relief-site", "WolftacDigital/omas-relief-site"),
+            (r"D:\Wolftac\wolftac-academy", "WolftacDigital/wolftac-academy"),
+        ]
+        self.assertEqual([(row["path"], row["github"]) for row in data["repos"]], expected)
+        for row in data["repos"]:
+            self.assertEqual(set(row), {"path", "github"})
 
     def test_six_byte_identical_copies_and_deploy_pairs(self):
         self.assertEqual(len(COPIES), 6)
