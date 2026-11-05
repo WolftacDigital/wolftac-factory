@@ -151,6 +151,15 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    reviewer asks for "only the changed clauses", return just those (the full file stays
    saved), not another full document. A "GO with wording fixes" means: apply the fixes while
    filing, with no new draft round.
+   From the second round on, add a table that maps every numbered finding and every
+   counterexample the reviewer executed to the AC that now tests it. Where the honest answer is
+   to narrow a claim (for example, best-effort detection with listed blind spots), write it as a
+   narrowed goal rather than overclaiming.
+   If a review of an older version arrives after you sent a newer one, reply once: name the
+   newer file and comment, and say where it covers each focus point. Do not redo the work or
+   reopen the old review.
+   Before each round on a spec for exclusion or locking, a CI or installer proof, a Windows
+   protected install, or a live credential window, check `references/spec-review-hard-cases.md`.
    **Filed text is clean:** strip the DRAFT banner, review-round tags and v1→v2 changelogs.
    Replace them with one header line citing the approval and review comment IDs and the scope
    boundary (no merge, send or production change). After filing, re-read the issue with its
@@ -176,6 +185,8 @@ When a build bounced an issue back to Todo on spec conflicts, follow `references
 - Every Test-plan step must be runnable by the reviewer before merge. Check the trigger
   mechanics: a new `workflow_dispatch`-only GitHub workflow cannot run until it is on the
   default branch. Give it a path-limited `pull_request` trigger, or the PR has no proof.
+  Before any PR opens, list every other workflow its changed files will trigger too, and
+  budget the whole event.
 - Any new hold, park or wait state needs three things in the first draft: (1) a named
   monitor that surfaces it after N hours (reuse the gatekeeper diagnostic and watchdog
   check pattern from WD-581), because "something else clears it" is rarely a real path;
