@@ -76,6 +76,75 @@ every task" rule):
 - Create and remove worktrees only as this skill describes, and never merge locally or
   offer merge options outside this skill's own approval gate.
 
+<!-- NO-SILENT-SKIP-START -->
+## No silent skip (pickup reporting only)
+
+**NO-SILENT-SKIP:** Keep the current selection gates, priority/rework ordering,
+claim mechanics and final 20% verification reserve. Record the actual first failed
+gate as you inspect each candidate, not a later guess. Do not claim an issue merely
+to report a skip. Assignment alone is not a park, and retained blocking relations
+whose targets are Done/completed are not unresolved blockers: resolve target states
+before naming a blocker. A required Git merge prerequisite still needs Git proof.
+
+At the end of pickup, if this run took no issue and saw in-lane Factory Queue Todo
+work, post one short `BUILD SKIPPED: <reason>` comment per skipped issue through
+this platform's connected Linear comment tool. This is a narrow reporting exception
+to pickup's old silent/no-comment wording (including parked and unreachable work);
+it never un-parks, claims, changes state or writes to a dirty worktree. Keep the
+separate operator-attention result for dirty worktrees. In Progress stale sweeps
+are not Todo skips. A lost claim race still posts NOTHING and stops immediately.
+If any issue was taken, do not flush skip comments for other candidates this tick.
+
+Named reasons (only IDs, state types, field/check names and numeric estimates;
+never paths, secrets, prompt text, raw errors or command lines):
+
+| Observed gate | Reason | Helper `skip` fields |
+| --- | --- | --- |
+| Unresolved dependency | `blocked by <ID> (<state>)` | `gate: dependency`, `blockers: [{id, stateType}]`; resolve all targets; types triage/backlog/unstarted/started remain open, completed/canceled do not |
+| Park/NEEDS-HUMAN | `parked` | `gate: park`; preserve the existing two-part un-park test |
+| Existing fence/lease held by an active writer | `fence held by <run>` | `gate: fence`, `run`: observed opaque hex/UUID run ID; do not invent a fence or add a new lease mechanism |
+| Lane mismatch | `lane mismatch: <field>` | `gate: lane`, `field`: project, labels or project/labels; local diagnostic only, never comment on another lane's issue |
+| Completion-budget reserve | `completion budget (files=N, checks=N, reserve=20%)` | `gate: budget`, integer `files`, `checks`: estimated surface and verification commands; do not lower the reserve |
+| Preclaim/repo check | `preclaim check failed: <check>` | `gate: preclaim`, `check`: Repo, repo-unreachable, repo-identity, worktree-dirty, orphaned-worktree, merge-prerequisite, Linear, comment-history, protected-file or BLOCKED |
+
+Use `preclaim check failed: BLOCKED` for the existing latest-BLOCKED stop. When
+finding the latest work-order comment, ignore `BUILD SKIPPED: ` diagnostics only;
+a diagnostic is not a readiness decision and must not clear a BLOCKED marker or
+park. Continue counting ALL comments for the existing stale-claim activity gate.
+
+Before posting, re-read issue state/labels/project and comments. Exhaust queue
+pagination, enrich missing project names, and exhaust comment pagination for the
+24-hour window (plus older work-order/review history needed by the existing gates).
+Suppress the exact same reason on the same issue for strictly less than 24 hours
+from its comment's `createdAt`; a changed reason may be posted, and exactly 24 hours
+is eligible again. No cross-issue or global suppression. If the issue is no longer
+Todo/in-lane/Factory Queue, do not post. Recheck immediately before each write and
+read back the exact comment after it. If a write has an uncertain outcome, re-read
+before retrying to avoid duplicates. No new scheduler, credential or API transport.
+
+Run the credential-free planner `scripts/skip_report.py` from the installed Hermes
+build skill, or `ports/hermes/wolftac-build/scripts/skip_report.py` from a verified
+Factory checkout on another platform: `python <script> < <scratch-observations.json>`.
+The helper reads JSON stdin and prints proposed `{issueId, body}` comments; it never
+calls Linear or decides which issue to build. Required JSON fields: `lane` (string),
+`taken` and `race_lost` (explicit booleans), `now` (UTC/offset ISO timestamp), `issues`
+(array). Each enriched issue carries `id` (WD identifier), `team`, `status` (Todo),
+`labels` (name strings), `project` (name or null), the observed `skip` object above,
+`comments` (`body`, `createdAt`) and `comments_complete: true`. Pass only the minimum
+sanitized observations, never credentials or issue descriptions. Missing/unknown
+observations fail closed, not as an invented blocker. All-completed dependency
+observations require recording the actual failed gate, not a `blocked by` comment.
+Use the proposed bodies unchanged with connected tools, then verify read-back.
+If the helper or required tools/history are unavailable, report that exact reporting
+blocker in the run result; do not claim success or silently suppress it.
+
+A genuinely empty in-lane Todo set emits no comments and returns `[SILENT]` in a
+scheduled run. If all current reasons were already reported within 24 hours, no
+new comments are sent and `[SILENT]` is allowed unless operator attention is due.
+Otherwise the final result names the skipped IDs/reasons and verified comment IDs,
+or the reporting failure. This reporting contract does not authorize live installs.
+<!-- NO-SILENT-SKIP-END -->
+
 ## Procedure
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
@@ -85,9 +154,9 @@ every task" rule):
    project lane from the issue title. If invoked with an argument (e.g. "build agentic"), treat it as a
    lane filter: only consider issues whose Linear project name or labels contain it
    (case-insensitive).
-   **PARKED-NEEDS-HUMAN-SKIP:** Silently skip any issue whose latest review report is
+   **PARKED-NEEDS-HUMAN-SKIP:** Skip any issue whose latest review report is
    `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
-   later Jonathan decision comment. Do not comment or change state. A later decision
+   later Jonathan decision comment. Do not change state; record `parked` for NO-SILENT-SKIP. A later decision
    comment from Jonathan plus removal of his assignment clears the park; the issue is
    then buildable and that comment is part of its work order. The comment author must
    be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
@@ -96,8 +165,8 @@ every task" rule):
    review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
    rework tier and within the fresh tier, preserve priority order
    (Urgent > High > Medium > Low), oldest first on ties.
-   Skip issues whose latest comment starts `BLOCKED:`, issues with unresolved blocking relations, and —
-   SILENTLY, no comment or state change — issues whose spec **Repo:** path is
+   Skip issues whose latest work-order comment starts `BLOCKED:`, issues with unresolved blocking relations, and
+   without changing state, issues whose spec **Repo:** path is
    unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
    Before choosing a Todo issue, perform a read-first stale-claim sweep: inspect
    `In Progress` issues with label `Factory Queue` (and the lane filter, if any).
@@ -111,7 +180,7 @@ every task" rule):
    is OLDER than 4 hours, you may post exactly
    `SWEPT: stale claim, no activity since <timestamp>` and reset the issue to `Todo`.
    If there is ANY comment younger than 4 hours, the issue is UNTOUCHABLE — never
-   sweep it. This sweep is the ONLY time build posts a comment during pickup; during
+   sweep it. The sweep and NO-SILENT-SKIP are the only comment paths during pickup; during
    a claim-race back off you post NOTHING.
 
    Before claiming each selected `Todo` candidate, resolve its Linear-generated branch
@@ -130,7 +199,8 @@ every task" rule):
    before any Linear claim mutation. The claim is permitted only after this explicit
    probe and the target worktree dirty check complete successfully.
    A dirty dedicated worktree is operator-attention work even while Linear says `Todo`:
-   do not claim, edit, commit, reset, discard, comment, or change state. Report its path
+   do not claim, edit, commit, reset, discard, or change state. Record the failed
+   check for NO-SILENT-SKIP reporting. Report its path
    and complete dirty summary, then consider the next lane-eligible candidate in normal
    priority order. Use `git diff --stat` for unstaged changes, `git diff --cached --stat`
    for staged changes, and `git status --short` for untracked paths; a branch-range diff
@@ -140,7 +210,7 @@ every task" rule):
    actionable operator-attention result, not a generic empty queue, so normal
    nothing-buildable suppression does not hide it.
 
-   Queue empty → "Factory queue: nothing buildable", stop cleanly.
+   Queue empty or everything skipped → run NO-SILENT-SKIP before exiting.
 
 2. **Claim it.**
    **CLAIM-IDENTITY:** Claim only through this platform's Linear toolset acting
@@ -179,7 +249,7 @@ every task" rule):
    Verify it exists and is a git repo. Missing/ambiguous → comment
    `BLOCKED: <what's unclear>`, state back to `Todo`, stop. Reserve `BLOCKED:` for
    spec defects only — a repo that is merely unreachable from this environment
-   should have been silently skipped at step 1.
+   should have been skipped at step 1 with NO-SILENT-SKIP reporting.
 
    **WSL repo note:** from Windows/Git Bash, disable path conversion for Linux paths,
    for example `MSYS2_ARG_CONV_EXCL='*' wsl --cd /home/... sh -lc '<cmd>'`.

@@ -3,7 +3,9 @@
 Worker cost must scale with **work**, not with **ticks**. WD-357 introduced a
 `no_agent` script to avoid paying model fare for empty queues. WD-380 extends
 that protection to non-empty queues that hold blocked or parked work: an
-unchanged queue must not dispatch another silent worker on every tick.
+unchanged blocked queue must not dispatch another silent worker on every tick.
+WD-620 adds bounded retries for eligible build work and one recovery dispatch
+after a degraded period, so an outage cannot strand an unchanged ready queue.
 
 ## How it works
 
@@ -32,8 +34,15 @@ project contributes no match. An issue matching both filters belongs to both
 fingerprints. Issues matching neither are not dispatched to a build job (NG-2);
 suggest /wolftac-spec for a catch-all lane. Review, integrate and custom
 `--job-map` lane names absent from `LANE_FILTERS` are unfiltered.
-These remain **superset** lane lists, not full eligibility filters.
-BLOCKED/NEEDS-HUMAN parks, Repo reachability and approval verification stay in skills.
+Fingerprints remain **superset** lane lists. Timed build retries additionally
+require Todo, no latest `BLOCKED:` comment, no unresolved NEEDS-HUMAN park, and
+every blocker state **type** `completed` or `canceled` (custom state names work).
+Unknown blocker types fail closed for timed retries. The park owner is the WD
+workspace's Jonathan ID (`PARK_OWNER_ID`); a later comment by that user plus removal
+of his assignment clears a park. Bot-relayed comments do not. Older Todo comments
+are paged for this check only; fingerprinting still uses the original newest 50.
+Repo reachability, final work selection and approval verification stay in skills.
+Review/integrate eligibility and all existing fingerprint triggers are unchanged.
 The gatekeeper does not claim, comment or otherwise write to Linear or Slack.
 
 ### Fingerprint rule
@@ -60,8 +69,10 @@ After the in-flight guard:
 | Condition | Output / action |
 |---|---|
 | Empty lane | `idle`, no launch; clear old baseline |
+| First healthy tick after degradation, eligible work | `recovered after degraded period -> dispatched(pid=...)` once per ready lane |
 | No valid baseline (new/missing/corrupt state) | `no-baseline -> dispatched(pid=...)` |
 | Fingerprint differs | `changed -> dispatched(pid=...)` |
+| Equal fingerprint, eligible build work, last successful launch at least 15m ago | `stale-eligible (<n> ready, oldest <ISSUE-ID> waiting <m>m) -> dispatched(pid=...)` |
 | Fingerprint equal | `unchanged (skip)`; integrate first checks Slack |
 | Linear HTTP 401 on any ready lane | Skip build/review; dispatch integrate only for re-mint (subject to in-flight guard) |
 | Other Linear probe or env failure | Loud `FAIL-OPEN` dispatch for that lane |
@@ -78,6 +89,35 @@ lane's dispatched fingerprint, so removing a confirmed marker cannot erase the
 baseline. Top-level `approval_dispatched` maps issue identifiers to Slack message
 timestamps. Missing/unknown keys need no migration; the old script ignores the
 new keys. Do not confuse a dispatch with a completed worker run.
+
+### Stale eligible work and outage recovery (WD-620)
+
+`STALE_ELIGIBLE_MINUTES = 15` applies to the two filtered build lanes. The optional
+`last_dispatch_at[lane]` timestamp records a **successful process launch**, not
+successful completion of the worker. It survives removal of the in-flight marker.
+With no valid timestamp, use the oldest eligible issue's `updatedAt`. Exactly 15
+minutes is due; 14 minutes is not. The printed waiting age is that oldest issue's
+update age, not its priority or the cooldown age. Missing/invalid issue dates do
+not invent an age. Failed launches consume neither the cooldown nor recovery.
+Every successful launch resets the cooldown, including a changed-fingerprint or
+fail-open launch. The 90-minute in-flight guard still runs first, unchanged.
+
+`degraded_since` records the first observed fail-open tick or any configured worker
+job whose read-only `jobs.json` `last_status` is `error` or `interrupted`, including
+workers currently held by the in-flight guard. Missing legacy status metadata is
+not an error report. A Linear 401 remains the distinct re-mint path, not fail-open.
+The first healthy tick clears `degraded_since` and queues one recovery attempt per
+lane. `recovery_pending` retains only lanes still held in-flight or whose launch
+failed; a successful launch or a ready probe with no eligible work consumes that
+lane. This prevents the guard from losing a recovery while avoiding duplicate
+recovery launches. A later degraded period starts a new recovery cycle. Review and
+integrate use their existing nonempty lane lists, without changing eligibility or
+consuming a Slack approval. A dispatch is never approval to merge.
+
+No eligible work means neither **new** rule launches a worker, even over repeated
+ticks. Existing no-baseline/changed/fail-open behavior remains intact. Dry-run
+computes the same decisions but writes no state, logs or jobs and spawns nothing.
+All added keys are optional and ignored by older scripts on rollback.
 
 ### Linear authentication failure exception
 
@@ -250,7 +290,14 @@ scheduler files. The isolated `factory-integrate` profile is not in scope.
    ```
 3. Confirm existing gatekeeper job `1a9fb621f161` still references
    `factory_gatekeeper.py` with `no_agent: true`; confirm the existing interval
-   in `cron\jobs.json`; do not change the gatekeeper schedule.
+   in `cron\jobs.json`. After the merged script's dry-run, Jonathan changes only
+   the no-agent gatekeeper to 15 minutes and confirms the next output:
+   ```text
+   hermes -p <profile> cron edit <gatekeeper-id> --schedule "every 15m"
+   ```
+   On this installation the gatekeeper belongs to `default`, ID `1a9fb621f161`.
+   This adds no model calls to the gatekeeper itself. Build/review must not run
+   this operator command or edit live jobs, profiles or credentials.
    After merge, Jonathan confirms the 120-minute worker safety net, runs
    `pwsh deploy/worker-schedules.ps1` to inspect the four PLAN/OK lines, then
    `pwsh deploy/worker-schedules.ps1 -Apply` and repeats it to confirm four OKs.
@@ -263,7 +310,8 @@ scheduler files. The isolated `factory-integrate` profile is not in scope.
    `-HermesCommand deploy/tests/fixtures/fake-hermes.ps1`, never the live CLI.
 4. Inspect the next three real gatekeeper outputs under
    `cron\output\1a9fb621f161\`: the first non-empty lane without a baseline
-   dispatches once; subsequent confirmed, unchanged lanes skip. This soak is a
+   dispatches once; subsequent unchanged lanes skip unless eligible work is stale
+   or a recovery is due. This soak is a
    post-merge operator step, not build/review acceptance proof.
 
 The default policy path is `approval-policy.json` beside the script. Override it
@@ -295,8 +343,10 @@ Never test without either `--dry-run` or the complete scratch/no-op combination.
 After operator approval, restore the pre-change `factory_gatekeeper.py` from the
 backup or `git show <pre-change-sha>:deploy/factory-gatekeeper.py` over the
 installed copy, and remove the newly copied `approval-policy.json`. The previous
-script ignores `fingerprints` and `approval_dispatched`, so no state migration or
-schedule edit is needed. Keep backups and proof; do not delete log history.
+script ignores optional state keys; no state migration is needed. If the WD-620
+15-minute operator step was applied, Jonathan restores the prior interval with
+`hermes -p <profile> cron edit <gatekeeper-id> --schedule "every 30m"`.
+Keep backups and proof; do not delete log history.
 Resetting `gatekeeper-state.json` is safe if explicitly chosen by the operator:
 the next tick dispatches each non-empty lane once. The worker safety nets remain
 unchanged. No skills, bot helper, secrets or approval rules change.
