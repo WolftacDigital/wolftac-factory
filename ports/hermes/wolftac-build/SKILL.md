@@ -117,7 +117,7 @@ pagination, enrich missing project names, and exhaust comment pagination for the
 24-hour window (plus older work-order/review history needed by the existing gates).
 Suppress the exact same reason on the same issue for strictly less than 24 hours
 from its comment's `createdAt`; a changed reason may be posted, and exactly 24 hours
-is eligible again. No cross-issue or global suppression. If the issue is no longer
+is eligible again. For `completion budget`, dedupe by gate name regardless of estimate numbers; other reasons keep exact-text dedupe. No cross-issue or global suppression. If the issue is no longer
 Todo/in-lane/Factory Queue, do not post. Recheck immediately before each write and
 read back the exact comment after it. If a write has an uncertain outcome, re-read
 before retrying to avoid duplicates. No new scheduler, credential or API transport.

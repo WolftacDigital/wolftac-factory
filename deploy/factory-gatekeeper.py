@@ -16,7 +16,7 @@ Design constraints learned the hard way (WD-357, WD-380):
   ``confirmed-ran`` or ``no-run-observed``.
 * Record the fingerprint AT DISPATCH, never at confirmation: changes during a
   worker run must remain visible. Keep it outside the popped in-flight marker.
-  Exclude ``updatedAt``, ``delegate`` and ``SWEPT:`` comment churn so silent
+  Exclude ``updatedAt``, ``delegate``, ``SWEPT:`` and ``BUILD SKIPPED:`` churn so silent
   integrate runs settle without duplicating worker skip rules here.
 * Linear/env/probe failures fail OPEN (subject to the in-flight guard), except
   a Linear HTTP 401 anywhere in the tick: skip build/review and dispatch only
@@ -452,7 +452,10 @@ def run_audit(audit: dict, token, since=None, auth_failed=False) -> list[str]:
 def lane_fingerprint(issues: list[dict]) -> str:
     records = []
     for issue in issues:
-        comments = issue["comments"]["nodes"]
+        # Skip diagnostics must also be invisible when they are the first comment.
+        # Retain the existing swept-only sentinel for actual SWEPT comments.
+        comments = [c for c in issue["comments"]["nodes"]
+                    if not (c["body"] or "").startswith("BUILD SKIPPED:")]
         meaningful = [c["createdAt"] for c in comments if not (c["body"] or "").startswith("SWEPT:")]
         newest = max(meaningful, default="swept-only" if comments else None)
         blockers = [
