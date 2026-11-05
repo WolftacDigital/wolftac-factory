@@ -2,9 +2,9 @@
 """Factory gatekeeper — zero-model-cost change detection for worker lanes.
 
 Runs as a Hermes ``no_agent`` cron script. Fetches each lane's Factory Queue
-issues and dispatches its worker only when the queue fingerprint changes.
-Worker eligibility rules remain in the skills; the two-hour safety net covers
-time-based eligibility and repositories becoming reachable.
+issues and dispatches on queue changes, stale eligible build work, or recovery.
+Workers still own claims and final eligibility; the two-hour safety net covers
+stale claims and repositories becoming reachable.
 
 Design constraints learned the hard way (WD-357, WD-380):
 
@@ -57,6 +57,12 @@ DEFAULT_JOB_MAP = {
 LANE_FILTERS = {"build": "agentic", "build-crm": "Wolftac CRM v2"}
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
+STALE_ELIGIBLE_MINUTES = 15
+# The human park owner in the WD workspace; never a bot's relayed decision.
+PARK_OWNER_ID = "40f35e70-06bb-49f5-9260-9b0f7de3124e"
+REVIEW_REPORT = re.compile(
+    r"(?m)^\s*(?:#{1,6}\s*)?(?:-\s+)?(?:\*\*)?REVIEW REPORT\s*[—-]\s*(NEEDS HUMAN|FAIL|PASS)\b"
+)
 AUDIT_INTERVAL_HOURS = 24
 AUDIT_FIRST_WINDOW_DAYS = 7
 AUDIT_GRACE_MINUTES = 60
@@ -101,11 +107,14 @@ query($state: String!, $after: String) {
   }) {
     nodes {
       identifier state { name } assignee { id } project { name }
-      priority description
+      priority description updatedAt
       labels { nodes { name } pageInfo { hasNextPage endCursor } }
-      comments(first: 50, orderBy: createdAt) { nodes { id createdAt body } }
+      comments(first: 50, orderBy: createdAt) {
+        nodes { id createdAt body user { id } }
+        pageInfo { hasNextPage endCursor }
+      }
       inverseRelations {
-        nodes { type issue { identifier state { name } } }
+        nodes { type issue { identifier state { name type } } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -117,7 +126,7 @@ RELATIONS_QUERY = """
 query($id: String!, $after: String) {
   issue(id: $id) {
     inverseRelations(after: $after) {
-      nodes { type issue { identifier state { name } } }
+      nodes { type issue { identifier state { name type } } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -133,6 +142,16 @@ query($id: String!, $after: String) {
 }
 """
 PERMALINK = re.compile(r"https://[^/\s]+/archives/([A-Z0-9]+)/p(\d{10})(\d{6})")
+READY_COMMENTS_QUERY = """
+query($id: String!, $after: String) {
+  issue(id: $id) {
+    comments(first: 50, after: $after, orderBy: createdAt) {
+      nodes { id createdAt body user { id } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
 
 
 class ProbeError(Exception):
@@ -183,7 +202,7 @@ def load_state(path: str) -> dict:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    for key in ("lanes", "fingerprints", "approval_dispatched", "audit"):
+    for key in ("lanes", "fingerprints", "approval_dispatched", "audit", "last_dispatch_at"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
     return data
@@ -242,6 +261,55 @@ def linear_query(token: str, query: str, variables: dict) -> dict:
     return payload["data"]
 
 
+def worker_degraded(jobs_path: str, job_id: str) -> bool:
+    """Read status only; missing legacy metadata is not a reported failure."""
+    try:
+        with open(jobs_path, encoding="utf-8") as fh:
+            jobs = json.load(fh).get("jobs", [])
+        return any(job.get("id") == job_id and job.get("last_status") in
+                   ("error", "interrupted") for job in jobs)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return False
+
+
+def build_eligible(issue: dict) -> bool:
+    """Eligibility for timed retries only; fingerprint/claim rules stay intact."""
+    if issue["state"]["name"] != "Todo":
+        return False
+    if any(r["issue"]["state"].get("type") not in ("completed", "canceled")
+           for r in issue["inverseRelations"]["nodes"] if r["type"] == "blocks"):
+        return False  # unknown blocker state fails closed, never guessed by name
+    comments = sorted(issue.get("ready_comments", issue["comments"]["nodes"]),
+                      key=lambda c: c["createdAt"], reverse=True)
+    if comments and (comments[0].get("body") or "").startswith("BLOCKED:"):
+        return False
+    reviews = [(c, REVIEW_REPORT.search(c.get("body") or "")) for c in comments]
+    reviews = [(c, match) for c, match in reviews if match is not None]
+    if reviews and reviews[0][1].group(1) == "NEEDS HUMAN":
+        if (issue.get("assignee") or {}).get("id") == PARK_OWNER_ID:
+            return False
+        if not any(c["createdAt"] > reviews[0][0]["createdAt"] and
+                   (c.get("user") or {}).get("id") == PARK_OWNER_ID for c in comments):
+            return False
+    return True
+
+
+def stale_eligible_reason(issues: list[dict], last_dispatch) -> str | None:
+    dated = [(parse_ts(i.get("updatedAt")), i["identifier"]) for i in issues]
+    dated = [(stamp, ident) for stamp, ident in dated if stamp is not None]
+    if not dated:
+        return None
+    oldest, identifier = min(dated)
+    since = parse_ts(last_dispatch) or oldest
+    if now_utc() - since < timedelta(minutes=STALE_ELIGIBLE_MINUTES):
+        return None
+    # Only identifiers/counts/ages may be printed, never arbitrary remote text.
+    if not re.fullmatch(r"[A-Z]+-\d+", identifier):
+        raise ProbeError("Invalid ready issue identifier")
+    minutes = max(0, int((now_utc() - oldest).total_seconds() // 60))
+    return f"stale-eligible ({len(issues)} ready, oldest {identifier} waiting {minutes}m)"
+
+
 def next_cursor(connection: dict, seen: set):
     page = connection["pageInfo"]
     if not page["hasNextPage"]:
@@ -271,6 +339,19 @@ def lane_issues(token: str, state: str) -> list[dict]:
                     })["issue"][field]
                     nodes.extend(connection["nodes"])
                 issue[field] = {"nodes": nodes}
+            if state == "Todo":
+                # Keep the fingerprint's newest-50 contract unchanged. Older
+                # comments are only for deciding whether a timed retry is safe.
+                connection = issue["comments"]
+                comments = list(connection["nodes"])
+                comment_seen = set()
+                while connection.get("pageInfo", {}).get("hasNextPage"):
+                    cursor = next_cursor(connection, comment_seen)
+                    connection = linear_query(token, READY_COMMENTS_QUERY, {
+                        "id": issue["identifier"], "after": cursor,
+                    })["issue"]["comments"]
+                    comments.extend(connection["nodes"])
+                issue["ready_comments"] = comments
             issues.append(issue)
         after = next_cursor(page, seen)
         if after is None:
@@ -492,6 +573,7 @@ def main() -> int:
     lanes_state = state["lanes"]
     fingerprints = state["fingerprints"]
     approvals = state["approval_dispatched"]
+    last_dispatch = state["last_dispatch_at"]
     token = None
     fail_open_reason = None
     try:
@@ -504,12 +586,14 @@ def main() -> int:
     probes = {}
     state_probes = {}
     linear_auth_failed = False
+    degraded_worker = False
     # The token is shared. Finish all non-in-flight probes before launching
     # anything, so a later lane's 401 can veto earlier build/review decisions.
     for lane, entry in job_map.items():
         try:
             linear_state, job_id, profile = lane_entry(entry)
             jobs_path = args.jobs_path or profile_jobs_path(home, profile)
+            degraded_worker |= worker_degraded(jobs_path, job_id)
             observed_last_run = job_last_run(jobs_path, job_id)
             marker = lanes_state.get(lane)
             if marker:
@@ -555,6 +639,17 @@ def main() -> int:
             ready_lanes.pop(lane, None)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
+    # A 401 is the existing re-mint path, not a fail-open tick (WD-548).
+    degraded = degraded_worker or fail_open_reason is not None or (
+        not linear_auth_failed and any(error is not None for _, _, error in probes.values()))
+    pending = state.get("recovery_pending", [])
+    pending = {lane for lane in pending if isinstance(lane, str) and lane in job_map} if isinstance(pending, list) else set()
+    if job_map and degraded:
+        state.setdefault("degraded_since", now_utc().isoformat())
+    elif not linear_auth_failed and job_map and state.get("degraded_since"):
+        pending.update(job_map)
+        state.pop("degraded_since", None)
+
     for lane, (job_id, observed_last_run, profile) in ready_lanes.items():
         try:
             fingerprint = None
@@ -572,15 +667,25 @@ def main() -> int:
                 if probe_error is not None:
                     reason = f"probe failed ({probe_error}) -> FAIL-OPEN"
                 else:
+                    eligible = [i for i in issues if build_eligible(i)] if lane in LANE_FILTERS else issues
                     if not issues:
+                        pending.discard(lane)
                         fingerprints.pop(lane, None)
                         lines.append(f"{lane}: idle")
                         continue
                     baseline = fingerprints.get(lane)
-                    if not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{64}", baseline):
+                    recovery = not degraded and lane in pending and bool(eligible)
+                    stale = stale_eligible_reason(eligible, last_dispatch.get(lane)) if lane in LANE_FILTERS else None
+                    if not eligible:
+                        pending.discard(lane)
+                    if recovery:
+                        reason = "recovered after degraded period"
+                    elif not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{64}", baseline):
                         reason = "no-baseline"
                     elif fingerprint != baseline:
                         reason = "changed"
+                    elif stale is not None:
+                        reason = stale
                     else:
                         if lane == "integrate" and not args.no_slack:
                             try:
@@ -597,6 +702,9 @@ def main() -> int:
             suffix = " for re-mint" if linear_auth_failed and result.startswith("dispatched(") else ""
             lines.append(f"{lane}: {reason} -> {result}{suffix}")
             if not args.dry_run and result.startswith("dispatched(pid="):
+                last_dispatch[lane] = now_utc().isoformat()
+                if not degraded and not linear_auth_failed:
+                    pending.discard(lane)
                 lanes_state[lane] = {
                     "dispatched_at": now_utc().isoformat(),
                     "job_last_run_at": observed_last_run,
@@ -610,6 +718,8 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 — lane isolation is the whole point
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
+    if job_map:
+        state["recovery_pending"] = sorted(pending)
     if not args.no_audit:
         try:
             audit_lines = run_audit(state["audit"], token, args.audit_since, linear_auth_failed)

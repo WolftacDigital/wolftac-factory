@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
+from email.message import Message
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -804,6 +805,227 @@ class GatekeeperTests(unittest.TestCase):
         out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
         self.assertIn("build: LANE-ERROR (", out)
         self.spawn.assert_not_called()
+
+    # WD-620: additions only; existing tests and harness above stay unchanged.
+    def ready(self, crm=True, identifier="WD-615"):
+        row = GatekeeperTests.crm_issue(identifier) if crm else issue(identifier)
+        row["updatedAt"] = (NOW - timedelta(hours=2)).isoformat()
+        row["inverseRelations"]["nodes"][0]["issue"]["state"]["type"] = "completed"
+        return row
+
+    def prepare(self, minutes=16, two=False):
+        self.write(self.jobs, {"jobs": [{"id": pair[1], "last_run_at": "2026-09-19T10:00:00Z"}
+                                       for pair in g.DEFAULT_JOB_MAP.values()]})
+        self.issues["Todo"] = [self.ready()]
+        if two:
+            self.issues["Todo"].append(self.ready(False, "WD-620"))
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        state["last_dispatch_at"] = {lane: (NOW - timedelta(minutes=minutes)).isoformat()
+                                     for lane in ("build", "build-crm")}
+        self.write(self.state, state)
+
+    def status(self, value):
+        jobs = json.loads(self.jobs.read_text())
+        jobs["jobs"][0]["last_status"] = value
+        self.write(self.jobs, jobs)
+
+    def test_stale_boundary_and_repeat_guard(self):
+        for minutes, expected in ((14, False), (15, True), (16, True)):
+            with self.subTest(minutes=minutes):
+                self.prepare(minutes)
+                out = self.tick()
+                self.assertEqual("stale-eligible" in out, expected)
+                self.assertEqual(self.spawn.call_count, int(expected))
+                if expected:
+                    self.assertIn("build-crm: stale-eligible (1 ready, oldest WD-615 waiting 120m) -> dispatched(pid=1234)", out)
+                    state = json.loads(self.state.read_text())
+                    self.assertEqual(state["last_dispatch_at"]["build-crm"], NOW.isoformat())
+                    self.assertIn("build-crm: in-flight (skip)", self.tick())
+                    self.spawn.assert_not_called()
+                    self.confirm()
+                    with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=14)):
+                        self.assertIn("build-crm: unchanged (skip)", self.tick())
+                        self.spawn.assert_not_called()
+                    with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=15)):
+                        self.assertIn("build-crm: stale-eligible", self.tick())
+                        self.spawn.assert_called_once()
+
+    def test_legacy_state_uses_oldest_update_and_not_priority(self):
+        self.prepare()
+        newer = self.ready(identifier="WD-999")
+        newer.update(updatedAt=(NOW - timedelta(minutes=14)).isoformat(), priority=1)
+        self.issues["Todo"].append(newer)
+        self.baseline()
+        self.assertIn("2 ready, oldest WD-615 waiting 120m", self.tick())
+        self.issues["Todo"] = [newer]
+        self.baseline()
+        self.assertIn("build-crm: unchanged (skip)", self.tick())
+        self.spawn.assert_not_called()
+        newer["updatedAt"] = "invalid"
+        self.assertIn("unchanged (skip)", self.tick())
+
+    def test_blocker_state_types_and_park_decisions(self):
+        self.prepare()
+        row = self.issues["Todo"][0]
+        for state_type, eligible in (("completed", True), ("canceled", True),
+                                     ("started", False), ("unstarted", False), (None, False)):
+            row["inverseRelations"]["nodes"][0]["issue"]["state"].update(name="custom", type=state_type)
+            self.assertEqual(g.build_eligible(row), eligible)
+        row["inverseRelations"]["nodes"] = []
+        review = comment("**REVIEW REPORT — NEEDS HUMAN**")
+        row["comments"]["nodes"] = [review]
+        row["assignee"] = None
+        self.assertFalse(g.build_eligible(row))
+        decision: dict = comment("decision", "2026-09-19T13:00:00Z")
+        decision["user"] = {"id": "bot"}
+        row["comments"]["nodes"].append(decision)
+        self.assertFalse(g.build_eligible(row))
+        decision["user"]["id"] = g.PARK_OWNER_ID
+        self.assertTrue(g.build_eligible(row))
+        row["assignee"] = {"id": g.PARK_OWNER_ID}
+        self.assertFalse(g.build_eligible(row))
+        row["comments"]["nodes"].append(comment("REVIEW REPORT — FAIL", "2026-09-19T14:00:00Z"))
+        self.assertTrue(g.build_eligible(row))
+        row["comments"]["nodes"].append(comment("BLOCKED: decision needed", "2026-09-19T15:00:00Z"))
+        self.assertFalse(g.build_eligible(row))
+
+    def test_review_mentions_are_not_verdicts_and_paging_errors_are_safe(self):
+        row = self.ready()
+        row["comments"]["nodes"] = [comment("REVIEW REPORT — NEEDS HUMAN")]
+        row["comments"]["nodes"].append(comment("I mentioned REVIEW REPORT — FAIL, not a new verdict", "2026-09-19T13:00:00Z"))
+        self.assertFalse(g.build_eligible(row))
+        row["comments"] = connection([comment("recent")], "repeat")
+        pages = [{"issues": connection([row])}, {"issue": {"comments": connection([], "repeat")}}]
+        with patch.object(g, "linear_query", side_effect=pages):
+            with self.assertRaises(g.ProbeError):
+                g.lane_issues(LINEAR, "Todo")
+
+    def test_pending_recovery_never_overrides_401(self):
+        self.prepare(16, two=True)
+        state = json.loads(self.state.read_text())
+        state["degraded_since"] = NOW.isoformat()
+        state["recovery_pending"] = ["build", "build-crm"]
+        self.write(self.state, state)
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, Message(), None)
+        out = self.tick()
+        self.assertNotIn("stale-eligible", out)
+        self.assertNotIn("recovered after", out)
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched", out)
+        self.spawn.assert_called_once()
+        after = json.loads(self.state.read_text())
+        self.assertEqual(after["degraded_since"], state["degraded_since"])
+        self.assertEqual(after["recovery_pending"], state["recovery_pending"])
+
+    def test_recovery_after_fail_open_and_worker_errors(self):
+        for failure in ("fail-open", "error", "interrupted"):
+            with self.subTest(failure=failure):
+                self.prepare(1, two=True)
+                if failure == "fail-open":
+                    self.linear_error = TimeoutError("synthetic")
+                else:
+                    self.status(failure)
+                self.tick()
+                self.assertEqual(json.loads(self.state.read_text())["degraded_since"], NOW.isoformat())
+                self.linear_error = None
+                self.status("ok")
+                self.confirm()
+                out = self.tick()
+                self.assertEqual(out.count("recovered after degraded period -> dispatched(pid=1234)"), 2)
+                self.assertEqual(self.spawn.call_count, 2)
+                state = json.loads(self.state.read_text())
+                self.assertNotIn("degraded_since", state)
+                self.assertEqual(state["recovery_pending"], [])
+                # Complete these launches and prove normal rules resume.
+                with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=1)):
+                    jobs = json.loads(self.jobs.read_text())
+                    for job in jobs["jobs"]:
+                        job["last_run_at"] = (NOW + timedelta(seconds=30)).isoformat()
+                    self.write(self.jobs, jobs)
+                    out = self.tick()
+                    self.assertNotIn("recovered after", out)
+                    self.spawn.assert_not_called()
+
+    def test_recovery_keeps_guard_and_retries_failed_launch(self):
+        self.prepare(1, two=True)
+        state = json.loads(self.state.read_text())
+        state["degraded_since"] = (NOW - timedelta(hours=1)).isoformat()
+        state["lanes"]["build"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        self.write(self.state, state)
+        self.spawn.side_effect = OSError("synthetic")
+        out = self.tick()
+        self.assertIn("build: in-flight (skip)", out)
+        self.assertIn("recovered after degraded period -> dispatch-failed", out)
+        self.assertEqual(json.loads(self.state.read_text())["recovery_pending"], ["build", "build-crm"])
+        self.spawn.side_effect = None
+        self.confirm()
+        self.assertEqual(self.tick().count("recovered after degraded period -> dispatched"), 2)
+
+    def test_no_ready_work_for_two_hours(self):
+        for mode in ("empty", "blocked", "parked"):
+            with self.subTest(mode=mode):
+                self.prepare()
+                if mode == "empty":
+                    self.issues["Todo"] = []
+                elif mode == "blocked":
+                    self.issues["Todo"][0]["inverseRelations"]["nodes"][0]["issue"]["state"]["type"] = "started"
+                else:
+                    self.issues["Todo"][0]["comments"]["nodes"] = [comment("REVIEW REPORT — NEEDS HUMAN")]
+                self.baseline()
+                state = json.loads(self.state.read_text())
+                state["degraded_since"] = NOW.isoformat()
+                self.write(self.state, state)
+                for minutes in range(0, 121, 15):
+                    with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=minutes)):
+                        out = self.tick()
+                        self.assertNotIn("stale-eligible", out)
+                        self.assertNotIn("recovered after", out)
+                        self.spawn.assert_not_called()
+
+    def test_new_rules_dry_run_and_failed_dispatch_are_non_consuming(self):
+        self.prepare()
+        for recovery in (False, True):
+            state = json.loads(self.state.read_text())
+            if recovery:
+                state["degraded_since"] = NOW.isoformat()
+                self.write(self.state, state)
+            before = self.state.read_bytes()
+            out = self.tick("--dry-run")
+            self.assertIn("dispatched(dry-run)", out)
+            self.assertEqual(self.state.read_bytes(), before)
+            self.spawn.assert_not_called()
+        self.prepare()
+        before = json.loads(self.state.read_text())["last_dispatch_at"]
+        self.spawn.side_effect = OSError("synthetic")
+        self.assertIn("stale-eligible", self.tick())
+        self.assertEqual(json.loads(self.state.read_text())["last_dispatch_at"], before)
+
+    def test_older_park_comments_paged_without_changing_fingerprint(self):
+        row = self.ready()
+        row["comments"] = connection([comment("recent")], "c1")
+        older = comment("REVIEW REPORT — NEEDS HUMAN", "2026-09-18T12:00:00Z")
+        before = g.lane_fingerprint([row])
+        pages = [{"issues": connection([row])}, {"issue": {"comments": connection([older])}}]
+        with patch.object(g, "linear_query", side_effect=pages) as query:
+            rows = g.lane_issues(LINEAR, "Todo")
+        self.assertEqual(query.call_count, 2)
+        self.assertFalse(g.build_eligible(rows[0]))
+        self.assertEqual(g.lane_fingerprint(rows), before)
+
+    def test_recovery_does_not_change_review_integrate_eligibility(self):
+        self.prepare(1)
+        self.issues["Todo"] = []
+        self.issues["In Review"] = [issue(state="In Review")]
+        self.issues["Approved"] = [issue(state="Approved")]
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        state["degraded_since"] = NOW.isoformat()
+        self.write(self.state, state)
+        out = self.tick()
+        for lane in ("review", "integrate"):
+            self.assertIn(f"{lane}: recovered after degraded period -> dispatched", out)
+        self.assertEqual(self.spawn.call_count, 2)
+        self.assertEqual(json.loads(self.state.read_text())["approval_dispatched"], {})
 
 
 if __name__ == "__main__":
