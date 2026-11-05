@@ -76,6 +76,13 @@ def reason(skip):
     raise ValueError("unknown skip gate")
 
 
+def dedupe_key(body):
+    """Budget estimates are detail, not a new gate; other reasons stay exact."""
+    if re.fullmatch(r"BUILD SKIPPED: completion budget \(files=[0-9]+, checks=[0-9]+, reserve=20%\)", body):
+        return PREFIX + "completion budget"
+    return body
+
+
 def latest_work_comment(comments):
     """Diagnostics cannot clear a prior BLOCKED work-order marker."""
     items = [c for c in comments if not c["body"].startswith(PREFIX)]
@@ -121,9 +128,10 @@ def prepare(payload):
         if issue["skip"]["gate"] == "lane":
             raise ValueError("in-lane snapshot cannot have a lane mismatch")
         body = PREFIX + why
+        key = dedupe_key(body)
         recent = False
         for comment in issue["comments"]:
-            if comment["body"] == body:
+            if dedupe_key(comment["body"]) == key:
                 at = stamp(comment["createdAt"])
                 if at > now:
                     raise ValueError("future diagnostic timestamp")

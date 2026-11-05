@@ -182,6 +182,38 @@ class GatekeeperTests(unittest.TestCase):
         rows[0]["comments"]["nodes"].append(comment("not a sweep"))
         self.assertNotEqual(swept, g.lane_fingerprint(rows))
 
+    def test_build_skipped_never_changes_fingerprint(self):
+        for existing in ([], [comment()], [comment("SWEPT: old")]):
+            with self.subTest(existing=existing):
+                row = issue()
+                row["comments"]["nodes"] = copy.deepcopy(existing)
+                baseline = g.lane_fingerprint([row])
+                row["comments"]["nodes"].append(comment(
+                    "BUILD SKIPPED: completion budget (files=29, checks=6, reserve=20%)",
+                    NOW.isoformat()))
+                self.assertEqual(baseline, g.lane_fingerprint([row]))
+                for field in ("comment", "state", "description"):
+                    changed = copy.deepcopy(row)
+                    if field == "comment":
+                        changed["comments"]["nodes"].append(comment("Ready", NOW.isoformat()))
+                    elif field == "state":
+                        changed["state"]["name"] = "In Progress"
+                    else:
+                        changed["description"] = "Revised spec"
+                    self.assertNotEqual(baseline, g.lane_fingerprint([changed]))
+
+    def test_build_skipped_prefix_is_exact_and_case_sensitive(self):
+        row = issue()
+        baseline = g.lane_fingerprint([row])
+        for body in ("build skipped: parked", " BUILD SKIPPED: parked",
+                     "BUILD SKIPPED parked", "Decision: BUILD SKIPPED: parked"):
+            with self.subTest(body=body):
+                changed = copy.deepcopy(row)
+                changed["comments"]["nodes"].append(comment(body, NOW.isoformat()))
+                self.assertNotEqual(baseline, g.lane_fingerprint([changed]))
+        row["comments"]["nodes"].append(comment("BUILD SKIPPED:parked", NOW.isoformat()))
+        self.assertEqual(baseline, g.lane_fingerprint([row]))
+
     def test_empty_lane_is_idle(self):
         for has_baseline in (False, True):
             with self.subTest(baseline=has_baseline):
@@ -850,6 +882,36 @@ class GatekeeperTests(unittest.TestCase):
                     with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=15)):
                         self.assertIn("build-crm: stale-eligible", self.tick())
                         self.spawn.assert_called_once()
+
+    def test_budget_skips_two_hours_only_stale_eligible_dispatches(self):
+        # Confirm fake worker completion; no worker or live Linear is invoked.
+        # Probe between 15-minute ticks too, so a comment-triggered launch
+        # cannot hide behind a coincident stale-eligible deadline.
+        self.prepare(minutes=0)
+        row = self.issues["Todo"][0]
+        baseline = g.lane_fingerprint([row])
+        launches = []
+        for minutes in range(0, 121):
+            at = NOW + timedelta(minutes=minutes)
+            if minutes % 15 == 1:
+                row["comments"]["nodes"].append(comment(
+                    f"BUILD SKIPPED: completion budget (files={29 + minutes}, checks=6, reserve=20%)",
+                    at.isoformat()))
+                row["updatedAt"] = at.isoformat()
+            jobs = json.loads(self.jobs.read_text())
+            for job in jobs["jobs"]:
+                job["last_run_at"] = at.isoformat()
+            self.write(self.jobs, jobs)
+            with patch.object(g, "now_utc", return_value=at):
+                output = self.tick()
+            self.assertEqual(baseline, g.lane_fingerprint([row]))
+            self.assertNotIn("changed ->", output)
+            expected = minutes > 0 and minutes % 15 == 0
+            self.assertEqual(self.spawn.call_count, int(expected), output)
+            if expected:
+                self.assertIn("build-crm: stale-eligible", output)
+                launches.append(minutes)
+        self.assertEqual(launches, list(range(15, 121, 15)))
 
     def test_legacy_state_uses_oldest_update_and_not_priority(self):
         self.prepare()
