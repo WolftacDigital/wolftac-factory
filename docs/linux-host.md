@@ -56,9 +56,10 @@ The child receives an allowlisted environment, scratch HOME/profile/temp/cache
 paths and scratch `HERMES_HOME`. No parent credentials are inherited.
 
 Four Gatekeeper fixtures cover idle, all four ready lanes, an in-flight build,
-and HTTP 401. Nine watchdog fixtures cover healthy, disabled, paused, last error,
+and HTTP 401. Ten watchdog fixtures cover healthy, disabled, paused, last error,
 Gatekeeper auth failure, malformed expiry, environment-home resolution without
-Windows path variables, the legacy LOCALAPPDATA default, and the HOME fallback.
+Windows path variables, `HERMES_HOME` alone with USERPROFILE, LOCALAPPDATA and
+HOME all unset, the legacy LOCALAPPDATA default, and the HOME fallback.
 Explicit parameter precedence is checked with a deliberately wrong environment
 home. File hashes before/after ensure no dry-run state/outbox/fixture write.
 
@@ -163,12 +164,12 @@ for name, pattern in patterns.items():
     subprocess.run(['rg', '-n', '-i', '--', pattern, *files], check=False)
 ```
 
-Scanned **135 files**. **772 category/line pairs**, **699 unique file/line pairs**.
+Scanned **135 files**. **776 category/line pairs**, **702 unique file/line pairs**.
 
 | Search key | Matching lines |
 | --- | ---: |
-| LOCALAPPDATA | 117 |
-| USERPROFILE | 77 |
+| LOCALAPPDATA | 118 |
+| USERPROFILE | 80 |
 | D-drive | 67 |
 | C-drive | 37 |
 | detached-process | 17 |
@@ -192,10 +193,10 @@ Scanned **135 files**. **772 category/line pairs**, **699 unique file/line pairs
 | `canonical/wolftac-integrate/scripts/slack_bot.py` | 68 | Runtime helper / host path; LOCALAPPDATA |
 | `deploy/deploy.ps1` | 50, 51, 52, 53, 54 | Runtime helper / host path; LOCALAPPDATA |
 | `deploy/factory-gatekeeper.py` | 163 | Runtime helper / host path; LOCALAPPDATA |
-| `deploy/factory-watchdog.ps1` | 64, 87, 516, 519, 527, 624, 627, 634 | Runtime helper / host path; LOCALAPPDATA |
+| `deploy/factory-watchdog.ps1` | 64, 88, 522, 525, 533, 630, 633, 640 | Runtime helper / host path; LOCALAPPDATA |
 | `deploy/junctions.json` | 4, 5, 6, 7 | Configuration / guard invariant; LOCALAPPDATA |
 | `deploy/tests/factory-watchdog-drift.tests.ps1` | 297, 298, 302 | Regression fixture / assertion; LOCALAPPDATA |
-| `deploy/tests/linux_host_smoke.py` | 45, 165, 170, 173 | Regression fixture / assertion; LOCALAPPDATA |
+| `deploy/tests/linux_host_smoke.py` | 45, 165, 172, 177, 180 | Regression fixture / assertion; LOCALAPPDATA |
 | `deploy/tests/test_factory_watchdog.py` | 330 | Regression fixture / assertion; LOCALAPPDATA |
 | `deploy/tests/test_factory_watchdog_audit.py` | 38 | Regression fixture / assertion; LOCALAPPDATA |
 | `deploy/tests/test_junctions.py` | 66, 67, 114, 261, 285 | Regression fixture / assertion; LOCALAPPDATA |
@@ -239,9 +240,9 @@ Scanned **135 files**. **772 category/line pairs**, **699 unique file/line pairs
 | `canonical/wolftac-integrate/SKILL.md` | 152 | Operator guidance / example (not executed); USERPROFILE |
 | `canonical/wolftac-integrate/scripts/run_gate.py` | 23 | Runtime helper / host path; USERPROFILE |
 | `deploy/deploy.ps1` | 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 56, 57, 58, 59, 290, 316 | Runtime helper / host path; USERPROFILE |
-| `deploy/factory-watchdog.ps1` | 87, 91, 95, 124, 126, 515, 518, 526, 623, 626, 633 | Runtime helper / host path; USERPROFILE |
+| `deploy/factory-watchdog.ps1` | 88, 92, 96, 125, 127, 128, 521, 524, 532, 629, 632, 639 | Runtime helper / host path; USERPROFILE |
 | `deploy/tests/factory-watchdog-drift.tests.ps1` | 283, 284, 293, 297, 298, 301, 302, 304 | Regression fixture / assertion; USERPROFILE |
-| `deploy/tests/linux_host_smoke.py` | 45, 166, 174 | Regression fixture / assertion; USERPROFILE |
+| `deploy/tests/linux_host_smoke.py` | 45, 166, 168, 172, 181 | Regression fixture / assertion; USERPROFILE |
 | `deploy/tests/test_factory_watchdog.py` | 95, 327, 329 | Regression fixture / assertion; USERPROFILE |
 | `deploy/tests/test_factory_watchdog_audit.py` | 36, 62 | Regression fixture / assertion; USERPROFILE |
 | `deploy/tests/test_junctions.py` | 113 | Regression fixture / assertion; USERPROFILE |
@@ -304,7 +305,7 @@ Scanned **135 files**. **772 category/line pairs**, **699 unique file/line pairs
 | `canonical/wolftac-build/SKILL.md` | 205 | Operator guidance / example (not executed); C-drive |
 | `canonical/wolftac-integrate/scripts/run_gate.py` | 155 | Runtime helper / host path; C-drive |
 | `canonical/wolftac-review/SKILL.md` | 124 | Operator guidance / example (not executed); C-drive |
-| `deploy/factory-watchdog.ps1` | 13, 88 | Runtime helper / host path; C-drive |
+| `deploy/factory-watchdog.ps1` | 13, 89 | Runtime helper / host path; C-drive |
 | `deploy/repo-allowlist.json` | 6 | Configuration / guard invariant; C-drive |
 | `deploy/tests/test_build_skip_report.py` | 121 | Regression fixture / assertion; C-drive |
 | `deploy/tests/test_run_gate.py` | 268 | Regression fixture / assertion; C-drive |
@@ -361,7 +362,7 @@ No matches. See the dependency decision above for the external-call-site boundar
 
 | File | Every matching line | Purpose at this location (decision key above) |
 | --- | --- | --- |
-| `deploy/factory-watchdog.ps1` | 111, 756, 1088 | Runtime helper / host path; scheduler |
+| `deploy/factory-watchdog.ps1` | 112, 762, 1094 | Runtime helper / host path; scheduler |
 | `deploy/tests/README.md` | 47 | Regression fixture / assertion; scheduler |
 | `docs/watchdog.md` | 17, 104, 243, 254, 255, 257, 259, 261, 307, 310, 348, 384 | Operator guidance / example (not executed); scheduler |
 
@@ -371,7 +372,7 @@ No matches. See the dependency decision above for the external-call-site boundar
 | --- | --- | --- |
 | `canonical/wolftac-integrate/scripts/slack_bot.py` | 106 | Runtime helper / host path; junction |
 | `deploy/deploy.ps1` | 16, 18, 63, 64, 66, 67, 68, 70, 76, 138, 139, 140, 143, 144, 145, 146, 163, 165, 174, 180, 181, 192, 193, 203, 207, 209, 230, 232, 238, 239, 240, 244, 261, 263, 266, 286, 287, 288 | Runtime helper / host path; junction |
-| `deploy/factory-watchdog.ps1` | 37, 38, 92, 156, 162, 531, 532, 540, 542, 615, 616, 617, 630, 636, 638, 639, 640, 645, 648, 783 | Runtime helper / host path; junction |
+| `deploy/factory-watchdog.ps1` | 37, 38, 93, 162, 168, 537, 538, 546, 548, 621, 622, 623, 636, 642, 644, 645, 646, 651, 654, 789 | Runtime helper / host path; junction |
 | `deploy/invariants.json` | 487, 488, 490, 491, 492, 493, 494 | Configuration / guard invariant; junction |
 | `deploy/junction-lib.ps1` | 2, 4, 15, 27, 50, 57, 86, 91, 92, 102, 109, 144, 149, 155, 163, 187 | Runtime helper / host path; junction |
 | `deploy/junction-setup.ps1` | 2, 5, 6, 7, 11, 13, 14, 20, 27, 29, 34, 37, 43, 59, 60, 63, 71, 76, 94, 100, 103, 107, 122, 137, 144, 155, 182, 184, 191 | Runtime helper / host path; junction |
@@ -451,13 +452,13 @@ No matches. See the dependency decision above for the external-call-site boundar
 | `README.md` | 83, 104, 105 | Operator guidance / example (not executed); PowerShell-runtime |
 | `canonical/wolftac-integrate/SKILL.md` | 332 | Operator guidance / example (not executed); PowerShell-runtime |
 | `deploy/deploy.ps1` | 4, 5, 7, 8 | Runtime helper / host path; PowerShell-runtime |
-| `deploy/factory-watchdog.ps1` | 11, 12, 13, 109 | Runtime helper / host path; PowerShell-runtime |
+| `deploy/factory-watchdog.ps1` | 11, 12, 13, 110 | Runtime helper / host path; PowerShell-runtime |
 | `deploy/junction-setup.ps1` | 5, 6, 7, 71 | Runtime helper / host path; PowerShell-runtime |
 | `deploy/junction-teardown.ps1` | 6, 7, 8, 142 | Runtime helper / host path; PowerShell-runtime |
 | `deploy/tests/README.md` | 6, 7, 98 | Regression fixture / assertion; PowerShell-runtime |
 | `deploy/tests/factory-watchdog-drift.tests.ps1` | 4, 110, 212, 277, 300, 301 | Regression fixture / assertion; PowerShell-runtime |
 | `deploy/tests/factory-watchdog-learn.tests.ps1` | 4, 99, 230 | Regression fixture / assertion; PowerShell-runtime |
-| `deploy/tests/linux_host_smoke.py` | 155, 191 | Regression fixture / assertion; PowerShell-runtime |
+| `deploy/tests/linux_host_smoke.py` | 155, 198 | Regression fixture / assertion; PowerShell-runtime |
 | `deploy/tests/test_factory_watchdog.py` | 20, 33, 92 | Regression fixture / assertion; PowerShell-runtime |
 | `deploy/tests/test_factory_watchdog_audit.py` | 12, 20, 60 | Regression fixture / assertion; PowerShell-runtime |
 | `deploy/tests/test_junctions.py` | 4, 17, 89, 138, 142 | Regression fixture / assertion; PowerShell-runtime |

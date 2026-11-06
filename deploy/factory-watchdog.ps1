@@ -62,7 +62,8 @@ param(
     # Explicit home for Linux/scratch runs; unset keeps the Windows default.
     [string]$HermesHome = $(if ($env:HERMES_HOME) { $env:HERMES_HOME }
         elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'hermes' }
-        else { Join-Path $HOME 'hermes' }),
+        elseif ($HOME) { Join-Path $HOME 'hermes' }
+        else { Join-Path $env:HOME 'hermes' }),
     [string[]]$CronDir = @((Join-Path $HermesHome 'cron')),
     [switch]$DryRun,
     [string]$PolicyPath = (Join-Path $PSScriptRoot "approval-policy.json"),
@@ -124,9 +125,14 @@ if ($CronDir.Count -eq 0) { throw "No cron directory given (-CronDir)." }
 $DriftProfile = $UserProfile
 if (-not $DriftProfile -and $EnvFile -match '^(.+)\\AppData\\Local\\hermes\\') { $DriftProfile = $Matches[1] }
 if (-not $DriftProfile) { $DriftProfile = $env:USERPROFILE }
+# On Windows $HOME comes from USERPROFILE, so it is empty whenever USERPROFILE is;
+# the HOME variable is the last profile source before giving up on one.
 if (-not $DriftProfile) { $DriftProfile = $HOME }
+if (-not $DriftProfile) { $DriftProfile = $env:HOME }
 if (-not $LearnBackupRoot) {
-    $LearnBackupRoot = if ($IsWindows) { Join-Path $DriftProfile "AppData\Local\hermes\backups\learn-edits" }
+    # With no profile at all, fall back to the Hermes home on every OS instead of
+    # joining onto an empty path, so the result never depends on where scratch sits.
+    $LearnBackupRoot = if ($IsWindows -and $DriftProfile) { Join-Path $DriftProfile "AppData\Local\hermes\backups\learn-edits" }
                       else { Join-Path $HermesHome 'backups/learn-edits' }
 }
 

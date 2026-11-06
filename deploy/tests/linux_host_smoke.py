@@ -164,6 +164,13 @@ def watchdog_case(root, case, env, home_mode="explicit"):
         child_env["HERMES_HOME"] = str(root)
         child_env.pop("LOCALAPPDATA", None)
         child_env.pop("USERPROFILE", None)
+    elif home_mode == "no-profile":
+        # WD-634 rework: on Windows PowerShell's $HOME comes from USERPROFILE, so with
+        # every profile variable unset the watchdog must still resolve from HERMES_HOME
+        # alone, wherever the scratch dir sits (not only under ...\AppData\Local\hermes\).
+        child_env["HERMES_HOME"] = str(root)
+        for key in ("LOCALAPPDATA", "USERPROFILE", "HOME"):
+            child_env.pop(key, None)
     elif home_mode == "windows-default":
         child_env.pop("HERMES_HOME", None)
         assert root.name == "hermes"
@@ -199,6 +206,7 @@ def smoke(workspace):
         for case in ("healthy", "disabled", "paused", "error", "auth", "expiry"):
             result["watchdog"][case] = watchdog_case(root / ("wd-" + case), case, env)
         result["watchdog"]["environment-home"] = watchdog_case(root / "env-home", "healthy", env, "env")
+        result["watchdog"]["no-profile-home"] = watchdog_case(root / "no-profile", "healthy", env, "no-profile")
         defaults = root / "legacy-default"
         defaults.mkdir()
         result["watchdog"]["legacy-default"] = watchdog_case(defaults / "hermes", "healthy", env, "windows-default")
@@ -225,7 +233,7 @@ def main():
     expected = json.loads((Path(__file__).parent / "fixtures/linux-host-expected.json").read_text())
     assert result == expected, json.dumps(result, indent=2)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
-    print("PORTABILITY OK: 4 Gatekeeper cases and 9 watchdog cases; no dispatch, send or state write")
+    print("PORTABILITY OK: 4 Gatekeeper cases and 10 watchdog cases; no dispatch, send or state write")
 
 
 if __name__ == "__main__":

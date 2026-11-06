@@ -13,6 +13,7 @@
     "auth": {"exit": 1, "findings": ["- [<scratch>/cron] gatekeeper-linear-auth: newest Gatekeeper output reports linear-auth-failed"]},
     "expiry": {"exit": 1, "findings": ["- linear-token-expiry: expiry date unparseable (expected ISO-8601 timestamp with timezone)"]},
     "environment-home": {"exit": 0, "findings": []},
+    "no-profile-home": {"exit": 0, "findings": []},
     "legacy-default": {"exit": 0, "findings": []},
     "home-default": {"exit": 0, "findings": []}
   }
