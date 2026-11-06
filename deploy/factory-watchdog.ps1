@@ -59,10 +59,14 @@ param(
     # Accepts several directories so one task can watch every profile's scheduler.
     # The factory's integrate worker runs under its own Hermes profile, so its cron
     # dir is NOT the default one — see docs\watchdog.md.
-    [string[]]$CronDir = @("$env:LOCALAPPDATA\hermes\cron"),
+    # Explicit home for Linux/scratch runs; unset keeps the Windows default.
+    [string]$HermesHome = $(if ($env:HERMES_HOME) { $env:HERMES_HOME }
+        elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'hermes' }
+        else { Join-Path $HOME 'hermes' }),
+    [string[]]$CronDir = @((Join-Path $HermesHome 'cron')),
     [switch]$DryRun,
     [string]$PolicyPath = (Join-Path $PSScriptRoot "approval-policy.json"),
-    [string]$EnvFile = "$env:LOCALAPPDATA\hermes\.env",
+    [string]$EnvFile = (Join-Path $HermesHome '.env'),
     [string]$JobNamePattern = "Wolftac Factory *",
     [int]$HeartbeatMaxAgeMinutes = 5,
     [int]$StaleIntervals = 3,
@@ -120,7 +124,11 @@ if ($CronDir.Count -eq 0) { throw "No cron directory given (-CronDir)." }
 $DriftProfile = $UserProfile
 if (-not $DriftProfile -and $EnvFile -match '^(.+)\\AppData\\Local\\hermes\\') { $DriftProfile = $Matches[1] }
 if (-not $DriftProfile) { $DriftProfile = $env:USERPROFILE }
-if (-not $LearnBackupRoot) { $LearnBackupRoot = Join-Path $DriftProfile "AppData\Local\hermes\backups\learn-edits" }
+if (-not $DriftProfile) { $DriftProfile = $HOME }
+if (-not $LearnBackupRoot) {
+    $LearnBackupRoot = if ($IsWindows) { Join-Path $DriftProfile "AppData\Local\hermes\backups\learn-edits" }
+                      else { Join-Path $HermesHome 'backups/learn-edits' }
+}
 
 # Findings accumulate here; each is one failed check, already human-readable.
 $findings = New-Object System.Collections.Generic.List[string]
