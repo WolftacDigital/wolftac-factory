@@ -22,6 +22,42 @@ KEY = "LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT"
 FAKES = ("fixture-only-bot-549", "fixture-only-secret-549", "fixture-only-app-549")
 
 
+def without_wd584(text):
+    """Allow only the three reviewed WD-584 forms, not arbitrary changed code."""
+    begin = '    # WD-584 BEGIN: stale-copy\n'
+    end = '    # WD-584 END: stale-copy\n'
+    modified = 'WD-584' in text or 'if ($RepoRoot) { . $DeployScript' in text
+    if modified:
+        assert text.count('WD-584') == 2, 'WD-584 delimiter count'
+        assert text.count(begin) == text.count(end) == 1, 'WD-584 malformed delimiters'
+        left, right = text.index(begin), text.index(end) + len(end)
+        assert left < right, 'WD-584 delimiter order'
+        assert text[:left].endswith('    $script:driftAvailable = $true\n'), 'WD-584 block location'
+        assert text[right:].startswith('    foreach ($p in $Pairs) {\n'), 'WD-584 block extent'
+        text = text[:left] + text[right:]
+    for function, following, indent in [('Measure-Drift', 'Add-LearnUnreadable', '        '),
+                                         ('Measure-Learn', 'Format-LearnLine', '            ')]:
+        left = text.index('function ' + function + ' {')
+        right = text.index('function ' + following, left)
+        old = indent + '. $DeployScript *> $null\n'
+        new = (indent + 'if ($RepoRoot) { . $DeployScript -RepoRoot $RepoRoot *> $null }\n' +
+               indent + 'else { . $DeployScript *> $null }\n')
+        part = text[left:right]
+        expected = new if modified else old
+        assert part.count(expected) == 1, 'WD-584 call-site shape: ' + function
+        assert part.count('. $DeployScript') == (2 if modified else 1), 'WD-584 call-site count'
+        text = text[:left] + part.replace(expected, old) + text[right:]
+    assert text.count('. $DeployScript') == 2, 'WD-584 unexpected call-site'
+    old = '                $ns = & git -C $wt diff --numstat HEAD -- $path 2>$null\n'
+    new = old.replace('diff --numstat', 'diff --no-ext-diff --no-textconv --numstat')
+    expected = new if modified else old
+    left = text.index('function Measure-Learn {')
+    right = text.index('function Format-LearnLine', left)
+    assert text[left:right].count(expected) == 1, 'WD-584 numstat location/shape'
+    assert text.count('--no-ext-diff') == text.count('--no-textconv') == int(modified), 'WD-584 unexpected flags'
+    return text.replace(expected, old)
+
+
 def timestamp(days=10, seconds=0):
     return (datetime.now(timezone.utc) + timedelta(days=days, seconds=seconds)).isoformat()
 
@@ -254,6 +290,7 @@ class WatchdogTests(unittest.TestCase):
                           '', text, flags=re.MULTILINE | re.DOTALL)
             return text.replace(' -or -not $auditDelivered', '')
         base, current = without_audit(base), without_audit(current)
+        base, current = without_wd584(base), without_wd584(current)
         marker = "# ── transition-based alerting"
         self.assertEqual(base[base.index(marker):], current[current.index(marker):])
         for start, end in [("function Send-SlackAlert", "# ── run the checks"),
@@ -284,6 +321,40 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(before[0], after[0])
         self.assertEqual(findings(before[1]), findings(after[1]))
         self.assertEqual(len(findings(after[1])), 4)
+
+    def test_wd584_normalizer_negative_controls(self):
+        from unittest.mock import patch
+        current = SCRIPT.read_text(encoding='utf-8')
+        cases = [
+            ('legacy alert', current.replace('SLACK: posted as', 'SLACK: changed as'), None),
+            ('threshold', current.replace('$hoursSince -ge $NagHours', '$hoursSince -gt $NagHours'), None),
+            ('exit', current.replace('exit 3 }', 'exit 4 }'), None),
+            ('duplicate block', current.replace('    # WD-584 END: stale-copy\n',
+                '    # WD-584 END: stale-copy\n    # WD-584 BEGIN: stale-copy\n    # WD-584 END: stale-copy\n'), 'delimiter count'),
+            ('malformed block', current.replace('# WD-584 END: stale-copy', '# WD-584 END: wrong'), 'malformed delimiters'),
+            ('call shape', current.replace('if ($RepoRoot) { . $DeployScript', 'if ($RepoRoot -ne "") { . $DeployScript'), 'call-site shape'),
+            ('flag shape', current.replace('--no-ext-diff --no-textconv', '--no-textconv --no-ext-diff'), 'numstat location/shape'),
+        ]
+        for name, mutated, message in cases:
+            with self.subTest(name=name):
+                self.assertNotEqual(current, mutated, 'mutation must be non-vacuous')
+                path = self.root / 'mutated-watchdog.ps1'
+                path.write_text(mutated, encoding='utf-8', newline='\n')
+                parser = self.root / 'parse.ps1'
+                parser.write_text('param($Path)\n$t=$null;$e=$null;'
+                    '[void][Management.Automation.Language.Parser]::ParseFile($Path,[ref]$t,[ref]$e);'
+                    'if($e.Count){exit 1};exit 0\n', encoding='utf-8')
+                result = subprocess.run([PWSH, '-NoProfile', '-File', str(parser), str(path)],
+                                        env=self.env, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, 'negative control must remain valid PowerShell')
+                # Exercise the actual existing guard and its assertions, not a facsimile.
+                with patch(__name__ + '.SCRIPT', path):
+                    with self.assertRaises(AssertionError) as failure:
+                        self.test_existing_checks_and_alerting_are_unchanged()
+                if message:
+                    self.assertIn(message, str(failure.exception))
+                else:
+                    self.assertNotIn('WD-584', str(failure.exception).split('\n')[0])
 
     def test_drift_check_still_runs_with_linear_checks(self):
         basepath, _ = self.baseline()
