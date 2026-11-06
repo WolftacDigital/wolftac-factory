@@ -40,9 +40,19 @@ Answer substantively or use `N/A — <feature-specific reason>`.
 
 ## Evidence map
 
-| Criterion | Test-plan step | Expected observable result |
-|---|---|---|
-| <one row per criterion> | <matching proof step> | <observable pass result> |
+**UNATTENDED-PROOF-SELF-CHECK:** For new specs written after this rule merges, every
+acceptance criterion must name an exact worker command or test that can prove it unattended,
+or carry `[operator]` for Jonathan to perform after merge. Before the approval pass and
+filing, stop and ask the user when any criterion has neither worker proof nor `[operator]`;
+do not file until resolved. Record the proof in the Evidence map column "Proven by (worker
+command or [operator])". Put each `[operator]` criterion, retaining its ID, in Build notes
+under Post-merge operator steps and in the OPERATE follow-up when available. Operator steps
+are not required for review PASS. Do not rewrite existing specs or relabel unmet worker
+criteria as operator steps.
+
+| Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) |
+|---|---|---|---|
+| AC-1 | <matching test-plan step> | <observable pass result> | <exact unattended worker command or test, or [operator]> |
 
 ## Test plan
 

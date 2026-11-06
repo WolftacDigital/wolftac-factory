@@ -47,6 +47,21 @@ Create one approved, build-ready Linear specification. Do not write code.
    section. No placeholders or bare `N/A`. Every acceptance criterion must be
    independently testable and have one matching evidence-map row. Include an edge or
    failure criterion and exact test commands with expected observable results.
+
+   **UNATTENDED-PROOF-SELF-CHECK:** For new specs written after this rule merges, every
+   acceptance criterion must name an exact worker command or test that can prove it unattended,
+   or carry `[operator]` for Jonathan to perform after merge. Before the approval pass and
+   filing, stop and ask the user when any criterion has neither worker proof nor `[operator]`;
+   do not file until resolved. Record the proof in the Evidence map column "Proven by (worker
+   command or [operator])". Put each `[operator]` criterion, retaining its ID, in Build notes
+   under Post-merge operator steps and in the OPERATE follow-up when available. Operator steps
+   are not required for review PASS. Do not rewrite existing specs or relabel unmet worker
+   criteria as operator steps.
+
+   | Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) |
+   |---|---|---|---|
+   | AC-1 | <matching test-plan step> | <observable pass result> | <exact unattended worker command or test, or [operator]> |
+
 4. Check open Linear issues for a live duplicate before creating anything.
 5. Show the complete draft once and request one go/no-go approval. Apply requested
    edits; do not file without approval.
