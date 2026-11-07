@@ -1,0 +1,20 @@
+{
+  "gatekeeper": {
+    "idle": "gatekeeper: build: idle; build-crm: idle; review: idle; integrate: idle; audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
+    "ready": "gatekeeper: build: no-baseline -> dispatched(dry-run); build-crm: no-baseline -> dispatched(dry-run); review: no-baseline -> dispatched(dry-run); integrate: no-baseline -> dispatched(dry-run); audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
+    "inflight": "gatekeeper: build: in-flight (skip); build-crm: no-baseline -> dispatched(dry-run); review: no-baseline -> dispatched(dry-run); integrate: no-baseline -> dispatched(dry-run); audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
+    "unauthorized": "gatekeeper: build: linear-auth-failed (401) -> skipped; build-crm: linear-auth-failed (401) -> skipped; review: linear-auth-failed (401) -> skipped; integrate: linear-auth-failed (401) -> dispatched(dry-run) for re-mint; audit: skipped (linear-auth-failed) (dry-run)"
+  },
+  "watchdog": {
+    "healthy": {"exit": 0, "findings": []},
+    "disabled": {"exit": 1, "findings": ["- [<scratch>/cron] Wolftac Factory Gatekeeper: DISABLED (enabled: false)"]},
+    "paused": {"exit": 1, "findings": ["- [<scratch>/cron] Wolftac Factory Gatekeeper: PAUSED (paused: true)"]},
+    "error": {"exit": 1, "findings": ["- [<scratch>/cron] Wolftac Factory Gatekeeper: last_status=error - synthetic failure (last run )"]},
+    "auth": {"exit": 1, "findings": ["- [<scratch>/cron] gatekeeper-linear-auth: newest Gatekeeper output reports linear-auth-failed"]},
+    "expiry": {"exit": 1, "findings": ["- linear-token-expiry: expiry date unparseable (expected ISO-8601 timestamp with timezone)"]},
+    "environment-home": {"exit": 0, "findings": []},
+    "no-profile-home": {"exit": 0, "findings": []},
+    "legacy-default": {"exit": 0, "findings": []},
+    "home-default": {"exit": 0, "findings": []}
+  }
+}
