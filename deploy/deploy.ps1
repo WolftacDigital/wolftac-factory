@@ -27,6 +27,7 @@ $Pairs = @(
     @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$env:USERPROFILE\.claude\skills\wolftac-review\SKILL.md" }
     @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\SKILL.md" }
     @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" }
+    @{ Src = "deploy\token-homes.json"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\token-homes.json" }
     @{ Src = "canonical\wolftac-integrate\scripts\slack_bot.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\slack_bot.py" }
     @{ Src = "canonical\wolftac-integrate\scripts\run_gate.py"; Dst = "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\run_gate.py" }
     # Shared doctrine skill (not a pipeline stage) — ships to every local agent surface.
@@ -39,6 +40,7 @@ $Pairs = @(
     # Codex prompts are flat .md files, so the integrate helper ships in a sibling
     # directory whose name cannot collide with a prompt file.
     @{ Src = "ports\codex\wolftac-integrate-scripts\linear_bot.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\linear_bot.py" }
+    @{ Src = "deploy\token-homes.json"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\token-homes.json" }
     @{ Src = "ports\codex\wolftac-integrate-scripts\slack_bot.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\slack_bot.py" }
     @{ Src = "ports\codex\wolftac-integrate-scripts\run_gate.py"; Dst = "$env:USERPROFILE\.codex\prompts\wolftac-integrate-scripts\run_gate.py" }
 )
@@ -130,6 +132,7 @@ if ($wslHome -and $wslHome.StartsWith("/")) {
     $Pairs += @{ Src = "canonical\wolftac-review\SKILL.md";       Dst = "$wslSkills\wolftac-review\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\SKILL.md";    Dst = "$wslSkills\wolftac-integrate\SKILL.md" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\linear_bot.py"; Dst = "$wslSkills\wolftac-integrate\scripts\linear_bot.py" }
+    $Pairs += @{ Src = "deploy\token-homes.json"; Dst = "$wslSkills\wolftac-integrate\scripts\token-homes.json" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\slack_bot.py"; Dst = "$wslSkills\wolftac-integrate\scripts\slack_bot.py" }
     $Pairs += @{ Src = "canonical\wolftac-integrate\scripts\run_gate.py"; Dst = "$wslSkills\wolftac-integrate\scripts\run_gate.py" }
     $Pairs += @{ Src = "canonical\wolftac-agent-command-patterns\SKILL.md"; Dst = "$wslSkills\wolftac-agent-command-patterns\SKILL.md" }
