@@ -117,6 +117,12 @@ foreach ($file in $approvalSurfaces) {
         if ($line -match "APPROVED? MERGE" -and $line -notmatch "\bnever\b") {
             $errors.Add("$file - accepts or offers typed approval; every APPROVE MERGE line must say it is never approval: $($line.Trim())")
         }
+        if ($line -match "gh pr merge" -and $line -notmatch "gh pr merge <n> --merge --match-head-commit <reviewed SHA>") {
+            $errors.Add("$file - a gh pr merge command is not the exact pinned form: $($line.Trim())")
+        }
+        if ($line -match "hermes -p integrator send" -and $line -notmatch "hermes -p integrator send --json --to discord:1562236246158221323 --file <body>``") {
+            $errors.Add("$file - the Discord send command is not the exact WD-599 form: $($line.Trim())")
+        }
         if ($line -match "(direct fast-forward push|pre-PR-era|fast-forward push to)" -and $line -notmatch "\bnever\b") {
             $errors.Add("$file - offers a direct fast-forward push instead of the pinned PR merge: $($line.Trim())")
         }
