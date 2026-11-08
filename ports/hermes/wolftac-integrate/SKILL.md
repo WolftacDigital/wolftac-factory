@@ -52,7 +52,7 @@ default branch.
   and merge nothing. No approval → no merge, ever. An approval older than the newest
   proof pack is void — a re-rebase invalidates prior approval.
 - **Approval requests go to Discord #approvals.** Send the request as Harper with
-  exactly `hermes -p integrator send --json --to discord:1562236246158221323 --file <body file>`.
+  exactly `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`.
   The Hermes CLI resolves Harper's own bot credential internally; never read, print
   or pass it. Require exit code 0 and JSON success with a message id. Anything else
   is a failed delivery: report the exact error, retry at most once, and never claim
@@ -343,7 +343,7 @@ every task" rule):
    - **Approval:** none is valid yet. Until WD-546's Discord gate is live, no merge will run, even after a 🚀. A typed comment or Slack reaction is never approval.
    ```
 
-   Then send the Discord approval request with `hermes -p integrator send --json --to discord:1562236246158221323 --file <body file>`,
+   Then send the Discord approval request with `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`,
    using this body:
 
    ```text
@@ -396,7 +396,7 @@ every task" rule):
    `linear_bot.py issue <ID>` confirming the report exists and the state is
    actually Done.
    Close the loop: post the INTEGRATION REPORT summary, prefixed 🚀, to #approvals
-   with `hermes -p integrator send --json --to discord:1562236246158221323 --file <body file>` (a message, not a reaction), and post a
+   with `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>` (a message, not a reaction), and post a
    back-reference comment on the issue recording the approval author, Discord
    message link and approval timestamp. If the send fails, disclose the omitted
    message in the Linear report.

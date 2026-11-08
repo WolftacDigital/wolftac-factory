@@ -55,7 +55,7 @@ proof pack based on reading reports alone.
   Discord send route. Post the proof pack only, then report
   `OPERATOR STEP: post the Discord approval request for <ID>` in the run output,
   with the request body. The operator or the Hermes worker sends it with
-  `hermes -p integrator send --json --to discord:1562236246158221323 --file <body file>`.
+  `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`.
   Never post it through any other identity or tool.
 - **Discord request encoding.** Write the request body to a scratch file outside
   any repository as UTF-8 without a BOM, and pass it with `--file`. Never put

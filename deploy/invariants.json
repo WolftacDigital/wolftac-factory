@@ -445,8 +445,8 @@
     "id": "integrate-discord-request-route",
     "description": "Hermes integrate copies send the approval request with the exact Discord send command and require a message id; the other surfaces report it as an operator step (WD-599).",
     "checks": [
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*Send the request as Harper)(?=[\\s\\S]*hermes -p integrator send --json --to discord:1562236246158221323 --file)(?=[\\s\\S]*message id)" },
-      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*Send the request as Harper)(?=[\\s\\S]*hermes -p integrator send --json --to discord:1562236246158221323 --file)(?=[\\s\\S]*message id)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*Send the request as Harper)(?=[\\s\\S]*hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`)(?=[\\s\\S]*message id)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*Send the request as Harper)(?=[\\s\\S]*hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`)(?=[\\s\\S]*message id)" },
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no supported\\s+Discord send route)(?=[\\s\\S]*OPERATOR STEP: post the Discord approval request for <ID>)" },
       { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no supported\\s+Discord send route)(?=[\\s\\S]*OPERATOR STEP: post the Discord approval request for <ID>)" },
       { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*no supported\\s+Discord send route)(?=[\\s\\S]*OPERATOR STEP: post the Discord approval request for <ID>)" },
