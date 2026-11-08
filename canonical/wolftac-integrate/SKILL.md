@@ -29,7 +29,7 @@ run, "reviewed" work is unmerged work — the debt this stage exists to eliminat
 - Linear team: **Wolftac Digital** (key `WD`)
 - Queue label: **Factory Queue**
 - You consume: state **Approved** • You produce: **Done** (merged & ancestry-verified) or **Todo** (rebase conflict / gate failure → rework by /wolftac-build)
-- State conveyor: `Todo` → `In Progress` (/wolftac-build) → `In Review` (awaiting QA) → `Approved` (/wolftac-review PASS) → `Done` (you, after an approved merge)
+- State conveyor: `Todo` → `In Progress` (/wolftac-build) → `In Review` (awaiting QA) → `Approved` (/wolftac-review PASS) → `Done` (you, after a merge Jonathan approved)
 - **The human approval gate is absolute, and no approval artifact is valid yet.**
   A merge happens only after a valid human approval artifact NEWER than the latest
   MERGE PROOF PACK on the issue. Until WD-546 adds the verified Discord 🚀 check to

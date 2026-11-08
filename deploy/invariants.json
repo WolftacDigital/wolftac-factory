@@ -420,13 +420,13 @@
     "id": "typed-approval-is-never-approval",
     "description": "Every line that names a typed APPROVE MERGE / APPROVED MERGE comment says it is never approval (WD-599).",
     "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*(?-i:APPROVED? MERGE))(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*(?-i:APPROVED? MERGE))(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
-      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*(?-i:APPROVED? MERGE))(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*(?-i:APPROVED? MERGE))(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*(?-i:APPROVED? MERGE))(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
-      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*(?-i:APPROVED? MERGE))(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
-      { "file": "AGENTS.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*(?-i:APPROVED? MERGE))(?![^\\n]*\\bnever\\b)[^\\n]*$)" }
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "AGENTS.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" }
     ]
   },
   {

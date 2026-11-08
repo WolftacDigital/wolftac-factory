@@ -114,7 +114,7 @@ $approvalSurfaces = @(
 foreach ($file in $approvalSurfaces) {
     $content = Read-RepoFile $file
     foreach ($line in ($content -split "`r?`n")) {
-        if ($line -cmatch "APPROVED? MERGE" -and $line -notmatch "\bnever\b") {
+        if ($line -match "APPROVED? MERGE" -and $line -notmatch "\bnever\b") {
             $errors.Add("$file - accepts or offers typed approval; every APPROVE MERGE line must say it is never approval: $($line.Trim())")
         }
         if ($line -match "(direct fast-forward push|pre-PR-era|fast-forward push to)" -and $line -notmatch "\bnever\b") {
