@@ -145,6 +145,12 @@ HTTP 401 remains a Slack-check failure, not a Linear authentication failure.
 
 ### Slack approval check and its deliberate fail-open exception
 
+**Since WD-599 (2026-11-08), a Slack reaction is never approval.** Jonathan retired
+Slack for the factory, and the integrate skills now treat no artifact as valid until
+WD-546's Discord gate is live. The check below still runs in the installed
+Gatekeeper and can wake integrate, but integrate will not merge on it. WD-546
+replaces it with a Discord check.
+
 Only an otherwise unchanged integrate lane checks Slack, unless `--no-slack`
 is passed. For each Approved issue, find the newest `MERGE PROOF PACK` or
 `LANDING PROOF PACK` comment within the fetched window. Extract its Slack
@@ -159,15 +165,14 @@ already recorded in `approval_dispatched`. Record it only after a successful
 launch. One tick consumes at most one approval; other approvals remain for later
 passes. A newer proof pack with a new ts can dispatch again. Other users or
 reactions do nothing. The integrate worker still independently verifies every
-approval gate; the gatekeeper **never approves or merges**. Typed `APPROVE MERGE`
-comments already change the Linear fingerprint and need no Slack check.
+approval gate; the gatekeeper **never approves or merges**. A typed `APPROVE MERGE` comment is never approval; it only changes the Linear fingerprint.
 
 Missing `SLACK_FACTORY_BOT_TOKEN`, missing/invalid policy, HTTP errors and
 `ok:false` print `integrate: slack-check-failed (<reason>)` every affected tick,
 **do not dispatch on that account**, and do not stop other lanes. This is the
 separate exception to fail-open: failing open on Slack outages would
 restore the very per-tick cost this change eliminates. The two-hour safety net
-and typed-comment path bound the approval delay. Error diagnostics exclude
+bounds the delay. Error diagnostics exclude
 remote response bodies and exception text that might echo credentials.
 
 ### Detached dispatch, in-flight guard and lane isolation

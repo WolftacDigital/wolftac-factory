@@ -82,7 +82,7 @@ $integrateFiles = @(
 foreach ($file in $integrateFiles) {
     $content = Read-RepoFile $file
     Require-Pattern $file "MERGE PROOF PACK" "missing the MERGE PROOF PACK contract"
-    Require-Pattern $file "APPROVE MERGE" "missing the APPROVE MERGE human approval gate"
+    Require-Pattern $file "no approval artifact is valid yet" "missing the WD-599 rule that no approval artifact is valid until WD-546"
     Require-Pattern $file "merge-base --is-ancestor" "does not verify merge ancestry before Done"
     Require-Pattern $file "detached integrate\s+worktree" "does not require an isolated integrate worktree"
     Require-Pattern $file "[Nn]ever force-push" "missing the force-push prohibition"
@@ -97,6 +97,35 @@ foreach ($file in $integrateFiles) {
     Require-Pattern $file "[Dd]o not load or use.{0,100}default\s+Linear" "stage does not prohibit loading or using the default Linear transport"
     if ([regex]::IsMatch($content, '(ToolSearch|`(?:list_issues|get_issue|save_issue|list_comments|save_comment)`|Confirm Linear tools|use this profile''s Linear toolset equivalents)', "IgnoreCase")) {
         $errors.Add("$file - integrate procedure references the default/human Linear tool path instead of bot-authenticated GraphQL")
+    }
+}
+
+# WD-599: a typed comment is never approval, Slack is out of the approval path, and
+# every merge is pinned to the reviewed head with no direct-push fallback.
+$approvalSurfaces = @(
+    "canonical/wolftac-integrate/SKILL.md",
+    "ports/hermes/wolftac-integrate/SKILL.md",
+    "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+    "ports/codex/wolftac-integrate.md",
+    "ports/claude-desktop/wolftac-integrate/SKILL.md",
+    "AGENTS.md"
+)
+foreach ($file in $approvalSurfaces) {
+    $content = Read-RepoFile $file
+    foreach ($line in ($content -split "`r?`n")) {
+        if ($line -cmatch "APPROVED? MERGE" -and $line -notmatch "\bnever\b") {
+            $errors.Add("$file - accepts or offers typed approval; every APPROVE MERGE line must say it is never approval: $($line.Trim())")
+        }
+        if ($line -match "(direct fast-forward push|pre-PR-era|fast-forward push to)" -and $line -notmatch "\bnever\b") {
+            $errors.Add("$file - offers a direct fast-forward push instead of the pinned PR merge: $($line.Trim())")
+        }
+    }
+    if ($file -ne "AGENTS.md") {
+        Require-Pattern $file "--match-head-commit" "merge is not pinned to the reviewed head with --match-head-commit"
+        if ([regex]::IsMatch($content, "(slack_bot|reactions\.get|chat\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id)", "IgnoreCase")) {
+            $errors.Add("$file - integrate still posts to or reads Slack; Slack is retired from the approval path")
+        }
     }
 }
 
