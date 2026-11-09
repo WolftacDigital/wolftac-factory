@@ -18,9 +18,9 @@ testable plan and files it as a Linear issue; **build** picks up specced issues,
 implements them on a branch, and *proves* they work by running the code; **review**
 re-verifies independently and marks passing work Approved; **integrate** rebases the
 approved branch onto the default branch, re-runs the gates, posts a proof pack and a
-Discord approval request, and — only after the human's verified Discord 🚀 on that
-request (WD-546; until it is live no approval is valid and nothing merges) — merges
-it and marks it Done. Done means merged:
+Discord approval request, and — only after the human's own Discord 🚀 on that exact
+request, verified by `deploy/discord_approval.py` (WD-546) — merges it and marks it
+Done. Done means merged:
 the only stage allowed to set it is integrate, and only after ancestry is verified.
 Any agent on any platform can run any stage — the Linear issue itself carries all
 the context, so a Codex session can build what a Fable session specced, and a Hermes
@@ -35,10 +35,15 @@ session can review what Codex built.
 - **States, in order:** `Todo` (specced, ready to build) → `In Progress` (a build
   session has claimed it) → `In Review` (built, awaiting QA) → `Approved` (review
   passed, awaiting merge) → `Done` (merged to the remote default branch — **only the
-  integrate stage may set this, and only after the human's approval: Jonathan's
-  verified 🚀 on the matching Discord #approvals request, checked by WD-546's
-  verifier. Until WD-546 is live, no approval artifact is valid and integrate never
-  merges**). A typed comment (`APPROVE MERGE`, `APPROVED MERGE`, any wording) is never approval.
+  integrate stage may set this, and only after the human's approval**).
+  **DISCORD-APPROVAL-ONLY:** the only approval is Jonathan's own 🚀 on the newest
+  Discord #approvals request for the issue, judged `APPROVED` (exit 0) by
+  `deploy/discord_approval.py verify`, which reads it through R1, the read-only
+  `wolftac-approval-read` Hermes plugin. Any other verdict or a reader error fails
+  closed: nothing merges, and without R1 installed integrate stays request-only.
+  **APPROVAL-BOUND-TO-SHA:** an approval binds one repo, PR, full head SHA, issue and
+  proof pack. A new commit cancels it, and integrate posts a fresh pack and request.
+  **TYPED-APPROVAL-IS-NEVER-APPROVAL:** a typed comment (`APPROVE MERGE`, `APPROVED MERGE`, any wording) is never approval.
   Slack is retired for the factory: a Slack reaction is never approval, and integrate
   never posts approval requests to Slack. Integrate sends each request to Discord
   #approvals as Harper with
