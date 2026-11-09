@@ -29,7 +29,7 @@ jobs:
 
       - name: Reject CR bytes in tracked source documents
         run: |
-          $extensions = @(".md", ".json", ".ps1", ".yml")
+          $extensions = @(".md", ".json", ".ps1", ".yml", ".yaml", ".py")
           $tracked = @(git ls-files | Where-Object {
             $extensions -contains [IO.Path]::GetExtension($_).ToLowerInvariant()
           })

@@ -29,7 +29,7 @@ issue containing a build-ready spec. You never write code in this stage.
 - Filed state: **Todo**
 - State conveyor: `Todo` (specced) → `In Progress` (/wolftac-build working) → `In Review` (awaiting QA) → `Approved` (review PASS, awaiting merge) → `Done` (merged to the default branch by /wolftac-integrate)
 - Cross-agent: this factory also runs on Claude Desktop, Codex, and Hermes — the Linear
-  conventions above are the shared contract; any agent may build/wolftac-review what you spec.
+  conventions above are the shared contract; any agent may build/review what you spec.
 
 ## Procedure
 

@@ -157,6 +157,8 @@ $helperCopies = @{
     # The Desktop bundle ships the helper for portability, but Desktop invokes the
     # copy on the terminal server's filesystem — the uploaded bundle is not on it.
     "ports/claude-desktop/wolftac-integrate/SKILL.md"             = "ports/claude-desktop/wolftac-integrate/scripts/linear_bot.py"
+    # The parked factory-integrate port still ships the sixth copy; keep it identical too.
+    "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md" = "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py"
 }
 $canonicalHelperText = (Read-RepoFile $canonicalHelper) -replace "`r`n", "`n"
 foreach ($surface in $helperCopies.Keys) {
