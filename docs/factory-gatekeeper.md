@@ -339,8 +339,8 @@ scheduler files. The isolated `factory-integrate` profile is not in scope.
    Back up the installed `approval-policy.json` first. If the watchdog script is
    installed in the same folder, it reads this file for its Slack alerts
    (`slack_channel_id`, `fallback_identity`); the six-key Discord policy has neither,
-   so those Slack alerts stop. Slack is retired, and WD-551 moves watchdog alerts to
-   Discord. R1 must be installed (WD-546 OP-1) before the Discord check can dispatch;
+   so those Slack alerts stop. Jonathan accepted this on November 9, 2026 (WD-546),
+   because Slack is retired; WD-551 moves watchdog alerts to Discord. R1 must be installed (WD-546 OP-1) before the Discord check can dispatch;
    until then integrate reports `discord-check-failed` and never dispatches on it.
 3. Confirm existing gatekeeper job `1a9fb621f161` still references
    `factory_gatekeeper.py` with `no_agent: true`; confirm the existing interval

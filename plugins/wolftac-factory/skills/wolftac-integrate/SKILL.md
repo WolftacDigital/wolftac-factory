@@ -37,7 +37,8 @@ default branch — nothing less.
   Without R1 installed the verifier fails closed, so integrate stays request-only
   until R1 is installed and the WD-546 canary has passed.
   - **APPROVAL-BOUND-TO-SHA:** an approval binds one repo, PR, full head SHA, issue
-    and proof pack, exactly as the request message states them. A new commit
+    and proof pack, exactly as the request message states them; the verifier's
+    `--proof-pack` must be the newest pack's URL (`REJECTED proof-pack-mismatch`). A new commit
     cancels it: the verifier returns `REJECTED sha-mismatch`, and integrate posts
     fresh gates, a fresh pack and a fresh request. A request edited or deleted after
     posting is never approval, and neither is a request posted before the Discord
@@ -342,7 +343,7 @@ every task" rule):
 6. **Merge (approval path).** Run this step only on the verifier's `APPROVED` (exit 0) for the newest request.
    Re-run the verifier immediately before acting (approval races are real): read the
    current PR head with `gh pr view <n> --json headRefOid`, then run
-   `python deploy/discord_approval.py verify --policy deploy/approval-policy.json --channel-id <channel id> --message-id <message id> --issue <ID> --repo <owner/name> --pr <n> --sha <current PR head>`
+   `python deploy/discord_approval.py verify --policy deploy/approval-policy.json --channel-id <channel id> --message-id <message id> --issue <ID> --repo <owner/name> --pr <n> --sha <current PR head> --proof-pack <proof pack URL>`
    from a verified Factory checkout, never from the target repository. Continue only
    on `APPROVED` with exit 0 and only while the current PR head equals the reviewed
    SHA; anything else means merge nothing, report the verdict and reason, and stop.
@@ -421,7 +422,8 @@ every task" rule):
 
 6-alt. **Land (approval path).** Run this step only on the verifier's `APPROVED` (exit 0) for the newest request.
    Re-run the verifier immediately before acting, exactly as in step 6 but with
-   `--pr none` and `--sha` set to the request's recorded Head SHA. Confirm no
+   `--pr none`, `--sha` set to the request's recorded Head SHA and `--proof-pack` set to the newest
+   LANDING PROOF PACK's URL. Confirm no
    other session has posted an INTEGRATION REPORT. An approval OLDER than the newest
    LANDING PROOF PACK is void — post a fresh pack instead of landing on it. Re-run
    the spec's **Test plan** (command gates via `run_gate.py run`, per GATE-RUNNER)

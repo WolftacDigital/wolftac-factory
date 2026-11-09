@@ -3,6 +3,7 @@
 
     python deploy/discord_approval.py verify --policy <path> --channel-id <id>
         --message-id <id> --issue WD-N --repo <owner/name> --pr <n|none> --sha <40hex>
+        --proof-pack <Linear comment URL>
 
 Runs R1 (``hermes -p integrator wolftac-approval-read``) as a subprocess with every
 DISCORD_* environment name removed, then judges R1's FINAL message read and its
@@ -32,6 +33,8 @@ SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
 ISSUE_RE = re.compile(r"WD-[0-9]{1,6}", re.ASCII)
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}", re.ASCII)
 PR_RE = re.compile(r"[1-9][0-9]{0,6}", re.ASCII)
+# The exact Linear comment URL of the proof pack this request belongs to.
+PACK_RE = re.compile(r"https://linear\.app/[A-Za-z0-9._~%/#?=&-]{1,400}", re.ASCII)
 ROCKET = "\U0001F680"
 POLICY_KEYS = frozenset({
     "discord_guild_id", "discord_channel_id", "approver_discord_user_id",
@@ -207,8 +210,8 @@ def judge(document: dict, policy: dict, args) -> tuple[str, str]:
         return "REJECTED", "pr-mismatch"
     if fields["Head"] != args.sha:
         return "REJECTED", "sha-mismatch"
-    if not fields["Proof pack"].startswith("https://linear.app/"):
-        return "REJECTED", "malformed-body"
+    if fields["Proof pack"] != args.proof_pack:
+        return "REJECTED", "proof-pack-mismatch"
     expected_mention = (f"<@{policy['approver_discord_user_id']}> react {policy['approval_emoji']} to approve "
                         "this exact commit. A new commit cancels this approval.")
     if fields["mention"] != expected_mention:
@@ -229,14 +232,16 @@ def emit(verdict: str, reason: str, issue, message_id) -> None:
 def valid_args(args) -> bool:
     return bool(ID_RE.fullmatch(args.channel_id or "") and ID_RE.fullmatch(args.message_id or "")
                 and ISSUE_RE.fullmatch(args.issue or "") and REPO_RE.fullmatch(args.repo or "")
-                and (args.pr == "none" or PR_RE.fullmatch(args.pr or "")) and SHA_RE.fullmatch(args.sha or ""))
+                and (args.pr == "none" or PR_RE.fullmatch(args.pr or "")) and SHA_RE.fullmatch(args.sha or "")
+                and PACK_RE.fullmatch(args.proof_pack or ""))
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Verify Jonathan's Discord rocket on one exact merge request.")
     sub = parser.add_subparsers(dest="command", required=True)
     verify = sub.add_parser("verify")
-    for name in ("--policy", "--channel-id", "--message-id", "--issue", "--repo", "--pr", "--sha"):
+    for name in ("--policy", "--channel-id", "--message-id", "--issue", "--repo", "--pr", "--sha",
+                 "--proof-pack"):
         verify.add_argument(name, required=True)
     args = parser.parse_args(argv)
     issue = args.issue if ISSUE_RE.fullmatch(args.issue or "") else None

@@ -34,11 +34,12 @@ SENTINEL = "discord-token-SENTINEL-546"
 POLICY = {"discord_guild_id": GUILD, "discord_channel_id": CHANNEL, "approver_discord_user_id": APPROVER,
           "pack_author_discord_user_ids": [HARPER], "reader_bot_discord_user_id": HARPER,
           "approval_emoji": ROCKET}
+PACK = "https://linear.app/wolftac-digital/issue/WD-546#comment-1"
 MENTION = f"<@{APPROVER}> react {ROCKET} to approve this exact commit. A new commit cancels this approval."
 
 
 def body(issue="WD-546", repo=REPO, pr=f"#75 https://github.com/{REPO}/pull/75", head=SHA,
-         pack="https://linear.app/wolftac-digital/issue/WD-546#comment-1", mention=MENTION, extra=None):
+         pack=PACK, mention=MENTION, extra=None):
     lines = ["FACTORY MERGE APPROVAL REQUEST", f"Issue: {issue}", f"Repo: {repo}", f"PR: {pr}",
              f"Head: {head}", f"Proof pack: {pack}", mention]
     if extra is not None:
@@ -79,9 +80,9 @@ class VerifierTests(unittest.TestCase):
         return self.result
 
     def verify(self, *, channel=CHANNEL, message=MESSAGE, issue="WD-546", repo=REPO, pr="75", sha=SHA,
-               policy=None):
+               policy=None, pack=PACK):
         argv = ["verify", "--policy", str(policy or self.policy), "--channel-id", channel, "--message-id", message,
-                "--issue", issue, "--repo", repo, "--pr", pr, "--sha", sha]
+                "--issue", issue, "--repo", repo, "--pr", pr, "--sha", sha, "--proof-pack", pack]
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             code = v.main(argv)
@@ -157,7 +158,12 @@ class VerifierTests(unittest.TestCase):
                           "malformed-body"),
             "wrong-mention": (dict(message_content=body(mention=MENTION.replace(APPROVER, OTHER_BOT))), {},
                               "malformed-body"),
-            "pack-not-linear": (dict(message_content=body(pack="https://example.com/x")), {}, "malformed-body"),
+            "pack-not-linear": (dict(message_content=body(pack="https://example.com/x")), {},
+                                "proof-pack-mismatch"),
+            "other-issue-pack": (dict(message_content=body(
+                pack="https://linear.app/wolftac-digital/issue/WD-999#comment-1")), {}, "proof-pack-mismatch"),
+            "older-pack-same-issue": (dict(message_content=body(
+                pack="https://linear.app/wolftac-digital/issue/WD-546#comment-0")), {}, "proof-pack-mismatch"),
             "recovery-request": (dict(message_content=body().replace("REQUEST", "REQUEST (REQUEST-ONLY RECOVERY)", 1)),
                                  {}, "pre-cutover-request"),
             "interim-request": (dict(message_content=body(extra="No merge will run until the Discord gate (WD-546) "
@@ -216,7 +222,8 @@ class VerifierTests(unittest.TestCase):
     def test_bad_arguments_never_run_the_reader(self):
         for kwargs in ({"sha": SHA.upper()}, {"sha": SHA[:39]}, {"issue": "WD-"}, {"issue": "XX-1"},
                        {"pr": "0"}, {"pr": "#75"}, {"channel": "1234"}, {"message": "1" * 21},
-                       {"repo": "no-slash"}, {"repo": "a/b/c"}):
+                       {"repo": "no-slash"}, {"repo": "a/b/c"}, {"pack": "https://example.com/x"},
+                       {"pack": "https://linear.app/x y"}, {"pack": ""}):
             with self.subTest(kwargs=kwargs):
                 self.calls.clear()
                 code, result = self.verify(**kwargs)
@@ -256,7 +263,7 @@ class VerifierTests(unittest.TestCase):
             err = io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 v.main(["verify", "--policy", str(self.policy), "--channel-id", CHANNEL, "--message-id", MESSAGE,
-                        "--issue", "WD-546", "--repo", REPO, "--pr", "75", "--sha", SHA])
+                        "--issue", "WD-546", "--repo", REPO, "--pr", "75", "--sha", SHA, "--proof-pack", PACK])
             outputs.append(out.getvalue() + err.getvalue())
         self.assertNotIn(SENTINEL, "".join(outputs))
 
