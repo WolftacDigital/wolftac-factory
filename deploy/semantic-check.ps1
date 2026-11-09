@@ -82,7 +82,8 @@ $integrateFiles = @(
 foreach ($file in $integrateFiles) {
     $content = Read-RepoFile $file
     Require-Pattern $file "MERGE PROOF PACK" "missing the MERGE PROOF PACK contract"
-    Require-Pattern $file "no approval artifact is valid yet" "missing the WD-599 rule that no approval artifact is valid until WD-546"
+    Require-Pattern $file "DISCORD-APPROVAL-ONLY" "missing the WD-546 rule that only the verified Discord rocket is approval"
+    Require-Pattern $file "discord_approval\.py verify --policy deploy/approval-policy\.json" "merge path does not run the WD-546 verifier"
     Require-Pattern $file "merge-base --is-ancestor" "does not verify merge ancestry before Done"
     Require-Pattern $file "detached integrate\s+worktree" "does not require an isolated integrate worktree"
     Require-Pattern $file "[Nn]ever force-push" "missing the force-push prohibition"
@@ -100,8 +101,9 @@ foreach ($file in $integrateFiles) {
     }
 }
 
-# WD-599: a typed comment is never approval, Slack is out of the approval path, and
-# every merge is pinned to the reviewed head with no direct-push fallback.
+# WD-599/WD-546: a typed comment is never approval, Slack is out of the approval path,
+# every merge is pinned to the reviewed head with no direct-push fallback, and only the
+# verified Discord rocket (DISCORD-APPROVAL-ONLY) approves.
 $approvalSurfaces = @(
     "canonical/wolftac-integrate/SKILL.md",
     "ports/hermes/wolftac-integrate/SKILL.md",
@@ -126,6 +128,15 @@ foreach ($file in $approvalSurfaces) {
         if ($line -match "(direct fast-forward push|pre-PR-era|fast-forward push to)" -and $line -notmatch "\bnever\b") {
             $errors.Add("$file - offers a direct fast-forward push instead of the pinned PR merge: $($line.Trim())")
         }
+    }
+    foreach ($marker in @("DISCORD-APPROVAL-ONLY", "APPROVAL-BOUND-TO-SHA", "TYPED-APPROVAL-IS-NEVER-APPROVAL")) {
+        Require-Pattern $file $marker "missing the WD-546 marker $marker"
+    }
+    if ([regex]::IsMatch($content, "(typed|written|Linear)\s+(comment|approval)[^\r\n]{0,60}\b(counts as|is a valid|is valid|qualifies as|serves as|also approves)\b", "IgnoreCase")) {
+        $errors.Add("$file - describes a typed comment as accepted approval; typed approval is never approval")
+    }
+    if ([regex]::IsMatch($content, "(valid yet|until WD-546 is live|No merge will run until)", "IgnoreCase")) {
+        $errors.Add("$file - still carries WD-599's interim no-approval rule; WD-546 replaced it with the Discord gate")
     }
     if ($file -ne "AGENTS.md") {
         Require-Pattern $file "--match-head-commit" "merge is not pinned to the reviewed head with --match-head-commit"

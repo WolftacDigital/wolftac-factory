@@ -21,13 +21,17 @@ Design constraints learned the hard way (WD-357, WD-380):
 * Linear/env/probe failures fail OPEN (subject to the in-flight guard), except
   a Linear HTTP 401 anywhere in the tick: skip build/review and dispatch only
   integrate for re-mint. Probe all ready lanes before dispatching any of them.
-  Slack is also an exception: on an otherwise unchanged integrate lane,
-  missing credentials/policy or API failures report ``slack-check-failed`` and
-  do NOT dispatch. The safety net and typed approval comments bound the delay.
+  Discord is also an exception: on an otherwise unchanged integrate lane, an
+  invalid policy or any R1 reader failure reports ``discord-check-failed`` and
+  does NOT dispatch. The two-hour safety net bounds the delay.
 * Tokens come from the .env FILE, never the process environment or argv. Never
   print remote error bodies or exception messages, which may echo credentials.
+* The gatekeeper never holds a Discord credential. It asks R1, the read-only
+  ``wolftac-approval-read`` Hermes plugin, run as Harper with every DISCORD_*
+  environment name removed (WD-546).
 
-Read-only against Linear and Slack; a rocket dispatches, never approves/merges.
+Read-only against Linear and Discord; a rocket dispatches, never approves/merges.
+Approval itself is decided by integrate through deploy/discord_approval.py.
 Canonical: deploy/factory-gatekeeper.py; installed: scripts/factory_gatekeeper.py
 Wiring and rollback: docs/factory-gatekeeper.md
 """
@@ -141,7 +145,18 @@ query($id: String!, $after: String) {
   }
 }
 """
-PERMALINK = re.compile(r"https://[^/\s]+/archives/([A-Z0-9]+)/p(\d{10})(\d{6})")
+DISCORD_PERMALINK = re.compile(
+    r"https://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/([0-9]{17,20})/([0-9]{17,20})/([0-9]{17,20})(?![0-9])"
+)
+DISCORD_POLICY_KEYS = frozenset({
+    "discord_guild_id", "discord_channel_id", "approver_discord_user_id",
+    "pack_author_discord_user_ids", "reader_bot_discord_user_id", "approval_emoji",
+})
+DISCORD_ID = re.compile(r"[0-9]{17,20}")
+READER_PROFILE = "integrator"
+READER_SUBCOMMAND = "wolftac-approval-read"
+READER_TIMEOUT_SECONDS = 75
+READER_ERROR = re.compile(r"[a-z_]{1,40}")
 READY_COMMENTS_QUERY = """
 query($id: String!, $after: String) {
   issue(id: $id) {
@@ -473,37 +488,102 @@ def lane_fingerprint(issues: list[dict]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def slack_approval(issues: list[dict], dispatched: dict, env_path: str, policy_path: str):
-    """Return one unconsumed (issue, ts) rocket; never approve or write to Slack."""
-    token = read_token(env_path, "SLACK_FACTORY_BOT_TOKEN")
-    with open(policy_path, encoding="utf-8") as fh:
-        policy = json.load(fh)
-    channel = policy.get("slack_channel_id")
-    approver = policy.get("approver_slack_user_id")
-    if not isinstance(channel, str) or not channel or not isinstance(approver, str) or not approver:
-        raise ProbeError("approval policy missing channel or approver")
+def load_discord_policy(policy_path: str) -> dict:
+    """The six-key Discord policy (WD-546); anything else fails closed."""
+    try:
+        with open(policy_path, encoding="utf-8") as fh:
+            policy = json.load(fh)
+    except (OSError, ValueError):
+        raise ProbeError("approval policy unreadable") from None
+    if not isinstance(policy, dict) or set(policy) != DISCORD_POLICY_KEYS:
+        raise ProbeError("approval policy invalid")
+    ids = [policy["discord_guild_id"], policy["discord_channel_id"],
+           policy["approver_discord_user_id"], policy["reader_bot_discord_user_id"]]
+    authors = policy["pack_author_discord_user_ids"]
+    if (not all(isinstance(v, str) and DISCORD_ID.fullmatch(v) for v in ids)
+            or not isinstance(authors, list) or not authors
+            or not all(isinstance(v, str) and DISCORD_ID.fullmatch(v) for v in authors)
+            or policy["approval_emoji"] != "\U0001F680"):
+        raise ProbeError("approval policy invalid")
+    return policy
+
+
+def run_reader(argv: list[str], env: dict, timeout: int = READER_TIMEOUT_SECONDS):
+    """Run R1 and wait for it. Returns (exit code, stdout); (None, reason) if it never finished."""
+    try:
+        proc = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,  # noqa: S603
+                              stderr=subprocess.DEVNULL, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+    except OSError:
+        return None, "launch-failed"
+    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+
+
+def read_reactors(channel: str, message: str, emoji: str) -> dict:
+    """R1's success document for one message; ProbeError(<fixed code>) otherwise."""
+    argv = hermes_cli() + ["-p", READER_PROFILE, READER_SUBCOMMAND, "--channel", channel,
+                           "--message", message, "--emoji", emoji, "--json"]
+    # Names only: a parent DISCORD_* value (another profile's token) never reaches R1.
+    env = {name: value for name, value in os.environ.items() if not name.upper().startswith("DISCORD_")}
+    code, text = run_reader(argv, env)
+    if code is None:
+        raise ProbeError(text)
+    documents = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            document = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(document, dict) and document.get("contract") == 1 and "ok" in document:
+            documents.append(document)
+    if len(documents) != 1:
+        raise ProbeError("malformed-output" if code == 0 else f"exit-{code}")
+    document = documents[0]
+    if document.get("ok") is not True:
+        error = document.get("error")
+        raise ProbeError(error if isinstance(error, str) and READER_ERROR.fullmatch(error) else "reader-error")
+    if code != 0:
+        raise ProbeError(f"exit-{code}")
+    if not isinstance(document.get("reactors"), list):
+        raise ProbeError("malformed-output")
+    return document
+
+
+def discord_approval(issues: list[dict], dispatched: dict, policy_path: str):
+    """Return one unconsumed (issue, message id) rocket; never approve or write to Discord.
+
+    The request permalink is in the newest proof pack or a later comment (the
+    pack thread's reply). Only #approvals counts here. A match only wakes
+    integrate, which re-verifies everything with deploy/discord_approval.py.
+    """
+    policy = load_discord_policy(policy_path)
+    approver = policy["approver_discord_user_id"]
     for issue in sorted(issues, key=lambda x: x["identifier"]):
-        packs = [c for c in issue["comments"]["nodes"]
+        comments = issue["comments"]["nodes"]
+        packs = [c for c in comments
                  if any(marker in (c["body"] or "") for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"))]
         if not packs:
             continue
         pack = max(packs, key=lambda c: c["createdAt"])
-        match = PERMALINK.search(pack["body"])
-        if not match or match[1] != channel:
+        links = []
+        for c in sorted((c for c in comments if c["createdAt"] >= pack["createdAt"]),
+                        key=lambda c: c["createdAt"]):
+            links.extend(DISCORD_PERMALINK.findall(c["body"] or ""))
+        if not links:
             continue
-        ts = match[2] + "." + match[3]
-        if dispatched.get(issue["identifier"]) == ts:
+        guild, channel, message = links[-1]
+        if guild != policy["discord_guild_id"] or channel != policy["discord_channel_id"]:
             continue
-        params = urllib.parse.urlencode({"channel": channel, "timestamp": ts, "full": "true"})
-        req = urllib.request.Request("https://slack.com/api/reactions.get?" + params,
-                                     headers={"Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = json.load(resp)
-        if payload.get("ok") is not True:
-            raise ProbeError("Slack API ok:false")
-        for reaction in payload["message"].get("reactions", []):
-            if reaction.get("name") == "rocket" and approver in reaction.get("users", []):
-                return issue["identifier"], ts
+        if dispatched.get(issue["identifier"]) == message:
+            continue
+        document = read_reactors(channel, message, policy["approval_emoji"])
+        for row in document["reactors"]:
+            if isinstance(row, dict) and row.get("id") == approver and row.get("bot") is False:
+                return issue["identifier"], message
     return None
 
 
@@ -557,7 +637,7 @@ def main() -> int:
     parser.add_argument("--exec-override", default=None,
                         help="TEST ONLY: JSON argv list to launch instead of the hermes CLI")
     parser.add_argument("--approval-policy", default=os.path.join(os.path.dirname(__file__), "approval-policy.json"))
-    parser.add_argument("--no-slack", action="store_true", help="skip Slack checks")
+    parser.add_argument("--no-discord", action="store_true", help="skip Discord approval checks")
     parser.add_argument("--no-audit", action="store_true", help="skip audit queries and output")
     parser.add_argument("--audit-only", action="store_true", help="audit without probing or dispatching lanes")
     parser.add_argument("--audit-since", type=audit_since, help="force audit from a timezone-qualified ISO-8601 timestamp")
@@ -687,16 +767,16 @@ def main() -> int:
                     elif stale is not None:
                         reason = stale
                     else:
-                        if lane == "integrate" and not args.no_slack:
+                        if lane == "integrate" and not args.no_discord:
                             try:
-                                approval = slack_approval(issues, approvals, env_path, args.approval_policy)
-                            except Exception as exc:  # noqa: BLE001 — Slack never fails open
-                                lines.append(f"{lane}: slack-check-failed ({error_reason(exc)})")
+                                approval = discord_approval(issues, approvals, args.approval_policy)
+                            except Exception as exc:  # noqa: BLE001 — Discord never fails open
+                                lines.append(f"{lane}: discord-check-failed ({error_reason(exc)})")
                                 continue
                         if approval is None:
                             lines.append(f"{lane}: unchanged (skip)")
                             continue
-                        reason = f"slack-approval {approval[0]}"
+                        reason = f"discord-approval {approval[0]}"
 
             result = dispatch(job_id, lane, args.dry_run, exec_override, profile)
             suffix = " for re-mint" if linear_auth_failed and result.startswith("dispatched(") else ""

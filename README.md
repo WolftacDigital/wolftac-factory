@@ -4,8 +4,8 @@ This is your `/wolftac-spec` → `/wolftac-build` → `/wolftac-review` →
 `/wolftac-integrate` software factory: a repeatable pipeline where one agent turns
 an idea into a detailed spec, another builds it and proves it works, a third
 independently re-verifies and marks it Approved, and a fourth lands the approved
-branch on the default branch — only after your explicit `APPROVE MERGE` — and marks
-it Done. Done means merged. It runs across **Claude Code, Claude Desktop, Codex,
+branch on the default branch — only after your own 🚀 on its Discord #approvals
+request, verified by `deploy/discord_approval.py` — and marks it Done. Done means merged. It runs across **Claude Code, Claude Desktop, Codex,
 and Hermes** — the whole hand-off happens through one shared Linear queue, not
 through this repo. Claude Code, Codex, and Hermes can run every stage; Claude
 Desktop participates fully in spec, and in build/review only when the chat has
@@ -27,7 +27,7 @@ canonical/              Claude Code skills (the reference implementation)
   wolftac-spec/          spec stage: idea -> Linear issue
   wolftac-build/          build stage: issue -> working, tested code
   wolftac-review/         review stage: independent re-verification -> Approved
-  wolftac-integrate/      integrate stage: rebase + gates + APPROVE MERGE -> merged, the only stage that marks Done
+  wolftac-integrate/      integrate stage: rebase + gates + verified Discord rocket -> merged, the only stage that marks Done
   wolftac-agent-command-patterns/  shared cross-agent doctrine — NOT a pipeline stage
 plugins/wolftac-factory/ Codex plugin with four native skills (authoritative Codex port)
 ports/codex/            Deprecated `/prompts:wolftac-*` compatibility prompts, plus the shared doctrine prompt
@@ -168,16 +168,20 @@ that file; stage skills record the actual model but never pretend to switch it m
 - Linear team **Wolftac Digital** (`WD`), queue label **Factory Queue**.
 - States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) →
   `Approved` (review passed, awaiting merge) → `Done` — set only by the integrate
-  stage, after your explicit `APPROVE MERGE` and an ancestry-verified merge. A failed
+  stage, after your verified Discord 🚀 and an ancestry-verified merge. A failed
   review — or a failed rebase/gate at integration — returns the issue to `Todo`
   with a defect list the next build treats as its work order.
 - Every spec has a mandatory **`Repo:`** header naming where the work happens; every
   build/review report opens with **`Agent: <platform / model>`** so you can always
   tell who did what.
 - Build and review write to Linear as you, through the platform's Linear tool;
-  only integrate writes through the factory bot identity. You approve merges from
-  your own account. Integrate refuses same-identity approvals, so nothing merges on
-  an approval a worker could have minted itself.
+  only integrate writes through the factory bot identity. You approve a merge only
+  by reacting 🚀 from your own Discord account on the exact #approvals request.
+  The verifier reads it through R1, the read-only `wolftac-approval-read` Hermes
+  plugin (`ports/hermes-plugins/`), and requires your account ID, Harper's request,
+  and the exact repo, PR, head SHA and issue. A new commit cancels the approval, a
+  typed `APPROVE MERGE` comment is never approval, and any reader failure means
+  nothing merges.
 - Model economics: spec on your strongest model or (Hermes only) the
   `wolftac-factory-spec` MoA preset. Run build/review as Claude Code `/loop`
   sessions, Hermes cron ticks, or Codex scheduled `exec` one-shots — optionally

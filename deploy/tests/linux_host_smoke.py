@@ -92,7 +92,7 @@ def gatekeeper_child(case, root):
         def now(cls, tz=None):
             return NOW if tz is not None else NOW.replace(tzinfo=None)
 
-    argv = [str(ROOT / "deploy/factory-gatekeeper.py"), "--dry-run", "--no-slack",
+    argv = [str(ROOT / "deploy/factory-gatekeeper.py"), "--dry-run", "--no-discord",
             "--env-path", str(root / "fixture.env"), "--state-path", str(root / "state.json")]
     with patch.object(sys, "argv", argv), patch("datetime.datetime", FrozenDatetime), \
          patch.object(urllib.request, "urlopen", side_effect=fake_urlopen), \

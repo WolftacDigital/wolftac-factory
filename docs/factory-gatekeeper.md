@@ -43,7 +43,7 @@ of his assignment clears a park. Bot-relayed comments do not. Older Todo comment
 are paged for this check only; fingerprinting still uses the original newest 50.
 Repo reachability, final work selection and approval verification stay in skills.
 Review/integrate eligibility and all existing fingerprint triggers are unchanged.
-The gatekeeper does not claim, comment or otherwise write to Linear or Slack.
+The gatekeeper does not claim, comment or otherwise write to Linear or Discord.
 
 ### Fingerprint rule
 
@@ -73,7 +73,7 @@ After the in-flight guard:
 | No valid baseline (new/missing/corrupt state) | `no-baseline -> dispatched(pid=...)` |
 | Fingerprint differs | `changed -> dispatched(pid=...)` |
 | Equal fingerprint, eligible build work, last successful launch at least 15m ago | `stale-eligible (<n> ready, oldest <ISSUE-ID> waiting <m>m) -> dispatched(pid=...)` |
-| Fingerprint equal | `unchanged (skip)`; integrate first checks Slack |
+| Fingerprint equal | `unchanged (skip)`; integrate first checks Discord through R1 |
 | Linear HTTP 401 on any ready lane | Skip build/review; dispatch integrate only for re-mint (subject to in-flight guard) |
 | Other Linear probe or env failure | Loud `FAIL-OPEN` dispatch for that lane |
 
@@ -86,8 +86,9 @@ Failed process launches record neither a baseline nor an in-flight marker.
 `cron\gatekeeper-state.json` keeps the existing `lanes[lane]` marker containing
 `dispatched_at` and `job_last_run_at`. Sibling `fingerprints[lane]` stores that
 lane's dispatched fingerprint, so removing a confirmed marker cannot erase the
-baseline. Top-level `approval_dispatched` maps issue identifiers to Slack message
-timestamps. Missing/unknown keys need no migration; the old script ignores the
+baseline. Top-level `approval_dispatched` maps issue identifiers to Discord message
+IDs (WD-546). Older Slack timestamps there never match a Discord ID, so they need no
+migration. Missing/unknown keys need no migration; the old script ignores the
 new keys. Do not confuse a dispatch with a completed worker run.
 
 ### Stale eligible work and outage recovery (WD-620)
@@ -112,7 +113,7 @@ failed; a successful launch or a ready probe with no eligible work consumes that
 lane. This prevents the guard from losing a recovery while avoiding duplicate
 recovery launches. A later degraded period starts a new recovery cycle. Review and
 integrate use their existing nonempty lane lists, without changing eligibility or
-consuming a Slack approval. A dispatch is never approval to merge.
+consuming a Discord approval. A dispatch is never approval to merge.
 
 No eligible work means neither **new** rule launches a worker, even over repeated
 ticks. Existing no-baseline/changed/fail-open behavior remains intact. Dry-run
@@ -140,40 +141,49 @@ tick re-evaluates them. No approval is consumed by this recovery dispatch.
 The gatekeeper never mints or writes credentials. WD-547 supplies re-minting in
 the integrate preflight; until that change is deployed, dispatching integrate
 does not itself repair the token. Network errors, timeouts, HTTP 500 and invalid
-responses still fail open independently for each non-in-flight lane. A Slack
-HTTP 401 remains a Slack-check failure, not a Linear authentication failure.
+responses still fail open independently for each non-in-flight lane. An R1
+HTTP 401 remains a Discord-check failure, not a Linear authentication failure.
 
-### Slack approval check and its deliberate fail-open exception
+### Discord approval check and its deliberate fail-open exception (WD-546)
 
-**Since WD-599 (2026-11-08), a Slack reaction is never approval.** Jonathan retired
-Slack for the factory, and the integrate skills now treat no artifact as valid until
-WD-546's Discord gate is live. The check below still runs in the installed
-Gatekeeper and can wake integrate, but integrate will not merge on it. WD-546
-replaces it with a Discord check.
+The Gatekeeper never holds a Discord credential and never calls Discord itself. It
+asks R1, the read-only `wolftac-approval-read` Hermes plugin
+(`ports/hermes-plugins/wolftac-approval-read/`), which reads as Harper's bot. A
+match only wakes integrate; integrate decides approval with
+`deploy/discord_approval.py verify`, and the Gatekeeper **never approves or merges**.
 
-Only an otherwise unchanged integrate lane checks Slack, unless `--no-slack`
-is passed. For each Approved issue, find the newest `MERGE PROOF PACK` or
-`LANDING PROOF PACK` comment within the fetched window. Extract its Slack
-permalink and convert `p<10 digits><6 digits>` to `<10 digits>.<6 digits>`.
-Skip missing permalinks and channels different from `slack_channel_id` in the
-approval policy. Call only Slack `reactions.get`, at most once per issue per
-tick, with `full=true` so the reactor list is complete.
+Only an otherwise unchanged integrate lane checks Discord, unless `--no-discord`
+is passed. The policy must be exactly the six Discord keys in
+`deploy/approval-policy.json`; anything else is `discord-check-failed (approval
+policy invalid)`. For each Approved issue, find the newest `MERGE PROOF PACK` or
+`LANDING PROOF PACK` comment within the fetched window, then the newest Discord
+permalink `https://discord.com/channels/<guild>/<channel>/<message>` in that pack or
+any later comment (Harper replies in the pack's thread with it). Skip issues with no
+permalink or a guild or channel different from the policy's #approvals. Run R1 at
+most once per issue per tick:
 
-A `rocket` whose users include `approver_slack_user_id` causes
-`integrate: slack-approval WD-N -> dispatched(pid=...)`, unless that issue/ts is
-already recorded in `approval_dispatched`. Record it only after a successful
-launch. One tick consumes at most one approval; other approvals remain for later
-passes. A newer proof pack with a new ts can dispatch again. Other users or
-reactions do nothing. The integrate worker still independently verifies every
-approval gate; the gatekeeper **never approves or merges**. A typed `APPROVE MERGE` comment is never approval; it only changes the Linear fingerprint.
+```text
+hermes -p integrator wolftac-approval-read --channel <id> --message <id> --emoji 🚀 --json
+```
 
-Missing `SLACK_FACTORY_BOT_TOKEN`, missing/invalid policy, HTTP errors and
-`ok:false` print `integrate: slack-check-failed (<reason>)` every affected tick,
-**do not dispatch on that account**, and do not stop other lanes. This is the
-separate exception to fail-open: failing open on Slack outages would
-restore the very per-tick cost this change eliminates. The two-hour safety net
-bounds the delay. Error diagnostics exclude
-remote response bodies and exception text that might echo credentials.
+The child environment has every `DISCORD_*` name removed, so R1 resolves Harper's
+own credential and never inherits another profile's. A non-bot reactor whose ID is
+`approver_discord_user_id` causes `integrate: discord-approval WD-N ->
+dispatched(pid=...)`, unless that issue and message ID are already recorded in
+`approval_dispatched`. Record it only after a successful launch. One tick consumes
+at most one approval; other approvals remain for later passes. A newer pack with a
+new request message can dispatch again. Other reactors do nothing. A typed
+`APPROVE MERGE` comment is never approval; it only changes the Linear fingerprint.
+
+An invalid policy, R1 missing or timing out (75 seconds), a nonzero exit, `ok:false`
+or unparseable output print `integrate: discord-check-failed (<code>)` every
+affected tick, **do not dispatch on that account**, and do not stop other lanes.
+Codes are R1's fixed error names (for example `token_unavailable`,
+`identity_mismatch`, `http_error`) or `timeout`, `launch-failed`,
+`malformed-output`, `exit-<n>`; anything else is reported as `reader-error`. This is
+the separate exception to fail-open: failing open on Discord outages would restore
+the per-tick cost this design eliminates. The two-hour safety net bounds the delay.
+Diagnostics never include remote response bodies or exception text.
 
 ### Detached dispatch, in-flight guard and lane isolation
 
@@ -207,7 +217,7 @@ The `build` state key keeps its existing meaning and in-flight marker.
 the shared builder jobs file. Existing state needs no migration: a non-empty
 CRM lane without a fingerprint reports `no-baseline` on its first ready tick.
 
-A live in-flight marker produces `in-flight (skip)` before any Linear or Slack
+A live in-flight marker produces `in-flight (skip)` before any Linear or Discord
 probe for that lane, regardless of queue changes. As before, a changed job
 `last_run_at` clears the marker and prints `confirmed-ran`; it preserves the
 fingerprint. After 90 minutes without a run, `no-run-observed` clears both marker
@@ -215,9 +225,42 @@ and fingerprint, making a non-empty lane dispatch on the same tick. A malformed
 marker also cannot wedge a lane indefinitely. The guard applies to fail-open
 paths as well. The watchdog reads scheduler liveness, not these decision strings.
 
-Both `LINEAR_FACTORY_BOT_TOKEN` and `SLACK_FACTORY_BOT_TOKEN` are read from the
-Hermes `.env` **file**, never argv or process environment (the scheduler sanitizes
-subprocess environments). No token is written to output, state or logs.
+`LINEAR_FACTORY_BOT_TOKEN` is read from the Hermes `.env` **file**, never argv or
+process environment (the scheduler sanitizes subprocess environments). The
+Gatekeeper reads no Discord credential; only R1 resolves Harper's, internally. No
+token is written to output, state or logs.
+
+### History: the Slack approval check (retired by WD-546)
+
+Kept for the record. WD-546 removed this check from the Gatekeeper. **Since WD-599 (2026-11-08), a Slack reaction is never approval.** Jonathan retired
+Slack for the factory, and the integrate skills now treat no artifact as valid until
+WD-546's Discord gate is live. The check below still runs in the installed
+Gatekeeper and can wake integrate, but integrate will not merge on it. WD-546
+replaces it with a Discord check.
+
+Only an otherwise unchanged integrate lane checks Slack, unless `--no-slack`
+is passed. For each Approved issue, find the newest `MERGE PROOF PACK` or
+`LANDING PROOF PACK` comment within the fetched window. Extract its Slack
+permalink and convert `p<10 digits><6 digits>` to `<10 digits>.<6 digits>`.
+Skip missing permalinks and channels different from `slack_channel_id` in the
+approval policy. Call only Slack `reactions.get`, at most once per issue per
+tick, with `full=true` so the reactor list is complete.
+
+A `rocket` whose users include `approver_slack_user_id` causes
+`integrate: slack-approval WD-N -> dispatched(pid=...)`, unless that issue/ts is
+already recorded in `approval_dispatched`. Record it only after a successful
+launch. One tick consumes at most one approval; other approvals remain for later
+passes. A newer proof pack with a new ts can dispatch again. Other users or
+reactions do nothing. The integrate worker still independently verifies every
+approval gate; the gatekeeper **never approves or merges**. A typed `APPROVE MERGE` comment is never approval; it only changes the Linear fingerprint.
+
+Missing `SLACK_FACTORY_BOT_TOKEN`, missing/invalid policy, HTTP errors and
+`ok:false` print `integrate: slack-check-failed (<reason>)` every affected tick,
+**do not dispatch on that account**, and do not stop other lanes. This is the
+separate exception to fail-open: failing open on Slack outages would
+restore the very per-tick cost this change eliminates. The two-hour safety net
+bounds the delay. Error diagnostics exclude
+remote response bodies and exception text that might echo credentials.
 
 ## Daily Done-without-integration audit (WD-580)
 
@@ -280,7 +323,7 @@ tests do not prove the live schema. An operator-only non-dry backfill persists
 the result for the next scheduled watchdog alert. Rollback ignores the added
 audit key; preserve backups and do not change scheduler settings.
 
-## Install / wiring — operator only, after approved merge
+## Install / wiring — operator only, after the merge lands
 
 This remains a **manual copy**, not a new `deploy.ps1` installation feature.
 Build and review do not install, launch real workers, restart services or change
@@ -293,6 +336,12 @@ scheduler files. The isolated `factory-integrate` profile is not in scope.
    Copy-Item deploy\factory-gatekeeper.py "$env:LOCALAPPDATA\hermes\scripts\factory_gatekeeper.py"
    Copy-Item deploy\approval-policy.json "$env:LOCALAPPDATA\hermes\scripts\approval-policy.json"
    ```
+   Back up the installed `approval-policy.json` first. If the watchdog script is
+   installed in the same folder, it reads this file for its Slack alerts
+   (`slack_channel_id`, `fallback_identity`); the six-key Discord policy has neither,
+   so those Slack alerts stop. Jonathan accepted this on November 9, 2026 (WD-546),
+   because Slack is retired; WD-551 moves watchdog alerts to Discord. R1 must be installed (WD-546 OP-1) before the Discord check can dispatch;
+   until then integrate reports `discord-check-failed` and never dispatches on it.
 3. Confirm existing gatekeeper job `1a9fb621f161` still references
    `factory_gatekeeper.py` with `no_agent: true`; confirm the existing interval
    in `cron\jobs.json`. After the merged script's dry-run, Jonathan changes only
@@ -320,7 +369,7 @@ scheduler files. The isolated `factory-integrate` profile is not in scope.
    post-merge operator step, not build/review acceptance proof.
 
 The default policy path is `approval-policy.json` beside the script. Override it
-with `--approval-policy <path>`; `--no-slack` explicitly disables Slack checks.
+with `--approval-policy <path>`; `--no-discord` explicitly disables Discord checks.
 Existing `--env-path`, `--jobs-path`, `--state-path`, `--job-map` and test-only
 `--exec-override` remain available.
 
@@ -338,7 +387,7 @@ Existing `--env-path`, `--jobs-path`, `--state-path`, `--job-map` and test-only
   `.env` path via `--env-path` and the repo policy via `--approval-policy`.
   Run once, bump only scratch worker `last_run_at` fields, and repeat within two
   minutes: expect `confirmed-ran` then `unchanged (skip)` on unchanged lanes.
-  Integrate may instead report Slack approval dispatch or a Slack check failure.
+  Integrate may instead report Discord approval dispatch or a Discord check failure.
   Hash real state, real jobs and installed script before/after; all must match.
 
 Never test without either `--dry-run` or the complete scratch/no-op combination.
