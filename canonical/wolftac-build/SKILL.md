@@ -146,7 +146,7 @@ or the reporting failure. This reporting contract does not authorize live instal
   rework tier and within the fresh tier, preserve priority order
   (Urgent > High > Medium > Low), oldest first on ties.
 - Skip:
-  - issues whose most recent comment is a `BLOCKED:` comment (they need a human/respec),
+  - issues whose latest work-order comment starts `BLOCKED:` (they need a human/respec),
   - issues with unresolved blocking relations (check with `get_issue`),
   - issues whose spec **Repo:** path is unreachable from THIS session's environment
     (test the path — e.g. a WSL path from a Windows session, or another machine's
@@ -179,7 +179,7 @@ be stranded; do not silently exit.
 If another session won the race (another assignee, or state changed away from
 `In Progress`), back off silently: no comment, no state change, stop this tick.
 Then read the FULL description
-(the spec) and ALL comments — a prior `REVIEW REPORT (FAIL)` comment means this is a
+(the spec) and ALL comments — a prior `REVIEW REPORT — FAIL` comment means this is a
 rework pass and its defect list is your primary work order, on top of the original
 spec.
 

@@ -1,5 +1,5 @@
 version: 1
-reviewed_on: 2026-09-19
+reviewed_on: 2026-11-09   # hermes-cron pins checked against the live jobs.json; other blocks last reviewed 2026-09-19
 policy:
   selection_timing: before_skill_invocation
   require_actual_model_in_reports: true
@@ -45,14 +45,12 @@ harnesses:
         provider: openai-codex
         model: gpt-6-astra          # account-gated on the Codex OAuth route; verified 2026-09-19
       review:
-        provider: openai-codex
-        model: gpt-5.6-sol          # interim: same vendor as build
-        target:
-          provider: anthropic
-          model: claude-fable-5-1   # blocked until the Hermes Anthropic login is re-authorized
+        provider: anthropic
+        model: claude-opus-5-5      # since 2026-10-20; a different vendor from build
       integrate:
         provider: openai-codex
         model: gpt-5.6-sol          # mechanical stage; reliability over reasoning depth
+                                    # (no per-job pin: inherited from the integrator profile default)
       gatekeeper:
         model: null                 # script job, no LLM
   hermes-moa:
@@ -77,3 +75,5 @@ codex_exec_examples:
     codex exec -m gpt-5.6-sol -c model_reasoning_effort="high"
   review: >-
     codex exec -m gpt-5.6-sol -c model_reasoning_effort="max"
+  integrate: >-
+    codex exec -m gpt-5.6-sol -c model_reasoning_effort="high"

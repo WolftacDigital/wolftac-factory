@@ -94,6 +94,8 @@ five downstream assertions that had nothing wrong with them.
 
 ## Not run by CI
 
-`factory-checks` runs `parity-check.ps1`, `semantic-check.ps1`, and the CR-byte check.
-It does **not** run this suite — it needs a real `pwsh` and a writable scratch root.
-Run it locally before touching `factory-watchdog.ps1`.
+`factory-checks` runs `parity-check.ps1`, `semantic-check.ps1`, the Python suite
+(`python3 -m unittest discover -s deploy/tests`) and the CR-byte check, all on Ubuntu.
+It does **not** run the two `factory-watchdog-*.tests.ps1` suites, and it skips the
+Windows-only junction cases in `test_junctions.py`. Run those locally on Windows
+before touching `factory-watchdog.ps1`, `deploy.ps1` or the junction scripts.

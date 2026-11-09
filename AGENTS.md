@@ -373,7 +373,8 @@ a suggestion.
 ### Claude Desktop
 
 No unattended mode. Desktop is an interactive surface; its build/review/integrate
-skills already refuse work they can't execute (see the reality check above).
+skills already refuse work they can't execute (see "Know your limits" under Claude
+Desktop above).
 
 ## Troubleshooting
 

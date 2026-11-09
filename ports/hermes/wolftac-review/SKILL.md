@@ -174,7 +174,7 @@ every task" rule):
    A missing remote branch or SHA mismatch is a FAIL. Put the worktree in the durable
    scratch root — `D:\Wolftac\.build-worktrees\` on Windows, a directory under the
    agent's home on WSL/Linux — never `C:\tmp` or `/tmp`; see "Windows detached worktree
-   review pattern" below.
+   review pattern" above.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with

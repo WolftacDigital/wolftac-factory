@@ -17,7 +17,7 @@ Use when /wolftac-build returned an issue to Todo with a BLOCKED comment (an AC-
    Also look for latent defects the builder did not report, and include them.
 4. For each blocker, give options with one recommended. Prefer options that need no schema change or UI change. When a schema change is the honest option, keep it additive, mirrored in every migration tree, and give it a guarded down path. Explain why the rejected option costs more, with the mechanism (e.g. a permanently mislabeled ledger, or inbox/send-path scope).
 5. Post the recommendation as one Linear comment ending in a numbered **Decisions** list (D1..Dn), each answerable yes/no or A/B, plus the estimate impact. Then post one thread message that links the comment and repeats the decisions.
-6. Stop. Do not edit the description until the owner's approval artifact exists (an owner message from the verified account, recorded in Linear). For a spec amendment, reactions and bot relays are not approval. This does not change the Slack :rocket: merge gate, which is defined by the integrate skill.
+6. Stop. Do not edit the description until the owner's approval artifact exists (an owner message from the verified account, recorded in Linear). For a spec amendment, reactions and bot relays are not approval. This does not change the merge gate (Jonathan's own 🚀 on the Discord #approvals request, verified by `deploy/discord_approval.py`), which is defined by the integrate skill.
 
 ## Phase 2: amend in place after approval
 

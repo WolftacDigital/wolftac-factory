@@ -44,7 +44,7 @@ python -c "from pathlib import Path; assert Path('<scratch>/windows.json').read_
 in a child Python process with argv equivalent to:
 
 ```text
-python deploy/factory-gatekeeper.py --dry-run --no-slack --env-path <scratch>/fixture.env --state-path <scratch>/state.json
+python deploy/factory-gatekeeper.py --dry-run --no-discord --env-path <scratch>/fixture.env --state-path <scratch>/state.json
 pwsh -NoProfile -NonInteractive -File deploy/factory-watchdog.ps1 -DryRun -SkipDrift -SkipLearn -HermesHome <scratch> -PolicyPath <scratch>/policy.json -SlackOutbox <scratch>/outbox
 ```
 
