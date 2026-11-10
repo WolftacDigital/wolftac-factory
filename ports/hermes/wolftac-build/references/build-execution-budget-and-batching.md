@@ -91,6 +91,10 @@ On Windows, npm executes package scripts through `cmd.exe`, even when Hermes lau
 
 ## Streamed Next.js browser proof
 
+- When the local Next adapter lacks the approved provider fixture, exercise the real components and production domain against an isolated embedded-database/mock-provider harness rather than modifying live configuration. Bundle only the real components with server-action transport shims, send those requests through the real domain, and inspect resulting database rows. Preserve harness sources, original screenshots, assertions and full-gate logs outside the disposable worktree. Separately run the actual Next server smoke and explicitly leave configured Next/provider end-to-end behavior unverified; the harness does not prove that integration.
+- For CDP keyboard proof, inspect actual focus and selected state after each activation. On Windows, a keyDown/keyUp pair can focus a button without activating it; send the native rawKeyDown, char, and keyUp sequence for Space when needed. Record the actual successful keyboard method, and distinguish it from pointer submission.
+- Treat a non-PTY background wrapper's `stdin is not a tty` exit as inconclusive about its Node child. Check exact worker-script paths in process command lines before retrying or cleaning up. A child can continue serving after its tracked shell exits; only stop a proven worker-owned child, never runtime tooling or broad process classes.
+
 - Copy each `capture_screenshot()` result immediately to a unique proof filename before the next capture; the browser harness may overwrite a fixed `shot.png`. Print the capture path to inspect the image, preserve viewport dimensions, and upload the distinct files before deleting the worktree.
 
 

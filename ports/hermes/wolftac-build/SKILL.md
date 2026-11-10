@@ -314,7 +314,7 @@ or the reporting failure. This reporting contract does not authorize live instal
    check provider revocation boundaries before assuming feature-grant isolation; see
    `references/provider-oauth-contracts.md`.
 
-6. **Verify.** For PowerShell notification changes, use `references/powershell-delivery-tests.md` for hermetic command shims, exit propagation, timestamp comparisons, and honest live-proof boundaries. Execute the spec's Test plan literally. Every criterion needs evidence
+6. **Verify.** For ordered SQL seed changes, use `references/ordered-sql-seed-regressions.md` to test collisions, idempotency and preservation against production-shaped data. For PowerShell notification changes, use `references/powershell-delivery-tests.md` for hermetic command shims, exit propagation, timestamp comparisons, and honest live-proof boundaries. Execute the spec's Test plan literally. Every criterion needs evidence
    from running code — "looks right" is not verification. Classify proof precisely:
    automated command output, live browser/API behavior, or an unavailable fixture path.
    If a live criterion needs config, credentials, or a fixture that is not safely

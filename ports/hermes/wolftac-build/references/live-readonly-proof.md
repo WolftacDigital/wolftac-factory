@@ -1,5 +1,11 @@
 # Proving read-only behavior against an active source tree
 
+## Retained scheduler incident evidence
+
+- Copy only the explicitly authorized output/state files into profile scratch before analyzing a historical incident. Inventory retained coverage and report gaps; current state is a current snapshot, not proof of historical values.
+- Convert scheduler output filenames from their verified local timezone to the issue's requested UTC window before filtering or counting. Persist extracted lane decisions and aggregate them programmatically. Distinguish successful process dispatch, scheduler run confirmation, worker success, and issue pickup; none proves the next by itself.
+- Preserve the original fingerprint/comment window when adding a broader eligibility read. Keep extra paged comments in a separate field and test that paging cannot change the old fingerprint, while an older park still suppresses timed retries.
+
 - Do not count a before/after hash mismatch as proof the application wrote files. Active schedulers and retention can legitimately change the same tree during the observation.
 - Do not waive differences merely because their paths resemble scheduler files or their mtimes fall inside the process lifetime. Require evidence sufficient to attribute or exclude the tested process for every relevant difference.
 - Treat Windows GetProcessIoCounters as supporting evidence, not full path attribution. WriteTransferCount can be compared with captured stdout/stderr bytes, but process totals do not identify paths and do not establish ownership of rename/delete/metadata operations or mapped writes.
