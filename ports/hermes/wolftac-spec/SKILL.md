@@ -223,6 +223,8 @@ When a build bounced an issue back to Todo on spec conflicts, follow `references
   issues' tests often assert the very behavior being removed (the Gatekeeper retry bound broke exactly two
   WD-620/WD-623 repeat assertions). Name those tests in the AC, limit removed lines to them, and list the
   amendment as a decision. Cite the prototype and probe hashes as design evidence, not production code.
+- When splitting local test coverage from CI-only coverage, require an exact module-set equality check before local execution, inspect allowed modules for inherited opt-in live paths, and explicitly unset those switches before test import (for example `WD549_REAL_CRON`). Require CI evidence that excluded methods actually ran, not merely a green job with skips, and record both PR head and tested checkout/merge SHA. CI availability failures stay BLOCKED rather than granting a local exception.
+- Before adding a numbered decision in a changes-only draft, compare its ID against the base draft. Preserve existing IDs and append an unused ID; record any source-label collision explicitly instead of silently reinterpreting the earlier decision.
 - Keep new factory-checks tests stdlib-only. CI runs the runner's system `python3`, so
   assert policy YAML with string and regex checks on the real file plus a negative case,
   not a third-party parser.
