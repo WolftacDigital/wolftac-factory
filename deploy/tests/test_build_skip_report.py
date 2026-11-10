@@ -85,6 +85,51 @@ class SkipReportTests(unittest.TestCase):
         self.assertEqual(len(output), 2)
         self.assertEqual(output[0]["body"], "BUILD SKIPPED: parked")
 
+    def test_budget_dedupes_by_gate_not_estimate_until_exactly_24_hours(self):
+        item = issue()
+        data = payload(item)
+        first = report.prepare(data)[0]
+        item["comments"] = [{"body": first["body"], "createdAt": data["now"]}]
+        item["skip"].update(files=30, checks=7)
+        for now in ("2026-11-04T22:00:00Z", "2026-11-05T19:59:59Z"):
+            data["now"] = now
+            self.assertEqual(report.prepare(data), [])
+        data["now"] = "2026-11-05T20:00:00Z"
+        self.assertEqual(report.prepare(data), [{"issueId": "WD-615", "body":
+            "BUILD SKIPPED: completion budget (files=30, checks=7, reserve=20%)"}])
+
+    def test_budget_gate_matching_preserves_other_reasons_and_issue_scope(self):
+        item = issue()
+        previous = {"body": report.prepare(payload(item))[0]["body"],
+                    "createdAt": "2026-11-04T18:00:00Z"}
+        item["comments"] = [previous]
+        item["skip"]["files"] = 30
+        other = issue("WD-616")
+        self.assertEqual(report.prepare(payload(item, other)), report.prepare(payload(other)))
+        item["skip"] = {"gate": "park"}
+        self.assertEqual(report.prepare(payload(item))[0]["body"], "BUILD SKIPPED: parked")
+        # Non-budget reasons retain exact-string dedupe, including check names.
+        item["comments"] = [{"body": "BUILD SKIPPED: preclaim check failed: Repo",
+                             "createdAt": previous["createdAt"]}]
+        item["skip"] = {"gate": "preclaim", "check": "Repo"}
+        self.assertEqual(report.prepare(payload(item)), [])
+        item["skip"]["check"] = "repo-identity"
+        self.assertEqual(report.prepare(payload(item))[0]["body"],
+                         "BUILD SKIPPED: preclaim check failed: repo-identity")
+
+    def test_budget_gate_requires_exact_diagnostic_format(self):
+        item = issue()
+        for body in ("BUILD SKIPPED: completion budget review",
+                     "build skipped: completion budget (files=29, checks=6, reserve=20%)",
+                     "Decision: BUILD SKIPPED: completion budget (files=29, checks=6, reserve=20%)"):
+            with self.subTest(body=body):
+                item["comments"] = [{"body": body, "createdAt": "2026-11-04T18:00:00Z"}]
+                self.assertEqual(len(report.prepare(payload(item))), 1)
+        item["comments"] = [{"body": "BUILD SKIPPED: completion budget (files=30, checks=7, reserve=20%)",
+                             "createdAt": "2026-11-05T20:00:00Z"}]
+        with self.assertRaises(ValueError):
+            report.prepare(payload(item))
+
     def test_empty_lane_taken_and_race_have_no_comments(self):
         self.assertEqual(report.prepare(payload()), [])
         for field in ["taken", "race_lost"]:

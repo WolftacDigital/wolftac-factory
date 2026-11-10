@@ -51,7 +51,7 @@ For each issue, canonical sorted JSON includes:
 
 - identifier, state name, assignee ID, sorted label names, project name, priority;
 - SHA-256 of description (not the description itself);
-- `createdAt` of the newest non-`SWEPT:` comment among the newest 50 comments;
+- `createdAt` of the newest comment excluding exact, case-sensitive `SWEPT:` and `BUILD SKIPPED:` prefixes among the newest 50 comments (`BUILD SKIPPED:` alone is equivalent to no comments);
 - the sorted `[identifier, state.name]` pairs for all blocking issues.
 
 The lane hash is SHA-256 of those records sorted by identifier, with JSON keys
