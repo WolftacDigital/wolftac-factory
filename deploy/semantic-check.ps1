@@ -66,6 +66,23 @@ foreach ($file in $reviewFiles) {
     }
 }
 
+# Operator-only acceptance is an explicit, narrow exception to PASS scope.
+# Require the same complete paragraph, so dropping a clause or reversing its
+# meaning cannot pass merely because a marker or a nearby PASS still exists.
+$operatorReviewRule = @'
+**OPERATOR-PASS-SCOPE:** Criteria explicitly tagged `[operator]` in new specs written after this rule merges are post-merge operator steps, outside worker verification and PASS scope; they do not block PASS. List every such criterion by ID in the review report as "operator step, not verified" and leave its checkbox unchecked. Skip its operator-only test-plan steps; never run them to obtain a PASS. For the verification, verdict and checkbox instructions below, "every criterion" means every non-operator criterion; only verified non-operator criteria are ticked or counted in the verified/total fraction. Report operator steps separately and retain them in Build notes under Post-merge operator steps and in the OPERATE follow-up when available. All non-operator criteria, baseline checks, CI gates and merge approval rules remain unchanged. Do not rewrite existing specs or relabel an unmet criterion as `[operator]` during review.
+'@
+foreach ($file in $reviewFiles) {
+    $content = Read-RepoFile $file
+    $paragraphs = @($content -split '(?:\r?\n)[ \t]*(?:\r?\n)' | Where-Object {
+        $_.TrimStart().StartsWith('**OPERATOR-PASS-SCOPE:**')
+    })
+    if ($paragraphs.Count -ne 1 -or
+        ($paragraphs[0] -replace '\s+', ' ').Trim() -cne $operatorReviewRule.Trim()) {
+        $errors.Add("$file - missing or changed OPERATOR-PASS-SCOPE rule: [operator] criteria must remain unverified and outside PASS scope")
+    }
+}
+
 # Review's passing verdict is Approved; a review surface that still sets Done is a defect.
 foreach ($file in $reviewFiles) {
     $content = Read-RepoFile $file

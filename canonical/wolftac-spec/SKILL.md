@@ -76,6 +76,22 @@ Fill in every section of `spec-template.md` (in this skill's directory:
 - If the work is honestly larger than ~8 points, split it: file multiple smaller issues,
   each independently buildable, linked with blocking relations.
 
+### Evidence-map self-check
+
+**UNATTENDED-PROOF-SELF-CHECK:** For new specs written after this rule merges, every
+acceptance criterion must name an exact worker command or test that can prove it unattended,
+or carry `[operator]` for Jonathan to perform after merge. Before the approval pass and
+filing, stop and ask the user when any criterion has neither worker proof nor `[operator]`;
+do not file until resolved. Record the proof in the Evidence map column "Proven by (worker
+command or [operator])". Put each `[operator]` criterion, retaining its ID, in Build notes
+under Post-merge operator steps and in the OPERATE follow-up when available. Operator steps
+are not required for review PASS. Do not rewrite existing specs or relabel unmet worker
+criteria as operator steps.
+
+| Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) |
+|---|---|---|---|
+| AC-1 | <matching test-plan step> | <observable pass result> | <exact unattended worker command or test, or [operator]> |
+
 ### 3. One approval pass
 Show the user the drafted spec and ask for a single go/no-go (accept edits). Do not
 loop on polish — one pass, then file.

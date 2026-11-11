@@ -113,9 +113,9 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
      or `N/A — <feature-specific reason>`)
    - Empty / error states:
    ## Evidence map
-   | Criterion | Test-plan step | Expected observable result |
-   |---|---|---|
-   | AC-1 | <matching test-plan step> | <observable pass result> |
+   | Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) |
+   |---|---|---|---|
+   | AC-1 | <matching test-plan step> | <observable pass result> | <exact unattended worker command or test, or [operator]> |
    ## Test plan
    (exact commands + expected results)
    ## Build notes
@@ -134,6 +134,16 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    leave gaps. Before filing, compare every `AC-N` against every `NG-N`. No acceptance
    criterion may require a non-goal; resolve any conflict with the user before filing.
    The Non-goals section protects /wolftac-build from scope creep — be generous.
+
+   **UNATTENDED-PROOF-SELF-CHECK:** For new specs written after this rule merges, every
+   acceptance criterion must name an exact worker command or test that can prove it unattended,
+   or carry `[operator]` for Jonathan to perform after merge. Before the approval pass and
+   filing, stop and ask the user when any criterion has neither worker proof nor `[operator]`;
+   do not file until resolved. Record the proof in the Evidence map column "Proven by (worker
+   command or [operator])". Put each `[operator]` criterion, retaining its ID, in Build notes
+   under Post-merge operator steps and in the OPERATE follow-up when available. Operator steps
+   are not required for review PASS. Do not rewrite existing specs or relabel unmet worker
+   criteria as operator steps.
 
 3. **One approval pass.** Show the draft, single go/no-go, accept edits, then file.
    When Logan or Jonathan asks for "a reviewable spec" (often a follow-up to an
