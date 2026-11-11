@@ -67,6 +67,11 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    criteria, scope boundaries, technical constraints, verification. If you can read
    the target repo, ground the Technical approach in real file paths. Stop asking when
    further answers wouldn't change what gets built.
+   Where they apply, also ask: the North Star outcome; should this exist (who owns the
+   requirement, what could be deleted or simplified instead of built); the cost of
+   inaction; the source of truth for each piece of data and the integrations touched;
+   the delivery payload; and the always/never behavioral rules. Settle the data model
+   before interfaces. UI work follows `DESIGN.md` in the `wolftac-brand` repo.
    **Verify the requester's facts before writing them into the spec.** Counts, SHAs and
    "zero X" claims from Logan, Sloane or a worker often come from a partial read. Fetch
    every comment on the parent issue (page until `hasNextPage` is false, or spill to a
@@ -108,9 +113,9 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
      or `N/A — <feature-specific reason>`)
    - Empty / error states:
    ## Evidence map
-   | Criterion | Test-plan step | Expected observable result |
-   |---|---|---|
-   | AC-1 | <matching test-plan step> | <observable pass result> |
+   | Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) |
+   |---|---|---|---|
+   | AC-1 | <matching test-plan step> | <observable pass result> | <exact unattended worker command or test, or [operator]> |
    ## Test plan
    (exact commands + expected results)
    ## Build notes
@@ -118,8 +123,10 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    ```
 
    The **Repo** header line is mandatory — the build stage refuses work without it.
-   Put only the local path on it. Linear turns a `git@github.com:...` remote into a
-   `mailto:` link that breaks the line, so leave the remote off.
+   Put only the local path on it, in backticks (`` `D:\Wolftac\Factory` ``): Linear
+   escapes bare backslashes, so an unquoted path is stored as `D:\\Wolftac\\...`. Linear also
+   turns a `git@github.com:...` remote into a `mailto:` link that breaks the line, so leave
+   the remote off.
    Quality gates must be answered substantively or as `N/A — <reason>`; bare `N/A`
    is invalid. The Evidence map must include one row per acceptance criterion; a
    criterion with no row is a template violation. While filling it, check criteria for
@@ -129,6 +136,16 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    leave gaps. Before filing, compare every `AC-N` against every `NG-N`. No acceptance
    criterion may require a non-goal; resolve any conflict with the user before filing.
    The Non-goals section protects /wolftac-build from scope creep — be generous.
+
+   **UNATTENDED-PROOF-SELF-CHECK:** For new specs written after this rule merges, every
+   acceptance criterion must name an exact worker command or test that can prove it unattended,
+   or carry `[operator]` for Jonathan to perform after merge. Before the approval pass and
+   filing, stop and ask the user when any criterion has neither worker proof nor `[operator]`;
+   do not file until resolved. Record the proof in the Evidence map column "Proven by (worker
+   command or [operator])". Put each `[operator]` criterion, retaining its ID, in Build notes
+   under Post-merge operator steps and in the OPERATE follow-up when available. Operator steps
+   are not required for review PASS. Do not rewrite existing specs or relabel unmet worker
+   criteria as operator steps.
 
 3. **One approval pass.** Show the draft, single go/no-go, accept edits, then file.
    When Logan or Jonathan asks for "a reviewable spec" (often a follow-up to an
@@ -211,6 +228,13 @@ When a build bounced an issue back to Todo on spec conflicts, follow `references
   related ones (not at the end, where appends collide), fence the shared files with
   non-goals, and add a `git merge-tree --write-tree` no-conflict AC against each
   overlapping PR head.
+- Before writing "existing tests pass unchanged" for a spec that bounds or removes a behavior, apply a
+  scratch prototype of the approach to `git show origin/main:<file>` and run the real suite there. Earlier
+  issues' tests often assert the very behavior being removed (the Gatekeeper retry bound broke exactly two
+  WD-620/WD-623 repeat assertions). Name those tests in the AC, limit removed lines to them, and list the
+  amendment as a decision. Cite the prototype and probe hashes as design evidence, not production code.
+- When splitting local test coverage from CI-only coverage, require an exact module-set equality check before local execution, inspect allowed modules for inherited opt-in live paths, and explicitly unset those switches before test import (for example `WD549_REAL_CRON`). Require CI evidence that excluded methods actually ran, not merely a green job with skips, and record both PR head and tested checkout/merge SHA. CI availability failures stay BLOCKED rather than granting a local exception.
+- Before adding a numbered decision in a changes-only draft, compare its ID against the base draft. Preserve existing IDs and append an unused ID; record any source-label collision explicitly instead of silently reinterpreting the earlier decision.
 - Keep new factory-checks tests stdlib-only. CI runs the runner's system `python3`, so
   assert policy YAML with string and regex checks on the real file plus a negative case,
   not a third-party parser.

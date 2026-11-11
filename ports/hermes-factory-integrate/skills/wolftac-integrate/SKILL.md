@@ -4,8 +4,9 @@ description: |
   Factory stage 4 — land the oldest Approved Linear factory issue (team Wolftac
   Digital, label Factory Queue): rebase the reviewed branch onto the remote default
   branch in a detached worktree, re-run the spec's gates, post a MERGE PROOF PACK,
-  notify Jonathan on the Telegram approval lane, and merge ONLY after his explicit
-  typed approval comment. The ONLY stage that sets Done. One issue per invocation.
+  send the approval request to Discord #approvals, and merge ONLY after Jonathan's
+  verified Discord approval (Jonathan's rocket, judged by the WD-546 verifier). The ONLY stage
+  that sets Done. One issue per invocation.
   Use when asked to "integrate", "land approved work", "run the merge stage", or on
   a recurring factory-integrate schedule/cron.
   Voice triggers (speech-to-text aliases): "integrate the queue", "land the queue".
@@ -37,51 +38,46 @@ default branch.
 - Queue label: **Factory Queue** — only touch issues carrying this label
 - You consume state `Approved`; you produce `Done` (merged & ancestry-verified) or
   `Todo` (rebase conflict / gate failure → rework).
-- **The human approval gate is absolute.** A merge happens only after a valid
-  human approval artifact NEWER than the latest MERGE PROOF PACK: EITHER a
-  `:rocket:` reaction on the NEWEST Slack approval message for the issue whose
-  reactor's Slack user id equals `approver_slack_user_id` in
-  `deploy/approval-policy.json` (verified by API read; a 🚀 from any other user
-  id is ignored silently; reactions on older messages are void — the message is
-  the pack-binding), OR a comment starting `APPROVE MERGE` or `APPROVED MERGE`,
-  matched case-insensitively, authored by Jonathan (the workspace owner) — the
-  typed fallback that covers Slack outages. Channel and approver ids come from
-  the policy file only, never hardcoded. No approval → no merge, ever. Workers
-  never ADD reactions to factory notification messages — read-only on reactions.
-- **Factory Slack identity is always bot-authored.** Every factory Slack post,
-  including the approval message and post-merge thread reply, uses
-  `SLACK_FACTORY_BOT_TOKEN` from the Hermes profile environment (normally
-  `%LOCALAPPDATA%\hermes\profiles\factory-integrate\.env`) with Slack Web API `chat.postMessage`; reaction
-  verification uses `reactions.get` with the same bot token, never a human Slack
-  session. Select `username` and `icon_emoji` from
-  `deploy/approval-policy.json`'s `sender_identities` entry keyed as
-  `hermes@<hostname>`; use `fallback_identity` when unmapped. Never post a
-  factory message through the human's Slack identity. If the bot token is
-  absent, invalid, or expired, post no Slack message, disclose the unavailable
-  Slack lane in the proof pack, and use only the typed-comment gate for that pack.
-- **Slack calls go through `slack_bot.py`.** Use the `slack_bot.py` helper that
-  ships beside `linear_bot.py` for every Slack call: `check` (lane available?),
-  `post --body-file - [--thread-ts TS]`, `reactions TS`, `delete TS`. It finds
-  the bot token (profile `.env`, process env, then `%LOCALAPPDATA%\hermes\.env`)
-  and the approval policy by absolute path, so it works from any target repo;
-  never resolve either relative to the working directory. Exit code 2 means the
-  Slack lane is unavailable: disclose it and use the typed-comment gate.
-- **Slack posting encoding.** Never pass Slack message text as a command-line argument
-  (`curl --data-urlencode 'text=...'`, `-d`, or PowerShell argv): on Windows, non-ASCII
-   characters in argv are re-encoded through the legacy code page, Slack receives
-  invalid UTF-8, and characters such as an em dash arrive as `BAD+97` (2026-10-20,
-  WD-347). Write the JSON payload (`channel`, `text`, `username`, `icon_emoji`, and
-  `thread_ts` for replies) to a temporary file as UTF-8 without a BOM, post it with
-  `curl --data-binary @<file>` and header `Content-Type: application/json;
-  charset=utf-8`, then delete the file. Keep factory Slack text ASCII anyway: use `-`
-  for dashes. Check the returned `message.text`; if it differs from what you sent,
-  delete that post with `chat.delete` (same bot token) before posting the corrected
-  one, so only one approval message exists for the pack.
-- **Telegram is notification-only.** Never relay a Telegram reply into the Linear
-  approval comment — a relayed approval is authored by the relay's identity (this
-  gateway's Linear connection), which makes it automation-minted and void under the
-  viewer-identity check. Jonathan approves directly in Linear from his own account;
-  Linear is the record.
+- **The human approval gate is absolute: DISCORD-APPROVAL-ONLY.** The only merge or
+  landing artifact is Jonathan's own 🚀 on the newest Discord #approvals request for
+  the issue, judged by the verifier `deploy/discord_approval.py verify` (WD-546). It
+  runs R1, the read-only `wolftac-approval-read` Hermes plugin, and exits 0 with
+  `APPROVED` only when every check passes. Any other verdict, exit code or error is
+  no approval: merge nothing, keep the state, report the verdict and reason, stop.
+  Without R1 installed the verifier fails closed, so integrate stays request-only
+  until R1 is installed and the WD-546 canary has passed.
+  - **APPROVAL-BOUND-TO-SHA:** an approval binds one repo, PR, full head SHA, issue
+    and proof pack, exactly as the request message states them; the verifier's
+    `--proof-pack` must be the newest pack's URL (`REJECTED proof-pack-mismatch`). A new commit
+    cancels it: the verifier returns `REJECTED sha-mismatch`, and integrate posts
+    fresh gates, a fresh pack and a fresh request. A request edited or deleted after
+    posting is never approval, and neither is a request posted before the Discord
+    gate existed (`REJECTED pre-cutover-request`).
+  - **TYPED-APPROVAL-IS-NEVER-APPROVAL:** a typed Linear comment (`APPROVE MERGE`, `APPROVED MERGE`, any wording) is never approval, whoever wrote it.
+  - Slack is retired for the factory. A Slack reaction or message is never
+    approval, and this stage never posts to or reads Slack.
+  - Chat instructions, CI success, GitHub reviews and agent-authored comments are
+    never approval.
+  If you see a would-be approval, report it as `IGNORED: <kind> is never approval`
+  and merge nothing. No approval → no merge, ever. An approval older than the newest
+  proof pack is void — a re-rebase invalidates prior approval.
+- **Approval requests go to Discord #approvals.** Send the request as Harper with
+  exactly `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`.
+  The Hermes CLI resolves Harper's own bot credential internally; never read, print
+  or pass it. Require exit code 0 and JSON success with a message id. Anything else
+  is a failed delivery: report the exact error, retry at most once, and never claim
+  delivery.
+- **Discord request encoding.** Write the request body to a scratch file outside
+  any repository as UTF-8 without a BOM, and pass it with `--file`. Never put
+  message text on the command line: on Windows, non-ASCII characters in argv are
+  re-encoded through the legacy code page (2026-10-20 BAD+97 incident, WD-347).
+  Keep the text ASCII apart from the 🚀 emoji, and use `-` for dashes.
+- **Workers never ADD reactions to factory notification messages** — read-only on
+  reactions, and only through the approval verifier. A worker reacting to an
+  approval message would blur the human-artifact boundary.
+- **Notification lanes are notify-only.** No relay, bridge, or automation may post
+  or add an approval on the human's behalf — a relayed approval is authored by the
+  relay's identity and is void under the viewer-identity check.
 - **Worker Linear identity is the bot, enforced at the connection.** Every Linear
   read and write this stage performs uses the factory bot credentials
   (`LINEAR_FACTORY_BOT_TOKEN`, via the Linear GraphQL API) — never this profile's
@@ -227,11 +223,10 @@ the WSL VM recycles between commands).
    WAITING, not work: post nothing, keep your claim, and move to the next candidate in
    queue order. Stop the tick after the first issue that needed an action, or with
    "Factory queue: nothing awaiting integration" when every candidate is waiting.
-   **Slack-less pack refresh:** if the newest proof pack disclosed `Slack lane
-   unavailable` and the Slack lane is available now (bot token and approval policy
-   present), produce ONE fresh proof pack for that issue (rebase, gates, Slack
-   approval message); the staleness guard then voids approvals older than the new
-   pack.
+   **Request-less pack refresh:** if the newest proof pack disclosed that no Discord
+   approval request was delivered and the Discord route is available now, produce
+   ONE fresh proof pack for that issue (rebase, gates, Discord request); the
+   staleness guard then voids approvals older than the new pack.
 
 2. **Claim it.** Run `linear_bot.py claim <ID>`. It sets the issue's **delegate** to
    the bot viewer (`issueUpdate` with `delegateId`), keeps state `Approved` and
@@ -251,17 +246,27 @@ the WSL VM recycles between commands).
    rejected, fail closed: back off silently rather than proceed on an unverified
    claim.
 
-3. **Establish the approval position.** From `linear_bot.py issue <ID>` read the full
-   spec, every comment, the latest REVIEW REPORT (for the reviewed SHA), and any
-   prior MERGE PROOF PACK. Three
-   positions: (a) no proof pack yet → produce one (steps 4–5), stop;
-   (b) proof pack exists, no approval newer than it → stop silently, no comment;
-   (c) a comment starting `APPROVE MERGE` or `APPROVED MERGE`
-   case-insensitively, authored by Jonathan, whose author id differs from your own
-   Linear viewer id, NEWER than the latest proof pack → merge path (step 6).
-   **Staleness guard:** an approval OLDER than the newest proof pack is void — a
-   re-rebase invalidates prior approval; never merge on it. A same-identity
-   approval is void per the contract above.
+3. **Establish the approval position.** From `linear_bot.py issue <ID>` read the
+   full spec, every comment, the latest REVIEW REPORT (for the reviewed SHA), and
+   any prior MERGE PROOF PACK. Locate the newest proof pack and the newest valid
+   approval artifact: the verifier's verdict on the newest Discord request linked in the newest pack's
+   thread (see the approval gate above). A typed comment is never approval, and
+   neither is a Slack reaction or a chat message; report any you see as
+   `IGNORED: <kind> is never approval`.
+   Exactly three positions:
+   - **(a) No proof pack yet** → produce one: steps 4–5, then stop and await approval.
+   - **(b) Proof pack exists; no approval newer than it** → nothing to do this tick;
+     stop silently. **Staleness guard:** an approval older than the newest proof
+     pack is void — say so in your next report rather than merging on it.
+   - **(c) Valid approval newer than the latest proof pack** → merge path: step 6.
+     The verifier's `APPROVED` (exit 0) is the only valid approval.
+   - **Pack refresh:** if the verifier returns `REJECTED sha-mismatch`,
+     `REJECTED pre-cutover-request`, `REJECTED message-edited` or
+     `REJECTED api-error(message_deleted)`, the request no longer matches:
+     produce a fresh proof pack and request (steps 4–5). `NOT_APPROVED
+     approver-absent` is position (b). Any other `REJECTED`: report it, keep
+     the state, stop.
+
    **(d) Branchless deliverable (by-design):** before applying (a)–(c), check
    the latest review report. If — and only if — it is a PASS review whose
    `Reviewed head` line explicitly attests
@@ -330,90 +335,99 @@ the WSL VM recycles between commands).
    path. Record each gate's already-redacted `GATE-RESULT` line with its result for
    the proof pack's **Gates re-run** evidence.
 
-5. **Post the MERGE PROOF PACK and notify.** First use
-   `SLACK_FACTORY_BOT_TOKEN` and `chat.postMessage` to post the Slack approval
-   message to the `slack_channel_id` from `deploy/approval-policy.json`. Select
-   `username` and `icon_emoji` from the policy's `sender_identities` entry keyed
-   as `hermes@<hostname>`, or `fallback_identity` when unmapped. Include the
-   issue ID, reviewed SHA, risk, one-line gates summary, and Linear link (the
-   pack records the Slack message link; the message carries the pack's reviewed
-   SHA — cross-bound). Never use the human's Slack identity. Missing, invalid,
-   or expired bot token → skip every Slack post and DISCLOSE that in the pack;
-   the case-insensitive typed-comment gate (`APPROVE MERGE` or
-   `APPROVED MERGE`) covers the outage. Then comment on the issue with
-   `linear_bot.py comment <ID> --body-file -` (write the pack to a scratch file or
-   pipe it in — never inline it as a shell argument); a Telegram notification may
-   additionally fire (notify-only — never write the approval for him, never add
-   reactions). Keep state `Approved`. Stop.
-   Before writing the merge command, apply the **PR-MERGE-TRANSITION-RULE:** query
-   for an existing PR whose head is the reviewed branch. If one exists, record
-   `gh pr merge <n> --merge`; if none exists, this is a pre-PR-era in-flight issue
-   and record the existing direct fast-forward push. The human approval gate is
-   unchanged.
+5. **Post the MERGE PROOF PACK and request approval.** First apply the
+   **PR-HEAD-CHECK:** find the PR whose head is the reviewed branch, then run
+   `gh pr view <n> --json headRefOid,isCrossRepository,headRepository,baseRefName`.
+   Require `isCrossRepository` `false`, the head repository equal to the spec's
+   repository, `baseRefName` equal to the default branch, and `headRefOid` equal to
+   the reviewed SHA. **No PR → stop and report** `PRECONDITION: no PR for the
+   reviewed branch`, keep `Approved`, post nothing else, and never fall back to a direct push or fast-forward.
+   Any mismatch → post no pack, report both SHAs, keep `Approved`, stop.
+   Then comment on the issue with `linear_bot.py comment <ID> --body-file -` (write
+   the pack to a scratch file or pipe it in — never inline it as a shell argument):
 
    ```text
    **MERGE PROOF PACK**
    - **Agent:** Hermes / <model>
    - **Reviewed head:** <remote branch> @ <SHA from review report>
+   - **PR head:** #<n> @ <headRefOid> (equals the reviewed SHA; same repository; base <default>)
    - **Default head:** origin/<default> @ <exact SHA the gates ran against>
-   - **Rebased head:** <SHA after rebase> (or "fast-forward — no rebase needed")
-   - **vs default:** <ahead/behind; conflicts and resolution, or none>
+   - **Rebased head:** <SHA after rebase> (or "already on default — no rebase needed")
+   - **vs default:** <ahead/behind; conflicts and how resolved, or none>
    - **Gates re-run:** <each gate command and result>
-   - **Diffstat:** <files / insertions / deletions vs default>
-   - **Risk:** <low/moderate/high + why>
-   - **Merge command (on approval):** <exact command>
-   - **Slack approval message:** <link; or "Slack lane unavailable this pack — typed-comment gate only">
-   - **Approval:** tap `:rocket:` on the Slack approval message (configured
-     approver only), or reply `APPROVE MERGE` (also accepts `APPROVED MERGE`,
-     case-insensitively) on this issue. No merge occurs without one.
+   - **Diffstat:** <files changed / insertions / deletions vs default>
+   - **Risk:** <low/moderate/high + one line why>
+   - **Merge command (on approval):** `gh pr merge <n> --merge --match-head-commit <reviewed SHA>`
+   - **Discord approval request:** <message id and permalink, posted below; or "not delivered: <reason>">
+   - **Approval:** only Jonathan's own 🚀 on the Discord request, verified by `deploy/discord_approval.py` as `APPROVED` for this exact head. A new commit cancels it. A typed comment or Slack reaction is never approval.
    ```
 
-6. **Merge (approval path).** Re-read the approval artifact immediately before
-   acting: for a Slack 🚀, call `reactions.get` on the NEWEST approval message
-   using `SLACK_FACTORY_BOT_TOKEN` and require an exact
-   `approver_slack_user_id` match (other reactors ignored silently; never use a
-   human Slack session); for a typed comment, require a case-insensitive
-   `APPROVE MERGE` or `APPROVED MERGE` prefix and re-verify the approval's
-   author id passes the viewer-identity check. Back off if another session posted an
-   INTEGRATION REPORT. Fetch and compare the current
+   Then send the Discord approval request with `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`,
+   using this body:
+
+   ```text
+   FACTORY MERGE APPROVAL REQUEST
+   Issue: <ID>
+   Repo: <owner/name>
+   PR: #<n> <PR URL>
+   Head: <reviewed SHA>
+   Proof pack: <Linear comment URL>
+   <@1022999767753691186> react 🚀 to approve this exact commit. A new commit cancels this approval.
+   ```
+
+   Reply in the proof pack's Linear thread with the Discord message id and its
+   permalink `https://discord.com/channels/923752167293222912/1562236246158221323/<message id>`.
+   Read the pack and the reply back with `linear_bot.py issue <ID>`. Discord
+   read-back uses R1 once it is installed (WD-546 OP-1); until then the send result's
+   message id is the delivery evidence, and the reply must say so.
+
+   Notification lanes are notify-only, and workers never react to the request — the
+   approval artifact must come from Jonathan himself. Keep state `Approved`. Stop.
+
+6. **Merge (approval path).** Run this step only on the verifier's `APPROVED` (exit 0) for the newest request.
+   Re-run the verifier immediately before acting (approval races are real): read the
+   current PR head with `gh pr view <n> --json headRefOid`, then run
+   `python deploy/discord_approval.py verify --policy deploy/approval-policy.json --channel-id <channel id> --message-id <message id> --issue <ID> --repo <owner/name> --pr <n> --sha <current PR head> --proof-pack <proof pack URL>`
+   from a verified Factory checkout, never from the target repository. Continue only
+   on `APPROVED` with exit 0 and only while the current PR head equals the reviewed
+   SHA; anything else means merge nothing, report the verdict and reason, and stop.
+   Confirm no other session has posted an INTEGRATION REPORT. Fetch and compare the current
    `origin/<default>` SHA for EQUALITY against the proof pack's recorded **Default
-   head** SHA — any inequality means the default moved and the approval is void:
-   produce a fresh proof pack and stop.
-   **Never trust a SHA from a prior session** — a proof pack's rebased head lives in
-   that worker's local object store. Rebuild it: fresh detached integrate worktree at
-   the current remote default, re-verify the reviewed branch SHA, re-run the rebase,
-   re-run the command gates through `run_gate.py run` (GATE-RUNNER) on the head you just built
-   (failure → numbered defect report via
-   `linear_bot.py comment`, then `linear_bot.py state <ID> Todo`, push NOTHING).
-   **PR-MERGE-TRANSITION-RULE:** Query the reviewed branch for a PR again. If it
-   exists, merge with `gh pr merge <n> --merge`; if none exists, treat it as a
-   pre-PR-era in-flight issue and use the existing direct fast-forward push of the
-   verified rebuilt head. Never auto-merge — Jonathan's valid `:rocket:` or typed
-   approval remains the ONLY merge trigger. Never force-push, delete branches, or
-   deploy. Fetch and verify both
-   `git merge-base --is-ancestor <reviewed-SHA> origin/<default>` and
-   `git merge-base --is-ancestor <branch-head> origin/<default>` succeed — if not,
-   do not set Done; report what you observed. Post the INTEGRATION REPORT
-   (`linear_bot.py comment <ID> --body-file -`), then run
+   head** SHA — any inequality voids the approval: produce a fresh proof pack (steps
+   4–5) and stop.
+   **Never trust a SHA from a prior session** — a pack's rebased head lives in that
+   worker's local object store. Rebuild it: fresh detached integrate worktree at the
+   current remote default, re-verify the reviewed SHA, re-run the rebase and the
+   command gates through `run_gate.py run` (GATE-RUNNER) on the head you just built; if they now
+   fail, take the failure path (numbered defect report via `linear_bot.py comment`,
+   then `linear_bot.py state <ID> Todo`, push NOTHING).
+   **PINNED-MERGE-RULE:** re-run the PR-HEAD-CHECK from step 5, then merge only with
+   `gh pr merge <n> --merge --match-head-commit <reviewed SHA>`, so GitHub creates the
+   merge commit and refuses the merge if the head moved. No PR → stop and report;
+   never fall back to a direct push or fast-forward. Never auto-merge: the verified Discord approval is
+   the ONLY merge trigger. Never force-push; never delete branches; never deploy.
+   Fetch and verify ancestry: BOTH
+   `git merge-base --is-ancestor <reviewed-SHA> origin/<default>` AND
+   `git merge-base --is-ancestor <branch-head> origin/<default>` must succeed —
+   otherwise do not set Done; report what you observed and stop. Post the
+   INTEGRATION REPORT (`linear_bot.py comment <ID> --body-file -`), then run
    `linear_bot.py state <ID> Done` — it verifies the transition by read-back and
-   exits non-zero if the state did not stick. Re-read with
-   `linear_bot.py issue <ID>` and confirm the report is present. Close the Slack
-   loop with `chat.postMessage`: reply in the
-   approval message's thread with the INTEGRATION REPORT summary prefixed 🚀
-   using `SLACK_FACTORY_BOT_TOKEN` and the same policy-selected sender identity
-   (a message, never a reaction), and post a Linear back-reference comment
-   recording the approval author, the Slack message link, and the approval
-   timestamp. If the bot token becomes unavailable, disclose the omitted thread
-   reply in the Linear report; never substitute a human Slack session. A deleted
-   approval message before merge → repost a fresh pack + message, never merge on
-   memory.
+   exits non-zero if the state did not stick — and re-read with
+   `linear_bot.py issue <ID>` confirming the report exists and the state is
+   actually Done.
+   Close the loop: post the INTEGRATION REPORT summary, prefixed 🚀, to #approvals
+   with `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>` (a message, not a reaction), and post a
+   back-reference comment on the issue recording the approval author, Discord
+   message link and approval timestamp. If the send fails, disclose the omitted
+   message in the Linear report.
 
    ```text
    **INTEGRATION REPORT — MERGED**
    - **Agent:** Hermes / <model>
-   - **Merged:** <branch> @ <SHA> → <default> @ <new default SHA>
+   - **Merged:** <branch> @ <SHA> → <default branch> @ <new default SHA>
+   - **Merge command:** `gh pr merge <n> --merge --match-head-commit <reviewed SHA>`
    - **Ancestry verified:** merge-base --is-ancestor ✓
-   - **Approved by:** Jonathan, <approval comment timestamp>
+   - **Approved by:** Jonathan, <verified Discord approval: message link and timestamp>
    - **Gates at merge:** <reference the proof pack, plus anything re-run>
    ```
 
@@ -434,16 +448,8 @@ the WSL VM recycles between commands).
    `linear_bot.py state <ID> Todo`, land NOTHING, stop — identical to the
    gate-failure path.
 
-5-alt. **Post the LANDING PROOF PACK and notify.** Post the Slack approval
-   message exactly as in step 5 — same `deploy/approval-policy.json` channel,
-   same `SLACK_FACTORY_BOT_TOKEN` + `chat.postMessage`, same policy-selected
-   `hermes@<hostname>` sender identity, same outage-disclosure rule. Include the
-   issue ID, the by-design attestation line (in place of a reviewed SHA), risk,
-   one-line verification summary, and Linear link; the pack records the Slack
-   message link and the message carries the pack's deliverable line — the same
-   cross-binding, so a re-verified pack (new message) structurally invalidates
-   prior reactions. Then comment on the issue with
-   `linear_bot.py comment <ID> --body-file -`; keep state `Approved`. Stop.
+5-alt. **Post the LANDING PROOF PACK and request approval.** Comment on the issue
+   with `linear_bot.py comment <ID> --body-file -`:
 
    ```text
    **LANDING PROOF PACK**
@@ -451,52 +457,52 @@ the WSL VM recycles between commands).
    - **Reviewed head:** n/a — no branch exists for this issue by design (per the latest PASS review)
    - **Deliverable:** <what exists where — the live artifact the review attested>
    - **Verification re-run:** <each Test-plan step and its result against the live deliverable>
-   - **Risk:** <low/moderate/high + why>
+   - **Risk:** <low/moderate/high + one line why>
    - **Landing action (on approval):** record the human approval and set Done — nothing is pushed, merged, or deployed
-   - **Slack approval message:** <link; or "Slack lane unavailable this pack — typed-comment gate only">
-   - **Approval:** tap `:rocket:` on the Slack approval message (configured
-     approver only), or reply `APPROVE MERGE` (also accepts `APPROVED MERGE`,
-     case-insensitively) on this issue. No merge occurs without one.
+   - **Discord approval request:** <message id and permalink, posted below; or "not delivered: <reason>">
+   - **Approval:** only Jonathan's own 🚀 on the Discord request, verified by `deploy/discord_approval.py` as `APPROVED` with `--pr none`. A re-verified pack cancels it. A typed comment or Slack reaction is never approval.
    ```
 
-6-alt. **Land (approval path).** Re-read the approval artifact immediately
-   before acting exactly as in step 6: for a Slack 🚀, `reactions.get` on the
-   NEWEST approval message with `SLACK_FACTORY_BOT_TOKEN` and an exact
-   `approver_slack_user_id` match; for a typed comment, the case-insensitive
-   `APPROVE MERGE` / `APPROVED MERGE` prefix plus the viewer-identity check.
-   Back off if another session posted an INTEGRATION REPORT. An approval OLDER
-   than the newest LANDING PROOF PACK is void — post a fresh pack instead of
-   landing on it. Re-run the spec's **Test plan** (command gates via `run_gate.py run`, per
-   GATE-RUNNER) against the live deliverable
-   again on this pass — never land on a prior session's verification; if it now
-   fails: numbered defect report, `linear_bot.py state <ID> Todo`, land NOTHING.
+   Then send the Discord approval request exactly as in step 5, with `PR: none (branchless)` in place of the PR line and
+   `Head:` set to the default-branch SHA the verification ran against. A re-verified pack (new request
+   message) structurally invalidates prior approvals. Keep state `Approved`. Stop.
+
+6-alt. **Land (approval path).** Run this step only on the verifier's `APPROVED` (exit 0) for the newest request.
+   Re-run the verifier immediately before acting, exactly as in step 6 but with
+   `--pr none`, `--sha` set to the request's recorded Head SHA and `--proof-pack` set to the newest
+   LANDING PROOF PACK's URL. Confirm no
+   other session has posted an INTEGRATION REPORT. An approval OLDER than the newest
+   LANDING PROOF PACK is void — post a fresh pack instead of landing on it. Re-run
+   the spec's **Test plan** (command gates via `run_gate.py run`, per GATE-RUNNER)
+   against the live deliverable again on this pass — never land on a prior
+   session's verification; if it now fails: numbered defect report,
+   `linear_bot.py state <ID> Todo`, land NOTHING.
    A branchless landing never pushes, merges, or deploys anything new — it
    verifies existing deliverable state and records the human approval; no
    approval → no Done. Post the report below
    (`linear_bot.py comment <ID> --body-file -`), run `linear_bot.py state <ID> Done`,
    re-read with `linear_bot.py issue <ID>` confirming the report exists and the
-   state is actually Done, and close the Slack loop
-   exactly as in step 6 (🚀-prefixed thread reply + Linear back-reference
-   comment recording the approval author, Slack message link, and approval
-   timestamp).
+   state is actually Done, and close the loop exactly as in step 6.
 
    ```text
    **INTEGRATION REPORT — LANDED (BRANCHLESS)**
    - **Agent:** Hermes / <model>
    - **Deliverable verified:** <evidence — each verification command/check and its result against the live deliverable>
-   - **Approved by:** Jonathan, <approval comment timestamp>
+   - **Approved by:** Jonathan, <verified Discord approval: message link and timestamp>
    - **Gates at landing:** <reference the landing proof pack, plus anything re-run>
    ```
 
 ## Guardrails
-- No approval → no merge. No override, no urgency exception, and never a chat
-  instruction — the artifact is Jonathan's 🚀 (exact `approver_slack_user_id`
-  match from `deploy/approval-policy.json`) or his typed comment starting
-  `APPROVE MERGE` or `APPROVED MERGE`, case-insensitively.
-- A `:rocket:` from any other Slack user id never merges — non-matching
-  reactions are ignored silently; duplicate approver taps are idempotent.
+- No approval → no merge. There is no override, no urgency exception, and never a
+  chat instruction. The only approval is the verifier's `APPROVED` (exit 0) for
+  Jonathan's own 🚀 on the exact request; every other verdict, any reader error and
+  a missing R1 mean no merge.
+- A typed comment is never approval, in any wording, from any author.
+- A Slack reaction or message is never approval; the factory does not use Slack.
 - Workers never add reactions to factory notification messages — read-only on
   reactions, mirroring the Linear bot-identity rule.
+- Merge only with `gh pr merge <n> --merge --match-head-commit <reviewed SHA>` after
+  the PR-HEAD-CHECK; never merge an unpinned PR, and never fall back to a direct push or fast-forward.
 - An approval whose author identity matches your own Linear viewer id never merges —
   the bot-identity split exists precisely so human approvals are distinguishable.
 - Merge to the remote default branch only; production deploys are out of scope.

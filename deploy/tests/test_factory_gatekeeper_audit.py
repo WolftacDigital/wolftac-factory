@@ -39,7 +39,7 @@ class AuditTests(unittest.TestCase):
         self.env.write_text(f"LINEAR_FACTORY_BOT_TOKEN={TOKEN}\n", encoding="utf-8")
         self.write(self.jobs, {"jobs": []})
         self.args = ["gatekeeper", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
-                     "--state-path", str(self.state), "--no-slack", "--exec-override", '["fake-noop"]']
+                     "--state-path", str(self.state), "--no-discord", "--exec-override", '["fake-noop"]']
         self.issues = {"Todo": [base.issue()], "In Review": [], "Approved": []}
         self.rows = []
         self.audit_error = None

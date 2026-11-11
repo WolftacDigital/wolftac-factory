@@ -1,25 +1,26 @@
 {
   "name": "wolftac-factory",
   "version": "1.0.0",
-  "description": "Spec, build, and independently review one issue at a time through the Wolftac software factory.",
+  "description": "Spec, build, independently review, and integrate one issue at a time through the Wolftac software factory.",
   "author": {
     "name": "Wolftac Digital",
     "url": "https://github.com/WolftacDigital"
   },
   "repository": "https://github.com/WolftacDigital/wolftac-factory",
-  "keywords": ["linear", "software-factory", "specification", "build", "review"],
+  "keywords": ["linear", "software-factory", "specification", "build", "review", "integrate"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Wolftac Factory",
-    "shortDescription": "Run the Wolftac spec-build-review pipeline.",
-    "longDescription": "Creates build-ready Linear specifications, implements one queued issue in an isolated worktree, and independently reviews the published commit before completion.",
+    "shortDescription": "Run the Wolftac spec-build-review-integrate pipeline.",
+    "longDescription": "Creates build-ready Linear specifications, implements one queued issue in an isolated worktree, independently reviews the published commit, and merges it only after the verified human approval.",
     "developerName": "Wolftac Digital",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
     "defaultPrompt": [
       "Use $wolftac-spec to spec this feature.",
       "Use $wolftac-build to build one queued issue.",
-      "Use $wolftac-review to review one built issue."
+      "Use $wolftac-review to review one built issue.",
+      "Use $wolftac-integrate to land one Approved issue."
     ]
   }
 }

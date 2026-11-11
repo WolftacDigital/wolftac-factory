@@ -90,6 +90,51 @@
     ]
   },
   {
+    "id": "spec-unattended-proof",
+    "description": "New specs require unattended worker proof or an explicit post-merge operator step; every spec surface retains the self-check and evidence-map column.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-spec/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*UNATTENDED\\-PROOF\\-SELF\\-CHECK:\\*\\*\\s+For\\s+new\\s+specs\\s+written\\s+after\\s+this\\s+rule\\s+merges,\\s+every\\s+acceptance\\s+criterion\\s+must\\s+name\\s+an\\s+exact\\s+worker\\s+command\\s+or\\s+test\\s+that\\s+can\\s+prove\\s+it\\s+unattended,\\s+or\\s+carry\\s+`\\[operator\\]`\\s+for\\s+Jonathan\\s+to\\s+perform\\s+after\\s+merge\\.\\s+Before\\s+the\\s+approval\\s+pass\\s+and\\s+filing,\\s+stop\\s+and\\s+ask\\s+the\\s+user\\s+when\\s+any\\s+criterion\\s+has\\s+neither\\s+worker\\s+proof\\s+nor\\s+`\\[operator\\]`;\\s+do\\s+not\\s+file\\s+until\\s+resolved\\.\\s+Record\\s+the\\s+proof\\s+in\\s+the\\s+Evidence\\s+map\\s+column\\s+\"Proven\\s+by\\s+\\(worker\\s+command\\s+or\\s+\\[operator\\]\\)\"\\.\\s+Put\\s+each\\s+`\\[operator\\]`\\s+criterion,\\s+retaining\\s+its\\s+ID,\\s+in\\s+Build\\s+notes\\s+under\\s+Post\\-merge\\s+operator\\s+steps\\s+and\\s+in\\s+the\\s+OPERATE\\s+follow\\-up\\s+when\\s+available\\.\\s+Operator\\s+steps\\s+are\\s+not\\s+required\\s+for\\s+review\\s+PASS\\.\\s+Do\\s+not\\s+rewrite\\s+existing\\s+specs\\s+or\\s+relabel\\s+unmet\\s+worker\\s+criteria\\s+as\\s+operator\\s+steps\\.)(?=[\\s\\S]*(?m)^\\s*\\|\\ Criterion\\ \\|\\ Test\\-plan\\ step\\ \\|\\ Expected\\ observable\\ result\\ \\|\\ Proven\\ by\\ \\(worker\\ command\\ or\\ \\[operator\\]\\)\\ \\|\\s*$)"
+      },
+      {
+        "file": "canonical/wolftac-spec/spec-template.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*UNATTENDED\\-PROOF\\-SELF\\-CHECK:\\*\\*\\s+For\\s+new\\s+specs\\s+written\\s+after\\s+this\\s+rule\\s+merges,\\s+every\\s+acceptance\\s+criterion\\s+must\\s+name\\s+an\\s+exact\\s+worker\\s+command\\s+or\\s+test\\s+that\\s+can\\s+prove\\s+it\\s+unattended,\\s+or\\s+carry\\s+`\\[operator\\]`\\s+for\\s+Jonathan\\s+to\\s+perform\\s+after\\s+merge\\.\\s+Before\\s+the\\s+approval\\s+pass\\s+and\\s+filing,\\s+stop\\s+and\\s+ask\\s+the\\s+user\\s+when\\s+any\\s+criterion\\s+has\\s+neither\\s+worker\\s+proof\\s+nor\\s+`\\[operator\\]`;\\s+do\\s+not\\s+file\\s+until\\s+resolved\\.\\s+Record\\s+the\\s+proof\\s+in\\s+the\\s+Evidence\\s+map\\s+column\\s+\"Proven\\s+by\\s+\\(worker\\s+command\\s+or\\s+\\[operator\\]\\)\"\\.\\s+Put\\s+each\\s+`\\[operator\\]`\\s+criterion,\\s+retaining\\s+its\\s+ID,\\s+in\\s+Build\\s+notes\\s+under\\s+Post\\-merge\\s+operator\\s+steps\\s+and\\s+in\\s+the\\s+OPERATE\\s+follow\\-up\\s+when\\s+available\\.\\s+Operator\\s+steps\\s+are\\s+not\\s+required\\s+for\\s+review\\s+PASS\\.\\s+Do\\s+not\\s+rewrite\\s+existing\\s+specs\\s+or\\s+relabel\\s+unmet\\s+worker\\s+criteria\\s+as\\s+operator\\s+steps\\.)(?=[\\s\\S]*(?m)^\\s*\\|\\ Criterion\\ \\|\\ Test\\-plan\\ step\\ \\|\\ Expected\\ observable\\ result\\ \\|\\ Proven\\ by\\ \\(worker\\ command\\ or\\ \\[operator\\]\\)\\ \\|\\s*$)"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-spec/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*UNATTENDED\\-PROOF\\-SELF\\-CHECK:\\*\\*\\s+For\\s+new\\s+specs\\s+written\\s+after\\s+this\\s+rule\\s+merges,\\s+every\\s+acceptance\\s+criterion\\s+must\\s+name\\s+an\\s+exact\\s+worker\\s+command\\s+or\\s+test\\s+that\\s+can\\s+prove\\s+it\\s+unattended,\\s+or\\s+carry\\s+`\\[operator\\]`\\s+for\\s+Jonathan\\s+to\\s+perform\\s+after\\s+merge\\.\\s+Before\\s+the\\s+approval\\s+pass\\s+and\\s+filing,\\s+stop\\s+and\\s+ask\\s+the\\s+user\\s+when\\s+any\\s+criterion\\s+has\\s+neither\\s+worker\\s+proof\\s+nor\\s+`\\[operator\\]`;\\s+do\\s+not\\s+file\\s+until\\s+resolved\\.\\s+Record\\s+the\\s+proof\\s+in\\s+the\\s+Evidence\\s+map\\s+column\\s+\"Proven\\s+by\\s+\\(worker\\s+command\\s+or\\s+\\[operator\\]\\)\"\\.\\s+Put\\s+each\\s+`\\[operator\\]`\\s+criterion,\\s+retaining\\s+its\\s+ID,\\s+in\\s+Build\\s+notes\\s+under\\s+Post\\-merge\\s+operator\\s+steps\\s+and\\s+in\\s+the\\s+OPERATE\\s+follow\\-up\\s+when\\s+available\\.\\s+Operator\\s+steps\\s+are\\s+not\\s+required\\s+for\\s+review\\s+PASS\\.\\s+Do\\s+not\\s+rewrite\\s+existing\\s+specs\\s+or\\s+relabel\\s+unmet\\s+worker\\s+criteria\\s+as\\s+operator\\s+steps\\.)(?=[\\s\\S]*(?m)^\\s*\\|\\ Criterion\\ \\|\\ Test\\-plan\\ step\\ \\|\\ Expected\\ observable\\ result\\ \\|\\ Proven\\ by\\ \\(worker\\ command\\ or\\ \\[operator\\]\\)\\ \\|\\s*$)"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*UNATTENDED\\-PROOF\\-SELF\\-CHECK:\\*\\*\\s+For\\s+new\\s+specs\\s+written\\s+after\\s+this\\s+rule\\s+merges,\\s+every\\s+acceptance\\s+criterion\\s+must\\s+name\\s+an\\s+exact\\s+worker\\s+command\\s+or\\s+test\\s+that\\s+can\\s+prove\\s+it\\s+unattended,\\s+or\\s+carry\\s+`\\[operator\\]`\\s+for\\s+Jonathan\\s+to\\s+perform\\s+after\\s+merge\\.\\s+Before\\s+the\\s+approval\\s+pass\\s+and\\s+filing,\\s+stop\\s+and\\s+ask\\s+the\\s+user\\s+when\\s+any\\s+criterion\\s+has\\s+neither\\s+worker\\s+proof\\s+nor\\s+`\\[operator\\]`;\\s+do\\s+not\\s+file\\s+until\\s+resolved\\.\\s+Record\\s+the\\s+proof\\s+in\\s+the\\s+Evidence\\s+map\\s+column\\s+\"Proven\\s+by\\s+\\(worker\\s+command\\s+or\\s+\\[operator\\]\\)\"\\.\\s+Put\\s+each\\s+`\\[operator\\]`\\s+criterion,\\s+retaining\\s+its\\s+ID,\\s+in\\s+Build\\s+notes\\s+under\\s+Post\\-merge\\s+operator\\s+steps\\s+and\\s+in\\s+the\\s+OPERATE\\s+follow\\-up\\s+when\\s+available\\.\\s+Operator\\s+steps\\s+are\\s+not\\s+required\\s+for\\s+review\\s+PASS\\.\\s+Do\\s+not\\s+rewrite\\s+existing\\s+specs\\s+or\\s+relabel\\s+unmet\\s+worker\\s+criteria\\s+as\\s+operator\\s+steps\\.)(?=[\\s\\S]*(?m)^\\s*\\|\\ Criterion\\ \\|\\ Test\\-plan\\ step\\ \\|\\ Expected\\ observable\\ result\\ \\|\\ Proven\\ by\\ \\(worker\\ command\\ or\\ \\[operator\\]\\)\\ \\|\\s*$)"
+      },
+      {
+        "file": "ports/codex/wolftac-spec.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*UNATTENDED\\-PROOF\\-SELF\\-CHECK:\\*\\*\\s+For\\s+new\\s+specs\\s+written\\s+after\\s+this\\s+rule\\s+merges,\\s+every\\s+acceptance\\s+criterion\\s+must\\s+name\\s+an\\s+exact\\s+worker\\s+command\\s+or\\s+test\\s+that\\s+can\\s+prove\\s+it\\s+unattended,\\s+or\\s+carry\\s+`\\[operator\\]`\\s+for\\s+Jonathan\\s+to\\s+perform\\s+after\\s+merge\\.\\s+Before\\s+the\\s+approval\\s+pass\\s+and\\s+filing,\\s+stop\\s+and\\s+ask\\s+the\\s+user\\s+when\\s+any\\s+criterion\\s+has\\s+neither\\s+worker\\s+proof\\s+nor\\s+`\\[operator\\]`;\\s+do\\s+not\\s+file\\s+until\\s+resolved\\.\\s+Record\\s+the\\s+proof\\s+in\\s+the\\s+Evidence\\s+map\\s+column\\s+\"Proven\\s+by\\s+\\(worker\\s+command\\s+or\\s+\\[operator\\]\\)\"\\.\\s+Put\\s+each\\s+`\\[operator\\]`\\s+criterion,\\s+retaining\\s+its\\s+ID,\\s+in\\s+Build\\s+notes\\s+under\\s+Post\\-merge\\s+operator\\s+steps\\s+and\\s+in\\s+the\\s+OPERATE\\s+follow\\-up\\s+when\\s+available\\.\\s+Operator\\s+steps\\s+are\\s+not\\s+required\\s+for\\s+review\\s+PASS\\.\\s+Do\\s+not\\s+rewrite\\s+existing\\s+specs\\s+or\\s+relabel\\s+unmet\\s+worker\\s+criteria\\s+as\\s+operator\\s+steps\\.)(?=[\\s\\S]*(?m)^\\s*\\|\\ Criterion\\ \\|\\ Test\\-plan\\ step\\ \\|\\ Expected\\ observable\\ result\\ \\|\\ Proven\\ by\\ \\(worker\\ command\\ or\\ \\[operator\\]\\)\\ \\|\\s*$)"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-spec/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*UNATTENDED\\-PROOF\\-SELF\\-CHECK:\\*\\*\\s+For\\s+new\\s+specs\\s+written\\s+after\\s+this\\s+rule\\s+merges,\\s+every\\s+acceptance\\s+criterion\\s+must\\s+name\\s+an\\s+exact\\s+worker\\s+command\\s+or\\s+test\\s+that\\s+can\\s+prove\\s+it\\s+unattended,\\s+or\\s+carry\\s+`\\[operator\\]`\\s+for\\s+Jonathan\\s+to\\s+perform\\s+after\\s+merge\\.\\s+Before\\s+the\\s+approval\\s+pass\\s+and\\s+filing,\\s+stop\\s+and\\s+ask\\s+the\\s+user\\s+when\\s+any\\s+criterion\\s+has\\s+neither\\s+worker\\s+proof\\s+nor\\s+`\\[operator\\]`;\\s+do\\s+not\\s+file\\s+until\\s+resolved\\.\\s+Record\\s+the\\s+proof\\s+in\\s+the\\s+Evidence\\s+map\\s+column\\s+\"Proven\\s+by\\s+\\(worker\\s+command\\s+or\\s+\\[operator\\]\\)\"\\.\\s+Put\\s+each\\s+`\\[operator\\]`\\s+criterion,\\s+retaining\\s+its\\s+ID,\\s+in\\s+Build\\s+notes\\s+under\\s+Post\\-merge\\s+operator\\s+steps\\s+and\\s+in\\s+the\\s+OPERATE\\s+follow\\-up\\s+when\\s+available\\.\\s+Operator\\s+steps\\s+are\\s+not\\s+required\\s+for\\s+review\\s+PASS\\.\\s+Do\\s+not\\s+rewrite\\s+existing\\s+specs\\s+or\\s+relabel\\s+unmet\\s+worker\\s+criteria\\s+as\\s+operator\\s+steps\\.)(?=[\\s\\S]*(?m)^\\s*\\|\\ Criterion\\ \\|\\ Test\\-plan\\ step\\ \\|\\ Expected\\ observable\\ result\\ \\|\\ Proven\\ by\\ \\(worker\\ command\\ or\\ \\[operator\\]\\)\\ \\|\\s*$)"
+      },
+      {
+        "file": "ports/hermes/wolftac-spec/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*UNATTENDED\\-PROOF\\-SELF\\-CHECK:\\*\\*\\s+For\\s+new\\s+specs\\s+written\\s+after\\s+this\\s+rule\\s+merges,\\s+every\\s+acceptance\\s+criterion\\s+must\\s+name\\s+an\\s+exact\\s+worker\\s+command\\s+or\\s+test\\s+that\\s+can\\s+prove\\s+it\\s+unattended,\\s+or\\s+carry\\s+`\\[operator\\]`\\s+for\\s+Jonathan\\s+to\\s+perform\\s+after\\s+merge\\.\\s+Before\\s+the\\s+approval\\s+pass\\s+and\\s+filing,\\s+stop\\s+and\\s+ask\\s+the\\s+user\\s+when\\s+any\\s+criterion\\s+has\\s+neither\\s+worker\\s+proof\\s+nor\\s+`\\[operator\\]`;\\s+do\\s+not\\s+file\\s+until\\s+resolved\\.\\s+Record\\s+the\\s+proof\\s+in\\s+the\\s+Evidence\\s+map\\s+column\\s+\"Proven\\s+by\\s+\\(worker\\s+command\\s+or\\s+\\[operator\\]\\)\"\\.\\s+Put\\s+each\\s+`\\[operator\\]`\\s+criterion,\\s+retaining\\s+its\\s+ID,\\s+in\\s+Build\\s+notes\\s+under\\s+Post\\-merge\\s+operator\\s+steps\\s+and\\s+in\\s+the\\s+OPERATE\\s+follow\\-up\\s+when\\s+available\\.\\s+Operator\\s+steps\\s+are\\s+not\\s+required\\s+for\\s+review\\s+PASS\\.\\s+Do\\s+not\\s+rewrite\\s+existing\\s+specs\\s+or\\s+relabel\\s+unmet\\s+worker\\s+criteria\\s+as\\s+operator\\s+steps\\.)(?=[\\s\\S]*(?m)^\\s*\\|\\ Criterion\\ \\|\\ Test\\-plan\\ step\\ \\|\\ Expected\\ observable\\ result\\ \\|\\ Proven\\ by\\ \\(worker\\ command\\ or\\ \\[operator\\]\\)\\ \\|\\s*$)"
+      }
+    ]
+  },
+  {
+    "id": "spec-discovery-questions",
+    "description": "Spec discovery asks whether the work should exist and what inaction costs, and settles the data model first (course decision 2026-11-02).",
+    "checks": [
+      { "file": "canonical/wolftac-spec/SKILL.md", "pattern": "Should this exist\\?[\\s\\S]{0,400}Cost of inaction" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-spec/SKILL.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" },
+      { "file": "ports/hermes/wolftac-spec/SKILL.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" },
+      { "file": "ports/codex/wolftac-spec.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" },
+      { "file": "ports/claude-desktop/wolftac-spec/SKILL.md", "pattern": "should this exist[\\s\\S]{0,200}cost of\\s+inaction" }
+    ]
+  },
+  {
     "id": "one-issue-per-tick",
     "description": "Stages process one issue or feature per invocation/tick.",
     "checks": [
@@ -171,12 +216,13 @@
   },
   {
     "id": "silent-skip-unreachable",
-    "description": "Build/review skip unreachable-repo issues silently.",
+    "description": "Build reports unreachable-repo skips through NO-SILENT-SKIP; review remains silent.",
     "checks": [
-      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
-      { "file": "ports/codex/wolftac-build.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
-      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
-      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "\\*\\*NO-SILENT-SKIP:\\*\\*[\\s\\S]*BUILD SKIPPED:[\\s\\S]*repo-unreachable[\\s\\S]*24 hours[\\s\\S]*skip_report\\.py" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "\\*\\*NO-SILENT-SKIP:\\*\\*[\\s\\S]*BUILD SKIPPED:[\\s\\S]*repo-unreachable[\\s\\S]*24 hours[\\s\\S]*skip_report\\.py" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "\\*\\*NO-SILENT-SKIP:\\*\\*[\\s\\S]*BUILD SKIPPED:[\\s\\S]*repo-unreachable[\\s\\S]*24 hours[\\s\\S]*skip_report\\.py" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "\\*\\*NO-SILENT-SKIP:\\*\\*[\\s\\S]*BUILD SKIPPED:[\\s\\S]*repo-unreachable[\\s\\S]*24 hours[\\s\\S]*skip_report\\.py" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "\\*\\*NO-SILENT-SKIP:\\*\\*[\\s\\S]*BUILD SKIPPED:[\\s\\S]*repo-unreachable[\\s\\S]*24 hours[\\s\\S]*skip_report\\.py" },
       { "file": "canonical/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
       { "file": "ports/codex/wolftac-review.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
       { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "(?=[\\s\\S]*silent)(?=[\\s\\S]*(unreachable|cannot\\s+reach))" },
@@ -196,13 +242,15 @@
   },
   {
     "id": "integrate-approval-gate",
-    "description": "Integrate merges only after an APPROVE MERGE comment newer than the latest MERGE PROOF PACK, with a staleness guard.",
+    "description": "Integrate merges only after a valid human approval newer than the latest MERGE PROOF PACK, with a staleness guard. The only approval is Jonathan's Discord rocket judged APPROVED by deploy/discord_approval.py (DISCORD-APPROVAL-ONLY), bound to the exact head (APPROVAL-BOUND-TO-SHA); typed comments never count; any reader failure fails closed (WD-546). AGENTS.md carries the same markers.",
     "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*(OLDER|older) than the newest proof pack)" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" },
-      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof pack)" }
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof\\s+pack)(?=[\\s\\S]*DISCORD-APPROVAL-ONLY)(?=[\\s\\S]*APPROVAL-BOUND-TO-SHA)(?=[\\s\\S]*TYPED-APPROVAL-IS-NEVER-APPROVAL)(?=[\\s\\S]*discord_approval\\.py verify --policy deploy/approval-policy\\.json --channel-id)(?=[\\s\\S]*--proof-pack <proof pack URL>)(?=[\\s\\S]*A new commit\\s+cancels)(?=[\\s\\S]*fails\\s+closed)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof\\s+pack)(?=[\\s\\S]*DISCORD-APPROVAL-ONLY)(?=[\\s\\S]*APPROVAL-BOUND-TO-SHA)(?=[\\s\\S]*TYPED-APPROVAL-IS-NEVER-APPROVAL)(?=[\\s\\S]*discord_approval\\.py verify --policy deploy/approval-policy\\.json --channel-id)(?=[\\s\\S]*--proof-pack <proof pack URL>)(?=[\\s\\S]*A new commit\\s+cancels)(?=[\\s\\S]*fails\\s+closed)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof\\s+pack)(?=[\\s\\S]*DISCORD-APPROVAL-ONLY)(?=[\\s\\S]*APPROVAL-BOUND-TO-SHA)(?=[\\s\\S]*TYPED-APPROVAL-IS-NEVER-APPROVAL)(?=[\\s\\S]*discord_approval\\.py verify --policy deploy/approval-policy\\.json --channel-id)(?=[\\s\\S]*--proof-pack <proof pack URL>)(?=[\\s\\S]*A new commit\\s+cancels)(?=[\\s\\S]*fails\\s+closed)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof\\s+pack)(?=[\\s\\S]*DISCORD-APPROVAL-ONLY)(?=[\\s\\S]*APPROVAL-BOUND-TO-SHA)(?=[\\s\\S]*TYPED-APPROVAL-IS-NEVER-APPROVAL)(?=[\\s\\S]*discord_approval\\.py verify --policy deploy/approval-policy\\.json --channel-id)(?=[\\s\\S]*--proof-pack <proof pack URL>)(?=[\\s\\S]*A new commit\\s+cancels)(?=[\\s\\S]*fails\\s+closed)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof\\s+pack)(?=[\\s\\S]*DISCORD-APPROVAL-ONLY)(?=[\\s\\S]*APPROVAL-BOUND-TO-SHA)(?=[\\s\\S]*TYPED-APPROVAL-IS-NEVER-APPROVAL)(?=[\\s\\S]*discord_approval\\.py verify --policy deploy/approval-policy\\.json --channel-id)(?=[\\s\\S]*--proof-pack <proof pack URL>)(?=[\\s\\S]*A new commit\\s+cancels)(?=[\\s\\S]*fails\\s+closed)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*MERGE PROOF PACK)(?=[\\s\\S]*No approval → no merge)(?=[\\s\\S]*older than the\\s+newest\\s+proof\\s+pack)(?=[\\s\\S]*DISCORD-APPROVAL-ONLY)(?=[\\s\\S]*APPROVAL-BOUND-TO-SHA)(?=[\\s\\S]*TYPED-APPROVAL-IS-NEVER-APPROVAL)(?=[\\s\\S]*discord_approval\\.py verify --policy deploy/approval-policy\\.json --channel-id)(?=[\\s\\S]*--proof-pack <proof pack URL>)(?=[\\s\\S]*A new commit\\s+cancels)(?=[\\s\\S]*fails\\s+closed)" },
+      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*DISCORD-APPROVAL-ONLY)(?=[\\s\\S]*APPROVAL-BOUND-TO-SHA)(?=[\\s\\S]*TYPED-APPROVAL-IS-NEVER-APPROVAL)(?=[\\s\\S]*A new commit\\s+cancels)(?=[\\s\\S]*fails\\s+closed)" }
     ]
   },
   {
@@ -271,32 +319,6 @@
     ]
   },
   {
-    "id": "slack-approval-gate",
-    "description": "Integrate's approval gate includes the Slack :rocket: reaction lane bound to deploy/approval-policy.json, with case-insensitive APPROVE MERGE and APPROVED MERGE typed fallbacks retained.",
-    "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
-      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*NEWEST Slack\\s+approval message)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
-      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*:rocket:)(?=[\\s\\S]*approval-policy\\.json)(?=[\\s\\S]*APPROVE MERGE)(?=[\\s\\S]*APPROVED MERGE)(?=[\\s\\S]*case-insensitively)" },
-      { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*slack_channel_id)(?=[\\s\\S]*approver_slack_user_id)" }
-    ]
-  },
-  {
-    "id": "slack-bot-sender-identity",
-    "description": "All factory Slack posts and reaction reads use the factory bot token, with policy-selected sender identities and a fallback identity.",
-    "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
-      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
-      { "file": "AGENTS.md", "pattern": "(?=[\\s\\S]*SLACK_FACTORY_BOT_TOKEN)(?=[\\s\\S]*chat\\.postMessage)(?=[\\s\\S]*reactions\\.get)(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*fallback_identity)(?=[\\s\\S]*never\\s+a\\s+human\\s+Slack\\s+session)" },
-      { "file": "deploy/approval-policy.json", "pattern": "(?=[\\s\\S]*sender_identities)(?=[\\s\\S]*claude-code)(?=[\\s\\S]*claude-desktop)(?=[\\s\\S]*codex)(?=[\\s\\S]*hermes@AI-MSI)(?=[\\s\\S]*hermes@jon-omen)(?=[\\s\\S]*fallback_identity)" }
-    ]
-  },
-  {
     "id": "no-worker-reactions",
     "description": "Workers are forbidden from adding reactions to factory notification messages (read-only on reactions), mirroring the Linear bot-identity rule.",
     "checks": [
@@ -331,7 +353,7 @@
   },
   {
     "id": "needs-human-pickup-skip",
-    "description": "Build and review pickup surfaces silently skip parked NEEDS HUMAN work.",
+    "description": "Build and review skip parked NEEDS HUMAN work; build adds deduplicated skip diagnostics only.",
     "checks": [
       { "file": "canonical/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
       { "file": "ports/codex/wolftac-build.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,320}REVIEW REPORT — NEEDS HUMAN" },
@@ -417,14 +439,53 @@
     ]
   },
   {
-    "id": "integrate-pr-merge-transition",
-    "description": "Every integrate surface uses a merge-commit PR path when a PR exists and retains direct fast-forward only for pre-PR work.",
+    "id": "merge-pinned-to-reviewed-head",
+    "description": "Every integrate surface checks the PR head (same repo, base, headRefOid = reviewed SHA) and merges only with gh pr merge --match-head-commit; no PR means stop, never a direct push or fast-forward (WD-599).",
     "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" },
-      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*PR-MERGE-TRANSITION-RULE)(?=[\\s\\S]*gh pr merge <n> --merge)(?=[\\s\\S]*pre-PR-era)(?=[\\s\\S]*Never\\s+auto-merge)" }
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*gh pr merge(?! <n> --merge --match-head-commit <reviewed SHA>))(?![\\s\\S]*pre-PR-era)(?![\\s\\S]*direct fast-forward push)(?=[\\s\\S]*PR-HEAD-CHECK)(?=[\\s\\S]*isCrossRepository)(?=[\\s\\S]*headRefOid)(?=[\\s\\S]*gh pr merge <n> --merge --match-head-commit <reviewed SHA>)(?=[\\s\\S]*Never\\s+auto-merge)(?=[\\s\\S]*never fall back to a direct push or fast-forward)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*gh pr merge(?! <n> --merge --match-head-commit <reviewed SHA>))(?![\\s\\S]*pre-PR-era)(?![\\s\\S]*direct fast-forward push)(?=[\\s\\S]*PR-HEAD-CHECK)(?=[\\s\\S]*isCrossRepository)(?=[\\s\\S]*headRefOid)(?=[\\s\\S]*gh pr merge <n> --merge --match-head-commit <reviewed SHA>)(?=[\\s\\S]*Never\\s+auto-merge)(?=[\\s\\S]*never fall back to a direct push or fast-forward)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*gh pr merge(?! <n> --merge --match-head-commit <reviewed SHA>))(?![\\s\\S]*pre-PR-era)(?![\\s\\S]*direct fast-forward push)(?=[\\s\\S]*PR-HEAD-CHECK)(?=[\\s\\S]*isCrossRepository)(?=[\\s\\S]*headRefOid)(?=[\\s\\S]*gh pr merge <n> --merge --match-head-commit <reviewed SHA>)(?=[\\s\\S]*Never\\s+auto-merge)(?=[\\s\\S]*never fall back to a direct push or fast-forward)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*gh pr merge(?! <n> --merge --match-head-commit <reviewed SHA>))(?![\\s\\S]*pre-PR-era)(?![\\s\\S]*direct fast-forward push)(?=[\\s\\S]*PR-HEAD-CHECK)(?=[\\s\\S]*isCrossRepository)(?=[\\s\\S]*headRefOid)(?=[\\s\\S]*gh pr merge <n> --merge --match-head-commit <reviewed SHA>)(?=[\\s\\S]*Never\\s+auto-merge)(?=[\\s\\S]*never fall back to a direct push or fast-forward)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "\\A(?![\\s\\S]*gh pr merge(?! <n> --merge --match-head-commit <reviewed SHA>))(?![\\s\\S]*pre-PR-era)(?![\\s\\S]*direct fast-forward push)(?=[\\s\\S]*PR-HEAD-CHECK)(?=[\\s\\S]*isCrossRepository)(?=[\\s\\S]*headRefOid)(?=[\\s\\S]*gh pr merge <n> --merge --match-head-commit <reviewed SHA>)(?=[\\s\\S]*Never\\s+auto-merge)(?=[\\s\\S]*never fall back to a direct push or fast-forward)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*gh pr merge(?! <n> --merge --match-head-commit <reviewed SHA>))(?![\\s\\S]*pre-PR-era)(?![\\s\\S]*direct fast-forward push)(?=[\\s\\S]*PR-HEAD-CHECK)(?=[\\s\\S]*isCrossRepository)(?=[\\s\\S]*headRefOid)(?=[\\s\\S]*gh pr merge <n> --merge --match-head-commit <reviewed SHA>)(?=[\\s\\S]*Never\\s+auto-merge)(?=[\\s\\S]*never fall back to a direct push or fast-forward)" },
+      { "file": "AGENTS.md", "pattern": "\\A(?![\\s\\S]*gh pr merge(?! <n> --merge --match-head-commit <reviewed SHA>))(?=[\\s\\S]*gh pr merge <n> --merge --match-head-commit <reviewed SHA>)" }
+    ]
+  },
+  {
+    "id": "typed-approval-is-never-approval",
+    "description": "Every line that names a typed APPROVE MERGE / APPROVED MERGE comment says it is never approval (WD-599).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" },
+      { "file": "AGENTS.md", "pattern": "\\A(?![\\s\\S]*^(?=[^\\n]*APPROVED? MERGE)(?![^\\n]*\\bnever\\b)[^\\n]*$)" }
+    ]
+  },
+  {
+    "id": "no-slack-in-approval-path",
+    "description": "No integrate surface posts to or reads Slack: no slack_bot.py, reactions.get, chat.postMessage, Slack bot token or Slack approver id, and each says a Slack reaction is never approval (WD-599).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:slack_bot|reactions\\.get|chat\\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id))(?=[\\s\\S]*Slack reaction or message is never\\s+approval)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:slack_bot|reactions\\.get|chat\\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id))(?=[\\s\\S]*Slack reaction or message is never\\s+approval)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:slack_bot|reactions\\.get|chat\\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id))(?=[\\s\\S]*Slack reaction or message is never\\s+approval)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:slack_bot|reactions\\.get|chat\\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id))(?=[\\s\\S]*Slack reaction or message is never\\s+approval)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "\\A(?![\\s\\S]*(?:slack_bot|reactions\\.get|chat\\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id))(?=[\\s\\S]*Slack reaction or message is never\\s+approval)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:slack_bot|reactions\\.get|chat\\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id))(?=[\\s\\S]*Slack reaction or message is never\\s+approval)" }
+    ]
+  },
+  {
+    "id": "integrate-discord-request-route",
+    "description": "Hermes integrate copies send the approval request with the exact Discord send command and require a message id; the other surfaces report it as an operator step (WD-599).",
+    "checks": [
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*hermes -p integrator send(?! --json --to discord:1562236246158221323 --file <body>`))(?=[\\s\\S]*Send the request as Harper)(?=[\\s\\S]*hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`)(?=[\\s\\S]*message id)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*hermes -p integrator send(?! --json --to discord:1562236246158221323 --file <body>`))(?=[\\s\\S]*Send the request as Harper)(?=[\\s\\S]*hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`)(?=[\\s\\S]*message id)" },
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*hermes -p integrator send(?! --json --to discord:1562236246158221323 --file <body>`))(?=[\\s\\S]*no supported\\s+Discord send route)(?=[\\s\\S]*OPERATOR STEP: post the Discord approval request for <ID>)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*hermes -p integrator send(?! --json --to discord:1562236246158221323 --file <body>`))(?=[\\s\\S]*no supported\\s+Discord send route)(?=[\\s\\S]*OPERATOR STEP: post the Discord approval request for <ID>)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "\\A(?![\\s\\S]*hermes -p integrator send(?! --json --to discord:1562236246158221323 --file <body>`))(?=[\\s\\S]*no supported\\s+Discord send route)(?=[\\s\\S]*OPERATOR STEP: post the Discord approval request for <ID>)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*hermes -p integrator send(?! --json --to discord:1562236246158221323 --file <body>`))(?=[\\s\\S]*no supported\\s+Discord send route)(?=[\\s\\S]*OPERATOR STEP: post the Discord approval request for <ID>)" }
     ]
   },
   {
@@ -439,14 +500,35 @@
     ]
   },
   {
-    "id": "integrate-branchless-landing",
-    "description": "Every integrate surface defines the branchless-landing path: strict by-design detection from a PASS review's attestation, a LANDING PROOF PACK whose approval block carries the merge pack's gate verbatim, a Landing action replacing the merge command, a LANDED (BRANCHLESS) report with deliverable evidence, and the never-pushes/no-approval-no-Done guardrail.",
+    "id": "discord-approval-policy",
+    "description": "deploy/approval-policy.json is exactly the six-key Discord policy for #approvals and Jonathan's account, with no Slack key (WD-546 AC-1).",
     "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
-      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* tap `:rocket:`[\\s\\S]{0,200}APPROVE MERGE[\\s\\S]{0,120}APPROVED MERGE[\\s\\S]{0,120}case-insensitively)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" }
+      { "file": "deploy/approval-policy.json", "pattern": "\\A(?![\\s\\S]*(?i:slack))(?=[\\s\\S]*\"discord_guild_id\": \"923752167293222912\")(?=[\\s\\S]*\"discord_channel_id\": \"1562236246158221323\")(?=[\\s\\S]*\"approver_discord_user_id\": \"1022999767753691186\")(?=[\\s\\S]*\"pack_author_discord_user_ids\": \\[\"1562178628211449966\"\\])(?=[\\s\\S]*\"reader_bot_discord_user_id\": \"1562178628211449966\")(?=[\\s\\S]*\"approval_emoji\": )" }
+    ]
+  },
+  {
+    "id": "no-interim-approval-rule",
+    "description": "WD-599's interim rule (no approval valid until WD-546) and its request footer are gone from every integrate surface and AGENTS.md (WD-546).",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:valid yet|until WD-546 is live|No merge will run until))" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:valid yet|until WD-546 is live|No merge will run until))" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:valid yet|until WD-546 is live|No merge will run until))" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:valid yet|until WD-546 is live|No merge will run until))" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "\\A(?![\\s\\S]*(?:valid yet|until WD-546 is live|No merge will run until))" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "\\A(?![\\s\\S]*(?:valid yet|until WD-546 is live|No merge will run until))" },
+      { "file": "AGENTS.md", "pattern": "\\A(?![\\s\\S]*(?:valid yet|until WD-546 is live|No merge will run until))" }
+    ]
+  },
+  {
+    "id": "integrate-branchless-landing",
+    "description": "Every integrate surface defines the branchless-landing path: strict by-design detection from a PASS review's attestation, a LANDING PROOF PACK whose approval block names the verifier's APPROVED with --pr none, a Landing action replacing the merge command, a LANDED (BRANCHLESS) report with deliverable evidence, and the never-pushes/no-approval-no-Done guardrail.",
+    "checks": [
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* only Jonathan's own \\S+ on the Discord request, verified by `deploy/discord_approval\\.py` as `APPROVED` with `--pr none`)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* only Jonathan's own \\S+ on the Discord request, verified by `deploy/discord_approval\\.py` as `APPROVED` with `--pr none`)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* only Jonathan's own \\S+ on the Discord request, verified by `deploy/discord_approval\\.py` as `APPROVED` with `--pr none`)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* only Jonathan's own \\S+ on the Discord request, verified by `deploy/discord_approval\\.py` as `APPROVED` with `--pr none`)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* only Jonathan's own \\S+ on the Discord request, verified by `deploy/discord_approval\\.py` as `APPROVED` with `--pr none`)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "(?=[\\s\\S]*no branch exists for this issue by design)(?=[\\s\\S]*LANDING PROOF PACK[\\s\\S]{0,1200}\\*\\*Approval:\\*\\* only Jonathan's own \\S+ on the Discord request, verified by `deploy/discord_approval\\.py` as `APPROVED` with `--pr none`)(?=[\\s\\S]*Landing action \\(on approval\\))(?=[\\s\\S]*LANDED \\(BRANCHLESS\\))(?=[\\s\\S]*Deliverable verified)(?=[\\s\\S]*never pushes, merges, or deploys anything new)(?=[\\s\\S]*no\\s+approval → no Done)" }
     ]
   },
   {
@@ -521,7 +603,7 @@
   },
   {
     "id": "integrate-no-self-sweep",
-    "description": "Integrate never sweeps its own claim, skips waiting issues, and refreshes Slack-less proof packs (WD-371).",
+    "description": "Integrate never sweeps its own claim, skips waiting issues, and refreshes request-less proof packs (WD-371, WD-599).",
     "checks": [
       { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
       { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Own claims and waiting issues" },
@@ -532,15 +614,15 @@
     ]
   },
   {
-    "id": "integrate-slack-utf8-posting",
-    "description": "Integrate posts Slack JSON from a UTF-8 file, never message text in argv (2026-10-20 BAD+97 incident).",
+    "id": "integrate-discord-request-encoding",
+    "description": "Integrate writes the Discord approval request to a UTF-8 body file, never message text in argv (2026-10-20 BAD+97 incident; WD-599).",
     "checks": [
-      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
-      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
-      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Slack posting encoding" },
-      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" },
-      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Slack posting encoding" }
+      { "file": "canonical/wolftac-integrate/SKILL.md", "pattern": "Discord request encoding[\\s\\S]{0,400}UTF-8 without a BOM" },
+      { "file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "Discord request encoding[\\s\\S]{0,400}UTF-8 without a BOM" },
+      { "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md", "pattern": "Discord request encoding[\\s\\S]{0,400}UTF-8 without a BOM" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md", "pattern": "Discord request encoding[\\s\\S]{0,400}UTF-8 without a BOM" },
+      { "file": "ports/codex/wolftac-integrate.md", "pattern": "Discord request encoding[\\s\\S]{0,400}UTF-8 without a BOM" },
+      { "file": "ports/claude-desktop/wolftac-integrate/SKILL.md", "pattern": "Discord request encoding[\\s\\S]{0,400}UTF-8 without a BOM" }
     ]
   },
   {

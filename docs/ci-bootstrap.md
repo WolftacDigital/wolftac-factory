@@ -1,7 +1,9 @@
 # Factory CI bootstrap
 
 This is the 15-minute, opt-in path for adding the Wolftac Factory checks to another
-GitHub repository without breaking the factory's direct fast-forward fallback.
+GitHub repository. Integrate lands work only through a PR merged with
+`gh pr merge <n> --merge --match-head-commit <reviewed SHA>`; there is no direct-push
+fallback, so protection can apply to admins too.
 
 ## 1. Add the workflow
 
@@ -57,7 +59,7 @@ Factory review is presence-based: it enumerates every PR check and blocks PASS o
 red check even in repositories that never enable protection. Branch protection adds
 server-side enforcement against human merges; it does not make CI meaningful to review.
 
-## 2. Require only the factory check
+## 2. Require a PR and the factory check, for admins too
 
 Prerequisite: the repository's GitHub plan must support branch protection. For a
 private repository, an HTTP 403 response saying `Upgrade to GitHub Pro or make this
@@ -76,8 +78,13 @@ This is the exact PowerShell command used for
     "strict": false,
     "contexts": ["factory-checks"]
   },
-  "enforce_admins": false,
-  "required_pull_request_reviews": null,
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": false,
+    "require_code_owner_reviews": false,
+    "require_last_push_approval": false,
+    "required_approving_review_count": 0
+  },
   "restrictions": null,
   "allow_force_pushes": false,
   "allow_deletions": false
@@ -85,10 +92,12 @@ This is the exact PowerShell command used for
 '@ | gh api -X PUT repos/WolftacDigital/wolftac-factory/branches/main/protection --input -
 ```
 
-`enforce_admins:false` is required. The factory's transition path for older,
-pre-PR issues is an admin-authenticated fast-forward push to `main`; enforcing the
-rule for admins would block that path and could strand in-flight issues. Do not add
-required PR reviews or push restrictions.
+This matches the live `main` protection since 2026-11-01: every change needs a PR
+with a passing `factory-checks`, and `enforce_admins` is `true`, so an
+admin-authenticated push to `main` is rejected too. That is intended: integrate never
+pushes to `main` directly (WD-599). The PR needs zero approving reviews, because
+the human approval is Jonathan's Discord 🚀, enforced by factory tooling (WD-546),
+not a GitHub review. Do not add push restrictions.
 
 Read the effective protection back:
 
@@ -96,14 +105,11 @@ Read the effective protection back:
 gh api repos/WolftacDigital/wolftac-factory/branches/main/protection
 ```
 
-Then exercise the transition path with a safe no-op push of the current `main` SHA:
-
-```powershell
-git push origin <CURRENT_MAIN_SHA>:main
-```
-
-If that push is rejected, immediately run the rollback command below. Never leave a
-protection rule enabled when the factory cannot exercise its merge path.
+Confirm the read-back shows `required_status_checks.contexts` = `["factory-checks"]`,
+`enforce_admins.enabled` = `true`, `required_pull_request_reviews` present with
+`required_approving_review_count` = `0`, `allow_force_pushes` and `allow_deletions`
+`false`, and `restrictions` `null`. Integrate exercises the merge path through the PR,
+so no direct-push test is needed.
 
 ## Rollback
 
@@ -121,5 +127,5 @@ Read the branch endpoint afterward and confirm protection is absent.
 
 Only Jonathan may authorize an emergency override. Temporarily lift protection with
 the DELETE command above, perform the narrowly approved recovery, and immediately
-restore the exact safe payload and re-run the read-back plus no-op push proof. An
+restore the exact safe payload and re-run the read-back. An
 emergency override never changes the factory's human merge-approval requirement.

@@ -66,6 +66,23 @@ foreach ($file in $reviewFiles) {
     }
 }
 
+# Operator-only acceptance is an explicit, narrow exception to PASS scope.
+# Require the same complete paragraph, so dropping a clause or reversing its
+# meaning cannot pass merely because a marker or a nearby PASS still exists.
+$operatorReviewRule = @'
+**OPERATOR-PASS-SCOPE:** Criteria explicitly tagged `[operator]` in new specs written after this rule merges are post-merge operator steps, outside worker verification and PASS scope; they do not block PASS. List every such criterion by ID in the review report as "operator step, not verified" and leave its checkbox unchecked. Skip its operator-only test-plan steps; never run them to obtain a PASS. For the verification, verdict and checkbox instructions below, "every criterion" means every non-operator criterion; only verified non-operator criteria are ticked or counted in the verified/total fraction. Report operator steps separately and retain them in Build notes under Post-merge operator steps and in the OPERATE follow-up when available. All non-operator criteria, baseline checks, CI gates and merge approval rules remain unchanged. Do not rewrite existing specs or relabel an unmet criterion as `[operator]` during review.
+'@
+foreach ($file in $reviewFiles) {
+    $content = Read-RepoFile $file
+    $paragraphs = @($content -split '(?:\r?\n)[ \t]*(?:\r?\n)' | Where-Object {
+        $_.TrimStart().StartsWith('**OPERATOR-PASS-SCOPE:**')
+    })
+    if ($paragraphs.Count -ne 1 -or
+        ($paragraphs[0] -replace '\s+', ' ').Trim() -cne $operatorReviewRule.Trim()) {
+        $errors.Add("$file - missing or changed OPERATOR-PASS-SCOPE rule: [operator] criteria must remain unverified and outside PASS scope")
+    }
+}
+
 # Review's passing verdict is Approved; a review surface that still sets Done is a defect.
 foreach ($file in $reviewFiles) {
     $content = Read-RepoFile $file
@@ -82,7 +99,8 @@ $integrateFiles = @(
 foreach ($file in $integrateFiles) {
     $content = Read-RepoFile $file
     Require-Pattern $file "MERGE PROOF PACK" "missing the MERGE PROOF PACK contract"
-    Require-Pattern $file "APPROVE MERGE" "missing the APPROVE MERGE human approval gate"
+    Require-Pattern $file "DISCORD-APPROVAL-ONLY" "missing the WD-546 rule that only the verified Discord rocket is approval"
+    Require-Pattern $file "discord_approval\.py verify --policy deploy/approval-policy\.json" "merge path does not run the WD-546 verifier"
     Require-Pattern $file "merge-base --is-ancestor" "does not verify merge ancestry before Done"
     Require-Pattern $file "detached integrate\s+worktree" "does not require an isolated integrate worktree"
     Require-Pattern $file "[Nn]ever force-push" "missing the force-push prohibition"
@@ -100,6 +118,51 @@ foreach ($file in $integrateFiles) {
     }
 }
 
+# WD-599/WD-546: a typed comment is never approval, Slack is out of the approval path,
+# every merge is pinned to the reviewed head with no direct-push fallback, and only the
+# verified Discord rocket (DISCORD-APPROVAL-ONLY) approves.
+$approvalSurfaces = @(
+    "canonical/wolftac-integrate/SKILL.md",
+    "ports/hermes/wolftac-integrate/SKILL.md",
+    "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+    "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+    "ports/codex/wolftac-integrate.md",
+    "ports/claude-desktop/wolftac-integrate/SKILL.md",
+    "AGENTS.md"
+)
+foreach ($file in $approvalSurfaces) {
+    $content = Read-RepoFile $file
+    foreach ($line in ($content -split "`r?`n")) {
+        if ($line -match "APPROVED? MERGE" -and $line -notmatch "\bnever\b") {
+            $errors.Add("$file - accepts or offers typed approval; every APPROVE MERGE line must say it is never approval: $($line.Trim())")
+        }
+        if ($line -match "gh pr merge" -and $line -notmatch "gh pr merge <n> --merge --match-head-commit <reviewed SHA>") {
+            $errors.Add("$file - a gh pr merge command is not the exact pinned form: $($line.Trim())")
+        }
+        if ($line -match "hermes -p integrator send" -and $line -notmatch "hermes -p integrator send --json --to discord:1562236246158221323 --file <body>``") {
+            $errors.Add("$file - the Discord send command is not the exact WD-599 form: $($line.Trim())")
+        }
+        if ($line -match "(direct fast-forward push|pre-PR-era|fast-forward push to)" -and $line -notmatch "\bnever\b") {
+            $errors.Add("$file - offers a direct fast-forward push instead of the pinned PR merge: $($line.Trim())")
+        }
+    }
+    foreach ($marker in @("DISCORD-APPROVAL-ONLY", "APPROVAL-BOUND-TO-SHA", "TYPED-APPROVAL-IS-NEVER-APPROVAL")) {
+        Require-Pattern $file $marker "missing the WD-546 marker $marker"
+    }
+    if ([regex]::IsMatch($content, "(typed|written|Linear)\s+(comment|approval)[^\r\n]{0,60}\b(counts as|is a valid|is valid|qualifies as|serves as|also approves)\b", "IgnoreCase")) {
+        $errors.Add("$file - describes a typed comment as accepted approval; typed approval is never approval")
+    }
+    if ([regex]::IsMatch($content, "(valid yet|until WD-546 is live|No merge will run until)", "IgnoreCase")) {
+        $errors.Add("$file - still carries WD-599's interim no-approval rule; WD-546 replaced it with the Discord gate")
+    }
+    if ($file -ne "AGENTS.md") {
+        Require-Pattern $file "--match-head-commit" "merge is not pinned to the reviewed head with --match-head-commit"
+        if ([regex]::IsMatch($content, "(slack_bot|reactions\.get|chat\.postMessage|SLACK_FACTORY_BOT_TOKEN|approver_slack_user_id)", "IgnoreCase")) {
+            $errors.Add("$file - integrate still posts to or reads Slack; Slack is retired from the approval path")
+        }
+    }
+}
+
 # Every shell-capable integrate surface ships its own reachable copy of the Linear
 # helper, byte-identical to the canonical one, and never hand-rolls a credentialed
 # GraphQL call. Regex parity can assert the prose; only this can assert the files.
@@ -111,6 +174,8 @@ $helperCopies = @{
     # The Desktop bundle ships the helper for portability, but Desktop invokes the
     # copy on the terminal server's filesystem — the uploaded bundle is not on it.
     "ports/claude-desktop/wolftac-integrate/SKILL.md"             = "ports/claude-desktop/wolftac-integrate/scripts/linear_bot.py"
+    # The parked factory-integrate port still ships the sixth copy; keep it identical too.
+    "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md" = "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py"
 }
 $canonicalHelperText = (Read-RepoFile $canonicalHelper) -replace "`r`n", "`n"
 foreach ($surface in $helperCopies.Keys) {

@@ -4,13 +4,13 @@ This is your `/wolftac-spec` → `/wolftac-build` → `/wolftac-review` →
 `/wolftac-integrate` software factory: a repeatable pipeline where one agent turns
 an idea into a detailed spec, another builds it and proves it works, a third
 independently re-verifies and marks it Approved, and a fourth lands the approved
-branch on the default branch — only after your explicit `APPROVE MERGE` — and marks
-it Done. Done means merged. It runs across **Claude Code, Claude Desktop, Codex,
+branch on the default branch — only after your own 🚀 on its Discord #approvals
+request, verified by `deploy/discord_approval.py` — and marks it Done. Done means merged. It runs across **Claude Code, Claude Desktop, Codex,
 and Hermes** — the whole hand-off happens through one shared Linear queue, not
 through this repo. Claude Code, Codex, and Hermes can run every stage; Claude
-Desktop participates fully in spec, and in build/review only when the chat has
-filesystem + terminal MCP access to the target repo (integrate is not a Desktop
-stage).
+Desktop participates fully in spec, and in build/review/integrate only when the chat
+has filesystem + terminal MCP access to the target repo (integrate also needs the
+factory bot credentials in that environment).
 
 **This repo is the source of truth for the skill files themselves.** The copies
 under `~/.claude/skills`, `~/.agents/skills`, legacy `~/.codex/prompts`, and
@@ -27,17 +27,29 @@ canonical/              Claude Code skills (the reference implementation)
   wolftac-spec/          spec stage: idea -> Linear issue
   wolftac-build/          build stage: issue -> working, tested code
   wolftac-review/         review stage: independent re-verification -> Approved
-  wolftac-integrate/      integrate stage: rebase + gates + APPROVE MERGE -> merged, the only stage that marks Done
+  wolftac-integrate/      integrate stage: rebase + gates + verified Discord rocket -> merged, the only stage that marks Done
   wolftac-agent-command-patterns/  shared cross-agent doctrine — NOT a pipeline stage
 plugins/wolftac-factory/ Codex plugin with four native skills (authoritative Codex port)
 ports/codex/            Deprecated `/prompts:wolftac-*` compatibility prompts, plus the shared doctrine prompt
 ports/hermes/           Hermes skills (same stages, Hermes' format)
   wolftac-review/references/   Proof patterns (e.g. reviewing WSL-hosted repos via a detached worktree)
 ports/claude-desktop/   Sources for Claude Desktop's uploadable skill bundles
+ports/hermes-plugins/   R1: the read-only Discord approval reader (`wolftac-approval-read`)
+ports/hermes-factory-integrate/   Parked: source for the retired `factory-integrate` Hermes profile (kept for WD-547)
 deploy/deploy.ps1       -Check (drift) / -Deploy (push to all local targets) / -Package (zip for handoff)
+deploy/factory-gatekeeper.py   No-LLM dispatcher that wakes the worker profiles (docs/factory-gatekeeper.md)
+deploy/factory-watchdog.ps1    Scheduled health, drift and /learn check (docs/watchdog.md)
+deploy/discord_approval.py + approval-policy.json   The merge-approval verifier and its policy
+deploy/junctions.json + junction-*.ps1   Hermes skill junction setup/teardown (docs/hermes-skill-junctions.md)
+deploy/worker-schedules.ps1    Reconciles the workers' safety-net schedule
+deploy/repo-allowlist.json     Repos the integrate gate runner may work in
+deploy/invariants.json + parity-check.ps1 + semantic-check.ps1   Cross-port guardrails that CI enforces
+deploy/tests/           Regression tests (see deploy/tests/README.md)
 deploy/hermes-moa-presets.yaml.example   Optional Hermes MoA presets for model-team routing
 deploy/model-policy.yaml  Versioned per-harness model and reasoning policy
 deploy/linear-mcp.toml.example   Codex config.toml snippet for connecting Linear
+docs/                   Operator runbooks: gatekeeper, watchdog, skill junctions, drift reconciliation, CI bootstrap, Linux host
+.github/workflows/factory-checks.yml   CI: parity, semantic, unit tests, LF check, Linux-host smoke
 share/build-your-own-agent-factory.html   Public/client field manual (generic /factory-* names — see Naming)
 ```
 
@@ -101,7 +113,8 @@ If you're setting up (or maintaining) the skills locally rather than handing the
 off, the deploy tool does it in one step:
 
 ```powershell
-pwsh deploy\deploy.ps1 -Deploy   # installs canonical skills + all ports, rebuilds Desktop zips
+pwsh deploy\deploy.ps1 -Deploy   # copies the Claude Code, Codex and plugin targets, rebuilds Desktop zips;
+                                 #   Hermes skills that are junctions are not written (docs\hermes-skill-junctions.md)
 pwsh deploy\deploy.ps1 -Check    # confirms every deployed copy still matches the repo
 ```
 
@@ -109,8 +122,8 @@ pwsh deploy\deploy.ps1 -Check    # confirms every deployed copy still matches th
 WSL Claude Code sessions get the commands too. **Restart any open agent session
 after deploying** — skills are loaded at startup, not picked up live.
 
-In Codex, invoke the installed skills as `$wolftac-spec`, `$wolftac-build`, and
-`$wolftac-review` (or select them in the desktop Skills UI). The old custom-prompt
+In Codex, invoke the installed skills as `$wolftac-spec`, `$wolftac-build`,
+`$wolftac-review`, and `$wolftac-integrate` (or select them in the desktop Skills UI). The old custom-prompt
 compatibility path is namespaced as `/prompts:wolftac-*` in CLI/IDE and is deprecated.
 
 One-time setup per platform still applies even after `-Deploy` copies the files:
@@ -168,16 +181,20 @@ that file; stage skills record the actual model but never pretend to switch it m
 - Linear team **Wolftac Digital** (`WD`), queue label **Factory Queue**.
 - States: `Todo` (specced) → `In Progress` (building) → `In Review` (awaiting QA) →
   `Approved` (review passed, awaiting merge) → `Done` — set only by the integrate
-  stage, after your explicit `APPROVE MERGE` and an ancestry-verified merge. A failed
+  stage, after your verified Discord 🚀 and an ancestry-verified merge. A failed
   review — or a failed rebase/gate at integration — returns the issue to `Todo`
   with a defect list the next build treats as its work order.
 - Every spec has a mandatory **`Repo:`** header naming where the work happens; every
   build/review report opens with **`Agent: <platform / model>`** so you can always
   tell who did what.
 - Build and review write to Linear as you, through the platform's Linear tool;
-  only integrate writes through the factory bot identity. You approve merges from
-  your own account. Integrate refuses same-identity approvals, so nothing merges on
-  an approval a worker could have minted itself.
+  only integrate writes through the factory bot identity. You approve a merge only
+  by reacting 🚀 from your own Discord account on the exact #approvals request.
+  The verifier reads it through R1, the read-only `wolftac-approval-read` Hermes
+  plugin (`ports/hermes-plugins/`), and requires your account ID, Harper's request,
+  and the exact repo, PR, head SHA and issue. A new commit cancels the approval, a
+  typed `APPROVE MERGE` comment is never approval, and any reader failure means
+  nothing merges.
 - Model economics: spec on your strongest model or (Hermes only) the
   `wolftac-factory-spec` MoA preset. Run build/review as Claude Code `/loop`
   sessions, Hermes cron ticks, or Codex scheduled `exec` one-shots — optionally

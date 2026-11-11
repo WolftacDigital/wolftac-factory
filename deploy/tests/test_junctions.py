@@ -91,7 +91,9 @@ class JunctionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="wd579-", dir=os.getenv("TMPDIR"))
-        cls.scratch = Path(cls.tmp.name)
+        # Resolve 8.3 short names (e.g. C:\Users\LOGAN_~1\...): PowerShell prints long
+        # paths, so an unresolved scratch root fails every path-equality assertion.
+        cls.scratch = Path(cls.tmp.name).resolve()
         cls.live = cls.scratch / "live"
         git("worktree", "add", "--detach", cls.live, "HEAD")
 

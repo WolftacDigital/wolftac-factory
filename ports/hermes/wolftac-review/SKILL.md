@@ -174,13 +174,25 @@ every task" rule):
    A missing remote branch or SHA mismatch is a FAIL. Put the worktree in the durable
    scratch root — `D:\Wolftac\.build-worktrees\` on Windows, a directory under the
    agent's home on WSL/Linux — never `C:\tmp` or `/tmp`; see "Windows detached worktree
-   review pattern" below.
+   review pattern" above.
 
 4. **Verify by execution, not inspection.** Re-run the spec's Test plan from scratch —
    never trust claimed results. Walk EVERY acceptance criterion: pass/fail with
    observed evidence. Baseline checks regardless of spec: no hardcoded secrets/tokens,
    no debug leftovers, input validation on new endpoints/forms, error paths don't
    crash, no unrelated files in the diff.
+
+   **OPERATOR-PASS-SCOPE:** Criteria explicitly tagged `[operator]` in new specs written after
+   this rule merges are post-merge operator steps, outside worker verification and PASS scope;
+   they do not block PASS. List every such criterion by ID in the review report as "operator
+   step, not verified" and leave its checkbox unchecked. Skip its operator-only test-plan
+   steps; never run them to obtain a PASS. For the verification, verdict and checkbox
+   instructions below, "every criterion" means every non-operator criterion; only verified
+   non-operator criteria are ticked or counted in the verified/total fraction. Report operator
+   steps separately and retain them in Build notes under Post-merge operator steps and in the
+   OPERATE follow-up when available. All non-operator criteria, baseline checks, CI gates and
+   merge approval rules remain unchanged. Do not rewrite existing specs or relabel an unmet
+   criterion as `[operator]` during review.
 
    **CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repo has a
    GitHub remote and resolve the PR for the published branch. No GitHub remote or no
