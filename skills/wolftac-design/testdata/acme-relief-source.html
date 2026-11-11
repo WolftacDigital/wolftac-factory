@@ -1,0 +1,43 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE. Invented for testing brand intake end to end. Not a real client,
+  not a real organisation, not derived from anyone's live site. Checked in so a reviewer
+  can reproduce brand onboarding byte-for-byte without depending on a network fetch.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Meridian Field Systems</title>
+  <style>
+    :root {
+      --slate: #14181F;
+      --slate-2: #1C222B;
+      --slate-3: #262E3A;
+      --paper: #F2F0EB;
+      --paper-2: #DDD9D0;
+      --muted: #8892A0;
+      --signal: #2E8B74;
+      --signal-deep: #1F6153;
+      --alert: #C8622F;
+      --line: rgba(242, 240, 235, 0.10);
+      --font-display: "Barlow Condensed", system-ui, sans-serif;
+      --font-body: "Source Sans 3", system-ui, sans-serif;
+      --font-mono: "Roboto Mono", ui-monospace, monospace;
+      --radius: 3px;
+      --container: 1120px;
+    }
+    body { background: var(--slate); color: var(--paper); font-family: var(--font-body); }
+    h1 { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; }
+    .label { font-family: var(--font-mono); color: var(--signal); letter-spacing: 0.18em; text-transform: uppercase; }
+    .card { background: var(--slate-2); border: 1px solid var(--line); border-radius: var(--radius); }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="label">Field Systems</p>
+    <h1>Meridian</h1>
+    <p>Deployable infrastructure for remote operations.</p>
+    <div class="card"><p>Equipment, logistics, and sustainment for teams working past the end of the road.</p></div>
+  </main>
+</body>
+</html>
