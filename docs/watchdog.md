@@ -16,8 +16,10 @@ that same incident). From Slack, a dead factory and an idle factory are both sil
 
 So this watchdog runs under **Windows Task Scheduler**, and reads only files:
 `jobs.json`, `ticker_heartbeat`, the newest Gatekeeper output, and the Linear bot
-expiry date from `-EnvFile`. No Hermes CLI, no gateway API. It keeps working
-when Hermes is entirely down — which is exactly when it matters.
+expiry date from `-EnvFile`. Health checks do not need a gateway API or CLI.
+Delivery uses the supported `hermes send` CLI. Checks still run when Hermes is
+down; if the CLI cannot deliver, exit 3 and the pending sidecar record expose the
+failure to Task Scheduler. Delivery is not independent of the Hermes installation.
 
 ## What it checks
 
@@ -64,8 +66,7 @@ It reads only the newest file in `output\<job-id>\`, ordered by last-write time 
 newest output unhealthy. A missing Gatekeeper job, output directory or output file
 adds no finding; other checks cover scheduler liveness. An unreadable existing
 output produces an unhealthy read finding. Output contents are never included in
-alerts. Both checks feed the existing transition/nag/recovery path, with no new
-Slack sender or channel.
+alerts. Both checks feed the existing transition/nag/recovery path to Discord.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
@@ -93,9 +94,8 @@ Junctioned targets are skipped: the repo file *is* the deployed file, so drift i
 possible. Pass `-SkipDrift` to turn the check off; it then carries the previous drift
 state forward rather than asserting a clean result for a check that never ran.
 
-`deploy.ps1` resolves targets through `%USERPROFILE%` and `%LOCALAPPDATA%`. Under the
-SYSTEM task those point at `C:\WINDOWS\system32\config\systemprofile`, where nothing is
-deployed, so the drift check compares against the profile that owns `-EnvFile`
+`deploy.ps1` resolves targets through `%USERPROFILE%` and `%LOCALAPPDATA%`. The task
+runs as the operator, and the drift check compares against the profile that owns `-EnvFile`
 (`<profile>\AppData\Local\hermes\.env`) instead. Pass `-UserProfile C:\Users\<name>` to
 set it explicitly.
 
@@ -122,7 +122,7 @@ points at the separate worker alert instead. Asserting normal operation in the s
 as an outage alert can mask the failure the watchdog exists to surface.
 
 Alerts carry **paths and line counts only, never file content**: a `/learn` edit can
-pick up anything, and this goes to a Slack channel.
+pick up anything, and this goes to the private Discord #approvals channel.
 
 Drift has its own transition, its own 12h nag, and its own single recovery message,
 tracked in `watchdog-state.json` under `drift_status` / `drift_last_alert_at`. A sidecar
@@ -147,7 +147,7 @@ separate from liveness and drift.
 - **Snapshot:** whenever the pending content changes, every changed file is copied
   byte-exact (and hash-verified) to
   `%LOCALAPPDATA%\hermes\backups\learn-edits\<UTC-timestamp>\<repo-relative-path>`.
-  The root resolves under the operator profile even under the SYSTEM task, and can be
+  The root resolves under the operator profile and can be
   overridden with `-LearnBackupRoot`. Unchanged content on a later run takes no new
   snapshot. Snapshots older than `-LearnRetentionDays` (default 30) are pruned; the
   most recent is never removed.
@@ -162,10 +162,10 @@ separate from liveness and drift.
 - Disable with `-SkipLearn`, which carries the previous state forward untouched.
 
 Regression suite: `deploy/tests/factory-watchdog-learn.tests.ps1` (hermetic: scratch
-repo, scratch junctioned worktree, `-SlackOutbox` interception).
+repo, scratch junctioned worktree, `-AlertOutbox` interception).
 
-An unreadable `jobs.json`, missing heartbeat, or unreadable approval policy is an
-UNHEALTHY finding that alerts. The watchdog must never fail quiet: quiet failure is
+An unreadable `jobs.json`, missing heartbeat, or unreadable expiry input is an
+UNHEALTHY finding that alerts. Approval policy is no longer a delivery dependency. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
 
 ### Done-without-integration audit (WD-580)
@@ -214,22 +214,64 @@ modifies nor deploys those components.
 
 ## Alerts
 
-On a healthy → unhealthy transition it posts to the channel in
-`deploy/approval-policy.json` (`slack_channel_id`), @-mentioning `approver_slack_user_id`,
+On a healthy → unhealthy transition it posts to Discord **#approvals**
+(`discord:1562236246158221323`), @-mentioning Jonathan (`<@1022999767753691186>`),
 naming the job, the failing check, and the observed value. While it stays unhealthy it
 re-pings at most every `-NagHours` (default 12) so a dead factory cannot decay into
 normalized silence. On unhealthy → healthy it posts exactly one recovery message.
 
-Alerts post as the policy's `fallback_identity` (**Wolftac Factory** / `:factory:`) —
-deliberately not any worker's face, and never as Jonathan.
+Alerts use Harper's Hermes profile `integrator` (expected bot user
+`1562178628211449966`), never a human session. `-DiscordTarget` and
+`-HermesProfile` override the destination and profile. The watchdog invokes:
+
+```text
+hermes -p integrator send --to discord:1562236246158221323 --file <temporary-file> --json
+```
+
+It prefers `%LOCALAPPDATA%\hermes\bin\hermes.exe` when present, else `hermes`
+on PATH. Message files are ASCII text encoded as UTF-8 without a BOM, removed
+in `finally` after every attempt. The temp root is `TMPDIR` when set, else the
+OS temp directory. Success requires exit zero, JSON `success: true`, and a
+nonempty numeric `message_id`; raw CLI output/errors are never logged.
+`-PolicyPath` remains accepted but unused for old task invocations.
+`-AlertOutbox` intercepts delivery to local files for tests; `-SlackOutbox` is a
+compatibility alias only, not a messaging transport.
 
 State lives in `watchdog-state.json` **inside the watched cron directory**, so a
 fault-injection run against a scratch dir can never read or clobber the live
 watchdog's memory.
 
-`SLACK_FACTORY_BOT_TOKEN` is read at runtime from `%LOCALAPPDATA%\hermes\.env` (or the
-environment). The value never appears in the script, the task definition, the sidecar,
-logs, or any alert.
+No messaging token is read by this script. Hermes handles its own credentials.
+`-EnvFile` remains solely for the existing Linear expiry-date check.
+
+The optional `delivery_failure` object in the sidecar holds pending messages by
+concern (`liveness`, `drift`, `learn`) and a bounded error code. A nonzero CLI exit,
+missing id, malformed response or command failure returns exit 3, preserves the
+last delivered timestamp and retries on the next run. A pending unhealthy alert
+is delivered even if checks have since recovered, then the recovery is delivered.
+A failed recovery is also retried. A same-state retry does not produce a duplicate
+nag. Each concern is independent; skipped concerns retain their pending records.
+Missing, malformed or old-format sidecars start with no pending delivery.
+`-DryRun` returns before any send, replay, snapshot or state write.
+
+### Operator-only cutover and rollback
+
+Do not retire credentials or change the running service during build/review.
+After WD-551 and WD-546 are both deployed, Jonathan or an authorized interactive
+operator backs up the live default `.env` and `config.yaml`, removes the retired
+Slack factory credential from default and integrator, disables Logan's Slack
+platform by removing its Slack token/allowlist keys, and updates his SOUL wording.
+Any gateway restart and verification belongs to that operator step, never this
+watchdog or a build tick. Do not delete the workspace, apps, channels or history.
+Approval-path removal belongs to WD-546; this change does not retire that path.
+Reverting the code restores the old delivery path only while its credential is
+still available. Keep credential backups private and do not delete rollback data.
+
+### History
+
+The old watchdog used `SLACK_FACTORY_BOT_TOKEN` and `chat.postMessage`.
+These names are retained here only to identify the credentials the operator
+removes after cutover. There is no Slack API or credential read in the watchdog.
 
 ## Exit codes
 
@@ -237,33 +279,150 @@ logs, or any alert.
 |---|---|
 | 0 | healthy |
 | 1 | unhealthy |
-| 3 | Slack delivery failed |
+| 3 | Discord delivery failed |
 | 4 | watchdog could not read what it needs |
 
 Non-zero is deliberate: Task Scheduler's **Last Result** column becomes a health signal
-on its own, readable without opening Slack.
+on its own, readable without opening Discord.
 
 ## Install
 
+Only Jonathan performs these steps after merge. From the fast-forwarded
+`D:\Wolftac\.factory-live`, first inspect the default, read-only plan:
+
 ```powershell
-$repo  = "D:\Wolftac\Factory"
-$pwsh  = "C:\Program Files\PowerShell\7\pwsh.exe"   # machine-wide MSI install; stable across updates
-if (-not (Test-Path $pwsh)) { throw "Install PowerShell 7 machine-wide first (see below)" }
-$dirs  = "$env:LOCALAPPDATA\hermes\cron;$env:LOCALAPPDATA\hermes\profiles\builder\cron;$env:LOCALAPPDATA\hermes\profiles\reviewer\cron;$env:LOCALAPPDATA\hermes\profiles\integrator\cron"
-$arg   = "-NoProfile -NonInteractive -File `"$repo\deploy\factory-watchdog.ps1`" -CronDir `"$dirs`" -EnvFile `"$env:LOCALAPPDATA\hermes\.env`""
-$action  = New-ScheduledTaskAction -Execute $pwsh -Argument $arg
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes 15)
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" `
-    -LogonType ServiceAccount -RunLevel Limited
-Register-ScheduledTask -TaskName "WolftacFactoryWatchdog" `
-    -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-    -Description "Out-of-band liveness watchdog for the Wolftac factory worker loops (WD-345)."
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf
+# Pin the expected hashes to the approved merge commit (see "Trust preconditions"):
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -ApprovedCommit <approved merge sha> -ManifestOut <path>\watchdog-manifest.json
+# After inspecting the plan, run this from an elevated PowerShell:
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Apply
+# Return to the normal, non-elevated operator session:
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Verify -ExpectedManifest <path>\watchdog-manifest.json
 ```
 
-`-MultipleInstances IgnoreNew` keeps a slow Slack call from stacking runs.
+Default mode prints five source SHA256 values, the ACL and task definition, without
+creating the install directory, changing ACLs or accessing Task Scheduler. `-Apply`
+refuses non-elevated sessions with exit 2 before writing anything. Re-running Apply
+is idempotent. It installs byte-exact copies of `factory-watchdog.ps1`, `deploy.ps1`,
+`junctions.json`, `approval-policy.json` and `junction-lib.ps1` into
+`C:\ProgramData\WolftacFactory\watchdog\deploy`. The task executes only that copy.
+
+The install directory is owned by `BUILTIN\Administrators`. Its protected DACL
+disables inherited permissions and contains exactly three inheritable ACEs:
+`NT AUTHORITY\SYSTEM` FullControl, `BUILTIN\Administrators` FullControl, and the
+operator ReadAndExecute. Each installed file is owned by `BUILTIN\Administrators` with
+the same three entries, set through the open file handle. The helper loads from the
+protected installed directory, never the writable repo.
+
+### Threat boundary
+
+The protection is against the operator account's **non-elevated** token only: the
+agents and anything they start. An elevated session of the same account, an
+administrator or SYSTEM can change anything here; that is outside this boundary.
+The installed copy is protected only while no component on its path can be replaced
+by that token. Replacing a folder needs no write access to the folder itself: delete
+on it, delete-child on its parent, `WRITE_DAC`/`WRITE_OWNER` on either, or owning
+either is enough to rename the protected folder away and put another one in its place.
+
+`-Apply` therefore assesses the whole chain before it changes anything: the volume
+root, `C:\ProgramData`, `C:\ProgramData\WolftacFactory`, the install directory,
+`deploy` and the five files. For each existing component it reads the owner and
+DACL, the reparse flag and the physical identity (volume serial plus file id), and
+evaluates the operator's effective rights. The operator SID set is the account SID,
+Everyone, Authenticated Users, Users, INTERACTIVE, BATCH (the S4U task logon),
+LOCAL, CONSOLE LOGON, This Organization, Local account, the account's local groups
+and, when the operator runs Verify itself, its real token's groups. `Administrators`
+and "Local account and member of Administrators" are excluded: in a filtered UAC
+token they are deny-only and never grant access. A group that cannot be resolved
+makes the result UNKNOWN. ACEs are evaluated in order (deny before allow in a
+canonical DACL), inherit-only ACEs are skipped on the object itself and generic
+rights are mapped. A callback/object ACE, an unreadable descriptor or identity, or
+an unresolved account is UNKNOWN, and UNKNOWN is never treated as safe.
+
+* Any component: owned by the operator, or granting it `DELETE`, `WRITE_DAC` or
+  `WRITE_OWNER`, or a reparse point, is unsafe. A directory granting delete-child is
+  unsafe, and so is every child below it.
+* Ordinary create-folder/create-file rights on a system ancestor are allowed:
+  `C:\ProgramData` grants `Users: Write`, and that cannot replace an existing
+  protected folder. Never change `C:\ProgramData` or other system ACLs to satisfy
+  the check.
+* The install directory, `deploy` and the five files must not be writable by the
+  operator at all, and a file with more than one hard link is unsafe.
+
+Apply refuses (exit 3, `APPLY REFUSED: ...` with one `REFUSED <role> <path>: <verdict>
+<reasons>` line per failing component) before copying, setting an ACL or touching
+Task Scheduler. It never takes ownership of or repairs an untrusted component, such
+as a `WolftacFactory` folder that the operator created before Apply: remove or fix
+that folder yourself after confirming what it is, then re-run. A missing
+`WolftacFactory`, install directory or `deploy` folder is created by the elevated
+Apply with an Administrators owner and the protected DACL set at creation. If the
+folder turns out to exist at that moment (raced in), it is treated as existing and
+reassessed. Each directory is then held open without `FILE_SHARE_DELETE`, so it
+cannot be renamed or deleted while Apply runs, and its identity and security are
+reassessed before any file is written through it. After the writes Apply reassesses
+the chain and the file hashes again; any change there exits 4 and the task is not
+registered.
+
+`-RepoRoot` defaults to `D:\Wolftac\Factory` in the installer and is passed to the
+copy. Drift and pending `/learn` checks therefore still compare the repo's content,
+not the installed folder. Without `-RepoRoot`, the scripts keep their checkout-root
+default. The installed copy is not in `deploy.ps1`'s ordinary deployment pair list.
+Git calls disable `core.fsmonitor` and optional index locks process-locally; numstat
+also disables external diff/textconv. No wildcard `safe.directory` is set.
+
+When any of the five files differs from the repo (LF-normalized comparison), the
+drift lane reports `WATCHDOG-STALE <repo-relative path>` and asks Jonathan to re-run
+`deploy\install-watchdog-task.ps1 -Apply` after inspecting the plan. Missing or
+unreadable files produce `cannot compare`, not a clean result. `-SkipDrift` skips
+this comparison. Staleness shares drift's transition/nag/recovery and does not
+change the liveness exit code.
+
+`-Verify` prints PASS/FAIL for task principal, S4U logon, run level, action path,
+install-dir owner/ACL and the current non-elevated user's inability to create a file.
+It then assesses the same chain as Apply (every ancestor, the install directory,
+`deploy` and all five files) with the same rules, one `PASS`/`FAIL path <role>
+<path>` line each, and compares the SHA-256 of each installed file, read through the
+same held handle, with `-ExpectedManifest`: one `PASS`/`FAIL file <name> sha256`
+line each. A missing manifest, a missing or changed file, an unsafe parent, child or
+file, a reparse point, an identity change or anything UNKNOWN is a named `FAIL`.
+A valid install directory never hides an unsafe parent.
+It exits zero only when all checks pass. `-TaskXmlOut` writes plan XML for inspection;
+`-Verify -TaskXmlIn <scratch.xml>` verifies offline XML instead of reading Task Scheduler.
+Workers may use only these scratch seams, never live Verify or elevated Apply.
+
+What a full `-Verify` PASS proves: at that moment, with the descriptors Windows
+returned, the operator's non-elevated token could not write, delete, rename,
+re-ACL or take ownership of the installed copy or any folder on its path, and the
+five files match the pinned hashes. It does not prove anything about elevated
+sessions, about later ACL changes, or about a manifest that was itself wrong.
+
+### Trust preconditions
+
+* **Expected hashes come from the approved commit, not from a checkout.** Create the
+  manifest with `-ApprovedCommit <sha> -ManifestOut <path>` from the fast-forwarded
+  `D:\Wolftac\.factory-live` at that commit, and compare the five `PLAN COPY` SHA256
+  values with the ones recorded in the approval pack or build report for that commit
+  before using it. A mutable checkout that agents can write is never the authority.
+* **Keep the manifest out of agent reach** (for example in an Administrators-only
+  folder), or re-check its five hashes against the approval pack before each Verify.
+  Verify prints the manifest's commit and its own SHA-256 for that comparison.
+* Verify never runs git, repository hooks or repository code to establish the
+  expected hashes; the plan and the manifest are plain file hashes.
+* Pass long (not 8.3 short) paths; the final-path check fails a short name.
+
+### Required operator live checks
+
+Offline tests use synthetic descriptors and stubbed side effects; they are not
+proof of a live protected install. After Apply, Jonathan checks, from a normal
+non-elevated operator session:
+
+1. `-Verify -ExpectedManifest <manifest>` prints only `PASS` lines and exits 0.
+2. `Get-Acl C:\ProgramData\WolftacFactory | Format-List Owner, AccessToString` shows an
+   Administrators (or SYSTEM) owner and no operator or Users delete, delete-child,
+   `WRITE_DAC`, `WRITE_OWNER` or FullControl entry.
+3. The S4U task check under "Running without an interactive session" below.
+
+`MultipleInstancesPolicy IgnoreNew` keeps a slow CLI send from stacking runs.
 
 Two mechanics that will bite if you change this command:
 
@@ -287,19 +446,22 @@ Two mechanics that will bite if you change this command:
   directory and an unmarked false outage page. Passing a real PowerShell array still
   works when you call the script from a session rather than via `-File`.
 
-The default watches only `%LOCALAPPDATA%\hermes\cron`. The builder, reviewer and
-integrator workers have separate cron directories, so the command above lists all
-four and explicitly selects the operator's env file. Omitting a worker profile
+The watchdog alone defaults to `%LOCALAPPDATA%\hermes\cron`. The installer defaults
+to all four cron directories under the named operator's profile: `hermes\cron`,
+`hermes\profiles\builder\cron`, `hermes\profiles\reviewer\cron` and
+`hermes\profiles\integrator\cron`, plus that operator's env file. Override `-CronDir`
+and `-EnvFile` for a nonstandard profile location. Omitting a worker profile
 leaves it unwatched. The isolated `factory-integrate` profile (WD-281) is parked with
 its job disabled, so it is deliberately not listed: watching it would page about a job
 that is meant to be off.
 
 ### Running without an interactive session
 
-The install command above registers the task as the Windows **SYSTEM** service
-account (`LogonType: ServiceAccount`). That needs an elevated PowerShell, but no
-stored user password, interactive login, or batch-logon grant. SYSTEM has been
-verified on this machine with the machine-wide PowerShell 7 MSI path (2026-10-19).
+The installer registers the task as the **operator account**, with `LogonType: S4U`
+and `RunLevel: LeastPrivilege`, not SYSTEM. Registration needs elevation, but S4U
+stores no password and does not require an interactive login. The action uses the
+machine-wide PowerShell 7 path and the protected installed copy. These instructions
+are a post-merge operator procedure, not a claim that the live task has been migrated.
 
 Confirm the persisted principal and cadence:
 
@@ -310,8 +472,27 @@ $task.Triggers.Repetition.Interval
 schtasks /query /tn WolftacFactoryWatchdog /v /fo LIST
 ```
 
-Expected: `UserId: SYSTEM`, `LogonType: ServiceAccount`, interval `PT15M`, and
-`Last Result: 0` after a scheduled tick.
+Expected: `UserId: ai-msi\logan_vwagmmf`, `LogonType: S4U`, `RunLevel: Limited`
+(XML `LeastPrivilege`), interval `PT15M`, and `Last Result: 0` or `1` within 30 minutes,
+not a launch error. Confirm the cron sidecar's `LastWriteTime` advances and that
+sidecars and `/learn` snapshot directories formerly created by SYSTEM are writable
+by the operator. Sidecar format is unchanged.
+
+If S4U cannot start, report the launch error on WD-584 and disable the task
+(`Disable-ScheduledTask -TaskName WolftacFactoryWatchdog` in an elevated session).
+Do **not** re-register the pre-change task: it ran as SYSTEM from the agent-writable
+repo, which is the exact privilege gap this change removes, and it is not a safe
+fallback. Restoring it, or any other SYSTEM or agent-writable execution path, needs a
+separate explicit decision from Jonathan. Reverting the merge and removing the
+installed copy (see Remove) leave the factory without the watchdog until a fixed
+install is applied. Do not delete rollback artifacts or learn backups.
+
+The historical SYSTEM task registration above is unchanged by WD-551. Before
+cutover, verify that its execution account resolves the intended Hermes executable
+and Harper profile. The CLI selects profiles from its own environment; `-EnvFile`
+and `-UserProfile` do not redirect Hermes credentials. A successful interactive
+stub test does not establish that SYSTEM can deliver as Harper. Missing CLI/profile
+access is a delivery failure, not permission to copy tokens or run as another bot.
 
 ## Verify
 
@@ -353,6 +534,17 @@ The sidecar's `LastWriteTime` should advance every 15 minutes. That file is the 
 the task is really executing — a registered task that never runs looks identical to a
 healthy factory, which is the failure mode this whole issue exists to kill.
 
+Hermetic Discord transport regression (synthetic CLI response, not live proof):
+
+```powershell
+python -B -m unittest discover -s deploy/tests -p test_watchdog_discord.py -v
+```
+
+It executes the real watchdog against a scratch paused job, asserts exact CLI
+arguments, UTF-8/no-BOM payload and deletion, transition/cooldown/nag/recovery,
+nonzero/missing-id/malformed responses, pending retry after recovery, and DryRun
+byte-for-byte state preservation. No real Hermes process or messaging API runs.
+
 ## Silence test (does it actually alert?)
 
 Never doctor the live cron directory — the workers read it. Use a scratch copy:
@@ -373,17 +565,23 @@ recovery message after restoring `enabled: true`.
 
 **Always pass `-AlertPrefix` for drills.** An unmarked test alert that @-mentions
 Jonathan is indistinguishable from the real outage this watchdog exists to announce.
-Delete drill messages afterwards (`chat.delete` with the same bot token) and leave the
-channel clean — a channel that cries wolf trains people to ignore it.
+An authorized operator must read back the returned message ids in #approvals,
+verify Harper's author id and Jonathan's mention, and delete the drill messages
+through the supported Discord surface. Never use a human account or a different
+bot as a substitute. A local intercepted/stub run does not prove live delivery.
 
 Use `-DryRun` to see findings with no post and no state write.
 
 ## Remove
 
+Post-merge operator only, from an elevated session:
+
 ```powershell
 Unregister-ScheduledTask -TaskName "WolftacFactoryWatchdog" -Confirm:$false
+Remove-Item "C:\ProgramData\WolftacFactory\watchdog" -Recurse -Force
 Remove-Item "$env:LOCALAPPDATA\hermes\cron\watchdog-state.json" -ErrorAction SilentlyContinue
 ```
 
-The script itself is repo-owned; deleting the task and the sidecar restores the prior
-state completely.
+Remove sidecars in each configured cron directory only if their state is no longer
+needed. The source scripts remain repo-owned; removing the task and installed copy
+does not remove source, learn snapshots or rollback artifacts.

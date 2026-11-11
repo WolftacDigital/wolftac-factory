@@ -184,7 +184,7 @@ def watchdog_case(root, case, env, home_mode="explicit"):
     before = digest_tree(root)
     run = subprocess.run(args, env=child_env, capture_output=True, encoding="utf-8", timeout=30)
     text = run.stdout + run.stderr
-    assert "DRY RUN: no Slack post, no snapshot, no state written." in text, text
+    assert "DRY RUN: no Discord post, no snapshot, no state written." in text, text
     assert "synthetic-not-a-credential" not in text
     assert before == digest_tree(root), "DryRun wrote state, backup or outbox"
     findings = [line.strip().replace(str(cron), "<scratch>/cron") for line in text.splitlines()

@@ -5,9 +5,9 @@
 #
 # Hermetic by construction: a scratch repo, a scratch detached "live" worktree with a
 # real directory junction into it, a scratch cron dir, a stand-in deploy.ps1 whose
-# $JunctionedRoots names that junction, a scratch snapshot root, and -SlackOutbox so
+# $JunctionedRoots names that junction, a scratch snapshot root, and -AlertOutbox so
 # every alert is written to a local file instead of posted. It never touches the real
-# D:\Wolftac\.factory-live, the live cron dir, the real backups root, or Slack.
+# D:\Wolftac\.factory-live, the live cron dir, the real backups root, or Discord.
 [CmdletBinding()]
 param(
     [string]$Repo = (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent),
@@ -25,7 +25,8 @@ function Ok($name, $cond, $detail = '') {
 
 if (Test-Path $Scratch) { Remove-Item -Recurse -Force $Scratch }
 New-Item -ItemType Directory -Force $Scratch | Out-Null
-$env:SLACK_FACTORY_BOT_TOKEN = 'xoxb-scratch-not-a-real-token'
+$expiryFile = Join-Path $Scratch 'expiry-fixture.txt'
+Set-Content -LiteralPath $expiryFile -Value 'LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT=2099-01-01T00:00:00Z'
 $Marker = 'LEARN-MARKER-7f3a'   # planted in edits; must never reach a payload (AC-10)
 
 # ── scratch repo + detached live worktree + junction (test-plan step 1) ──
@@ -94,7 +95,7 @@ function Run([string]$Deploy = $deployScript, [switch]$DryRun) {
   if (Test-Path $outbox) { Remove-Item -Recurse -Force $outbox }
   (Get-Item -LiteralPath $cron\ticker_heartbeat).LastWriteTime = Get-Date
   $a = @('-NoProfile', '-File', $Watchdog, '-CronDir', $cron, '-DeployScript', $Deploy,
-         '-LearnBackupRoot', $backups, '-SlackOutbox', $outbox)
+         '-LearnBackupRoot', $backups, '-AlertOutbox', $outbox, '-EnvFile', $expiryFile)
   if ($DryRun) { $a += '-DryRun' }
   $out = & pwsh @a 2>&1 | Out-String
   $posts = @(if (Test-Path $outbox) { Get-ChildItem $outbox -File | Sort-Object Name | ForEach-Object { Get-Content -Raw $_.FullName } })
@@ -227,11 +228,10 @@ Write-Host '=== -SkipLearn carries prior state forward ==='
 $st = Get-Content $statePath -Raw | ConvertFrom-Json
 $st.learn_status = 'pending'
 $st | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath
-$out = & pwsh -NoProfile -File $Watchdog -CronDir $cron -DeployScript $deployScript -LearnBackupRoot $backups -SlackOutbox $outbox -SkipLearn 2>&1 | Out-String
+$out = & pwsh -NoProfile -File $Watchdog -CronDir $cron -DeployScript $deployScript -LearnBackupRoot $backups -AlertOutbox $outbox -EnvFile $expiryFile -SkipLearn 2>&1 | Out-String
 Ok '-SkipLearn reports skipped' ($out -match 'LEARN: skipped')
 Ok '-SkipLearn does not assert clean' ((Get-Content $statePath -Raw | ConvertFrom-Json).learn_status -eq 'pending')
 
-Remove-Item Env:\SLACK_FACTORY_BOT_TOKEN -ErrorAction SilentlyContinue
 & git -C $origin worktree remove --force $live 2>$null
 if (Test-Path $Scratch) { Remove-Item -Recurse -Force $Scratch }
 Write-Host ''
