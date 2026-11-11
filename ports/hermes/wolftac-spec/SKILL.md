@@ -123,8 +123,10 @@ tell Jonathan: "No Linear tools in this profile — wire the Linear MCP server
    ```
 
    The **Repo** header line is mandatory — the build stage refuses work without it.
-   Put only the local path on it. Linear turns a `git@github.com:...` remote into a
-   `mailto:` link that breaks the line, so leave the remote off.
+   Put only the local path on it, in backticks (`` `D:\Wolftac\Factory` ``): Linear
+   escapes bare backslashes, so an unquoted path is stored as `D:\\Wolftac\\...`. Linear also
+   turns a `git@github.com:...` remote into a `mailto:` link that breaks the line, so leave
+   the remote off.
    Quality gates must be answered substantively or as `N/A — <reason>`; bare `N/A`
    is invalid. The Evidence map must include one row per acceptance criterion; a
    criterion with no row is a template violation. While filling it, check criteria for
@@ -226,6 +228,13 @@ When a build bounced an issue back to Todo on spec conflicts, follow `references
   related ones (not at the end, where appends collide), fence the shared files with
   non-goals, and add a `git merge-tree --write-tree` no-conflict AC against each
   overlapping PR head.
+- Before writing "existing tests pass unchanged" for a spec that bounds or removes a behavior, apply a
+  scratch prototype of the approach to `git show origin/main:<file>` and run the real suite there. Earlier
+  issues' tests often assert the very behavior being removed (the Gatekeeper retry bound broke exactly two
+  WD-620/WD-623 repeat assertions). Name those tests in the AC, limit removed lines to them, and list the
+  amendment as a decision. Cite the prototype and probe hashes as design evidence, not production code.
+- When splitting local test coverage from CI-only coverage, require an exact module-set equality check before local execution, inspect allowed modules for inherited opt-in live paths, and explicitly unset those switches before test import (for example `WD549_REAL_CRON`). Require CI evidence that excluded methods actually ran, not merely a green job with skips, and record both PR head and tested checkout/merge SHA. CI availability failures stay BLOCKED rather than granting a local exception.
+- Before adding a numbered decision in a changes-only draft, compare its ID against the base draft. Preserve existing IDs and append an unused ID; record any source-label collision explicitly instead of silently reinterpreting the earlier decision.
 - Keep new factory-checks tests stdlib-only. CI runs the runner's system `python3`, so
   assert policy YAML with string and regex checks on the real file plus a negative case,
   not a third-party parser.
