@@ -83,6 +83,7 @@ param(
     # duplicated list would silently stop covering new targets, which is the same
     # class of failure this watchdog exists to catch.
     [string]$DeployScript = (Join-Path $PSScriptRoot "deploy.ps1"),
+    [string]$RepoRoot = "",
     [switch]$SkipDrift,
     # Profile whose deployed copies the drift check compares against. deploy.ps1
     # resolves targets through %USERPROFILE%/%LOCALAPPDATA%, which under the SYSTEM
@@ -106,6 +107,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Process-local command-line-precedence config covers every child git, including
+# deploy.ps1's identity probes. Never trust repo fsmonitor hooks or refresh indexes.
+$env:GIT_CONFIG_COUNT = '1'
+$env:GIT_CONFIG_KEY_0 = 'core.fsmonitor'
+$env:GIT_CONFIG_VALUE_0 = 'false'
+$env:GIT_OPTIONAL_LOCKS = '0'
 
 # `pwsh -File` passes list-like arguments as literal strings instead of binding them
 # to a [string[]] parameter; without normalization, the first Join-Path treats the
@@ -523,7 +531,8 @@ function Measure-Drift {
     try {
         $env:USERPROFILE = $script:DriftProfile
         $env:LOCALAPPDATA = Join-Path $script:DriftProfile "AppData\Local"
-        . $DeployScript *> $null
+        if ($RepoRoot) { . $DeployScript -RepoRoot $RepoRoot *> $null }
+        else { . $DeployScript *> $null }
     } catch {
         # A watchdog that fails quiet has the disease it treats.
         Add-DriftUnreadable "cannot compare: unable to load pair definitions from ${DeployScript}: $($_.Exception.Message)"
@@ -542,6 +551,23 @@ function Measure-Drift {
     }
 
     $script:driftAvailable = $true
+    # WD-584 BEGIN: stale-copy
+    if ($RepoRoot -and [IO.Path]::GetFullPath($RepoRoot).TrimEnd('\', '/') -ine
+        [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent)).TrimEnd('\', '/')) {
+        foreach ($relative in @('deploy/factory-watchdog.ps1', 'deploy/deploy.ps1',
+                                'deploy/junctions.json', 'deploy/approval-policy.json',
+                                'deploy/junction-lib.ps1')) {
+            $installedHash = $null; $repoHash = $null
+            try { $installedHash = Get-LfHash (Join-Path (Split-Path $PSScriptRoot -Parent) $relative) } catch {}
+            try { $repoHash = Get-LfHash (Join-Path $RepoRoot $relative) } catch {}
+            if ($null -eq $installedHash -or $null -eq $repoHash) {
+                Add-DriftUnreadable "cannot compare $relative (installed or repo copy unreadable)"
+            } elseif ($installedHash -ne $repoHash) {
+                Add-Drift "WATCHDOG-STALE $relative (installed copy differs from repo; re-run deploy\install-watchdog-task.ps1 -Apply)"
+            }
+        }
+    }
+    # WD-584 END: stale-copy
     foreach ($p in $Pairs) {
         # A junctioned target IS the repo file; there is one set of bytes and drift
         # is not possible. Matches deploy.ps1 -Check exactly (AC-8).
@@ -631,7 +657,8 @@ function Measure-Learn {
         try {
             $env:USERPROFILE = $script:DriftProfile
             $env:LOCALAPPDATA = Join-Path $script:DriftProfile "AppData\Local"
-            . $DeployScript *> $null
+            if ($RepoRoot) { . $DeployScript -RepoRoot $RepoRoot *> $null }
+            else { . $DeployScript *> $null }
         } catch {
             Add-LearnUnreadable "cannot check: unable to load junction definitions from ${DeployScript}: $($_.Exception.Message)"
             return
@@ -681,7 +708,7 @@ function Measure-Learn {
                 $kind = if ($code -match 'D') { 'deleted' } else { 'modified' }
                 $added = -1
                 $removed = -1
-                $ns = & git -C $wt diff --numstat HEAD -- $path 2>$null
+                $ns = & git -C $wt diff --no-ext-diff --no-textconv --numstat HEAD -- $path 2>$null
                 if ($LASTEXITCODE -eq 0 -and $ns) {
                     $parts = "$(@($ns)[0])" -split "`t"
                     # numstat prints "-" for binary files; report that as unknown.
