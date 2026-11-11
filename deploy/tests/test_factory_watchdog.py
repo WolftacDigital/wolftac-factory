@@ -136,7 +136,7 @@ class WatchdogTests(unittest.TestCase):
         text = result.stdout + result.stderr
         for fake in (*FAKES, "fixture-only-slack-549"):
             self.assertNotIn(fake, text)
-        self.assertIn("DRY RUN: no Slack post, no snapshot, no state written.", text)
+        self.assertRegex(text, r"DRY RUN: no (?:Slack|Discord) post, no snapshot, no state written\.")
         self.assertEqual(before, self.envfile.read_bytes() if self.envfile.exists() else None)
         self.assertFalse((self.cron / "watchdog-state.json").exists())
         self.assertFalse(self.backups.exists(), "DryRun must not create snapshots")
@@ -217,7 +217,7 @@ class WatchdogTests(unittest.TestCase):
         code, text = self.run_watchdog()
         self.assertEqual(code, 1)
         self.assertIn("cannot read expiry date", text)
-        self.assertIn("watchdog cannot read SLACK_FACTORY_BOT_TOKEN", text)
+        self.assertNotIn("watchdog cannot read SLACK_FACTORY_BOT_TOKEN", text)
 
     def safety_worker(self, schedule, **changes):
         job = {"id": "worker-576", "name": "Wolftac Factory Build Worker - agentic (Mason)",
@@ -284,22 +284,22 @@ class WatchdogTests(unittest.TestCase):
         basepath, base = self.baseline()
         current = SCRIPT.read_text(encoding="utf-8")
         # WD-580 adds an independent fourth concern. Remove only its explicitly
-        # delimited additions when asserting the old three concerns byte-for-byte.
+        # delimited additions when comparing the earlier checks byte-for-byte.
         def without_audit(text):
             text = re.sub(r'^[ \t]*# AUDIT BEGIN: [^\n]+\n.*?^[ \t]*# AUDIT END: [^\n]+\n\n?',
                           '', text, flags=re.MULTILINE | re.DOTALL)
             return text.replace(' -or -not $auditDelivered', '')
         base, current = without_audit(base), without_audit(current)
         base, current = without_wd584(base), without_wd584(current)
-        marker = "# ── transition-based alerting"
-        self.assertEqual(base[base.index(marker):], current[current.index(marker):])
-        for start, end in [("function Send-SlackAlert", "# ── run the checks"),
-                           ("function Get-SlackToken", "function ")]:
+        # WD-551 intentionally replaces delivery/routing and adds pending retries.
+        # Preserve the checks, rather than freezing the retired Slack transport.
+        for start, end in [("function Test-LinearTokenExpiry", "function "),
+                           ("function Test-GatekeeperAuth", "function Test-CronDirectory"),
+                           ("function Measure-Drift", "# ── run the checks")]:
             def section(text):
                 pos = text.index(start)
                 return text[pos:text.index(end, pos + len(start))]
-            self.assertEqual(section(base), section(current))
-        self.assertEqual(base.count("Send-SlackAlert"), current.count("Send-SlackAlert"))
+            self.assertEqual(section(base).replace("Slack", "Discord"), section(current).replace("Slack", "Discord"))
         # Only the new check dispatch is inserted inside the existing cron checks.
         def checks(text):
             part = text[text.index("function Test-CronDirectory"):text.index("function Get-StatePath")]
@@ -326,9 +326,11 @@ class WatchdogTests(unittest.TestCase):
         from unittest.mock import patch
         current = SCRIPT.read_text(encoding='utf-8')
         cases = [
-            ('legacy alert', current.replace('SLACK: posted as', 'SLACK: changed as'), None),
-            ('threshold', current.replace('$hoursSince -ge $NagHours', '$hoursSince -gt $NagHours'), None),
-            ('exit', current.replace('exit 3 }', 'exit 4 }'), None),
+            # WD-551 deliberately unfroze delivery, transitions and the delivery exit code, so
+            # these three controls mutate checks the guard still pins to main instead.
+            ('expiry check', current.replace('expiry date missing', 'expiry date absent'), None),
+            ('threshold', current.replace('$ageMin -gt $HeartbeatMaxAgeMinutes', '$ageMin -ge $HeartbeatMaxAgeMinutes'), None),
+            ('drift check', current.replace('cannot compare: deploy script not found', 'cannot compare: deploy script missing'), None),
             ('duplicate block', current.replace('    # WD-584 END: stale-copy\n',
                 '    # WD-584 END: stale-copy\n    # WD-584 BEGIN: stale-copy\n    # WD-584 END: stale-copy\n'), 'delimiter count'),
             ('malformed block', current.replace('# WD-584 END: stale-copy', '# WD-584 END: wrong'), 'malformed delimiters'),
