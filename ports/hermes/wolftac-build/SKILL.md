@@ -171,6 +171,25 @@ or the reporting failure. This reporting contract does not authorize live instal
    review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
    rework tier and within the fresh tier, preserve priority order
    (Urgent > High > Medium > Low), oldest first on ties.
+
+   **CI-CAPACITY-HOLD:** Before claiming, derive held repo keys from all
+   lane-eligible `Todo` candidates. A blocker comment has a heading line containing
+   both `BUILD REPORT` and `CI CAPACITY BLOCKER` (case-sensitive); its heading is the
+   first non-blank line that is not an `**Agent:**` line, with or without a leading
+   `- `. This includes the legacy `EXISTING CI CAPACITY BLOCKER` heading. The repo key
+   is the first backticked `owner/name` token in the spec's `**Repo:**` header,
+   lowercased; otherwise use the backticked path, lowercased, with trailing `/` or
+   `\` removed. A missing `Repo:` header follows the existing `BLOCKED:` path.
+   An issue puts its repo key on hold only when its newest comment, ignoring bodies
+   starting with `SWEPT:`, is a blocker comment. Skip every lane-eligible `Todo`
+   candidate with a held repo key silently: no claim, no comment (including
+   NO-SILENT-SKIP diagnostics for this hold), no state or assignee change. Print
+   `CI-CAPACITY-HOLD <repo key>: <ID> since <blocker createdAt>` in the run output,
+   never in Linear. Continue with other repos; if everything is skipped, report
+   `Factory queue: nothing buildable` alongside the hold diagnostic. Any newer
+   non-SWEPT comment on the blocker issue, from anyone, or that issue leaving `Todo`,
+   ends its hold. A blocker outside this run's lane cannot hold a repo in this run.
+   There is no timed expiry or pickup-time GitHub capacity probe.
    Skip issues whose latest work-order comment starts `BLOCKED:`, issues with unresolved blocking relations, and
    without changing state, issues whose spec **Repo:** path is
    unreachable from this environment (`BLOCKED:` is reserved for genuine spec defects).
@@ -328,6 +347,24 @@ or the reporting failure. This reporting contract does not authorize live instal
    check, describe the unverified interaction under **Deviations from spec**, and make
    it the reviewer's first explicit check; never imply that an empty/fallback smoke
    proved the configured live path.
+
+   **CI-CAPACITY-BLOCKER:** Inspect a failed GitHub check on the published head
+   through `gh api repos/<owner>/<repo>/check-runs/<id>/annotations`. Capacity is the
+   case where an annotation message begins `The job was not started because`;
+   a job that ran steps and failed is an ordinary failure, not capacity. Unreadable
+   annotations also follow the ordinary verification-failure path. Quote only the
+   fixed annotation prefix in the report, never arbitrary annotation text.
+   Allow at most one `gh run rerun --failed <run-id>` per tick, then wait up to
+   5 minutes: if a job of the new attempt starts running steps, capacity is back and
+   the normal flow continues; if the new attempt fails with the same annotation,
+   it is a capacity blocker; if still queued after 5 minutes, continue the normal
+   flow (review handles queued checks as `waiting on CI`). On a capacity blocker,
+   post one report with heading exactly
+   `**BUILD REPORT — INCOMPLETE: CI CAPACITY BLOCKER**`, using the normal BUILD REPORT
+   fields and `- **Next:** a human comment on this issue after CI capacity is restored ends the CI-CAPACITY-HOLD.`
+   Then set `Todo`, clear only the assignee this run set, and stop. Never set
+   `In Review` with the capacity blocker unresolved; never use `BLOCKED:` for it,
+   because it is not a spec defect.
 
 7. **Commit.** Descriptive messages; record SHAs. Review the staged file list before
    committing: never commit artifacts (`__pycache__/`, `*.pyc`, `node_modules/`,
