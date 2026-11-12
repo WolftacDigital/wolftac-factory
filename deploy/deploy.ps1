@@ -17,7 +17,13 @@ Targets listed in deploy\junctions.json that are live directory junctions into t
 repo are neither checked nor written: repo and deployed are one set of bytes. See
 docs\hermes-skill-junctions.md.
 #>
-param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force, [string]$RepoRoot = "")
+param([switch]$Check, [switch]$Deploy, [switch]$Package, [switch]$Force, [string]$RepoRoot = "", [switch]$SkillsOnly)
+
+if ($SkillsOnly -and (-not $Deploy -or $Check -or $Package)) {
+    Write-Output "ERROR: -SkillsOnly requires -Deploy alone (optionally -Force)."
+    exit 1
+}
+if ($SkillsOnly) { $ErrorActionPreference = 'Stop' }
 
 $Repo = if ($RepoRoot) { $RepoRoot } else { Split-Path $PSScriptRoot -Parent }
 $Pairs = @(
@@ -218,11 +224,124 @@ function Get-LfText($Path) {
     return ($raw -replace "`r`n", "`n") -replace "`r", "`n"
 }
 
+function Get-LfContentHash([string]$Text) {
+    $normalized = ($Text -replace "`r`n", "`n") -replace "`r", "`n"
+    $bytes = [Text.Encoding]::UTF8.GetBytes($normalized)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace("-", "") }
+    finally { $sha.Dispose() }
+}
+
 function Get-LfHash($Path) {
     if (-not (Test-Path $Path)) { return $null }
-    $bytes = [Text.Encoding]::UTF8.GetBytes((Get-LfText $Path))
-    $sha = [Security.Cryptography.SHA256]::Create()
-    return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace("-", "")
+    return Get-LfContentHash (Get-LfText $Path)
+}
+
+# SkillsOnly is an allowlist, not an extension-based exclusion of known scripts.
+# Keep flat Codex prompts; tree ports allow only skill text and Markdown references.
+function Test-SkillPair($Pair) {
+    $src = $Pair.Src -replace '\\', '/'
+    $dst = [IO.Path]::GetFullPath($Pair.Dst)
+    $roots = @(
+        "$env:USERPROFILE/.claude/skills", "$env:USERPROFILE/.agents/skills",
+        "$env:USERPROFILE/.codex/prompts", "$env:LOCALAPPDATA/hermes/skills",
+        "$env:LOCALAPPDATA/hermes/profiles/builder/skills",
+        "$env:LOCALAPPDATA/hermes/profiles/reviewer/skills",
+        "$env:LOCALAPPDATA/hermes/profiles/integrator/skills"
+    )
+    if ($wslSkills) { $roots += $wslSkills }
+    $inside = $false
+    foreach ($root in $roots) {
+        $prefix = [IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($dst.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $inside = $true; break }
+    }
+    if (-not $inside -or $src -match '(^|/)\.\.(/|$)') { return $false }
+    return $src -match '^(canonical|ports/hermes|plugins/wolftac-factory/skills)/wolftac-[^/]+/(SKILL\.md|spec-template\.md|references/[^/]+\.md)$' -or
+           $src -match '^ports/codex/wolftac-[^/]+\.md$'
+}
+
+# Unlike the Check exemption, safe writing also refuses foreign/unregistered links
+# and reparse points in ancestors. A broken link must not become a copy destination.
+function Test-ReparseAncestor([string]$Path) {
+    $cursor = [IO.Path]::GetFullPath($Path)
+    while ($cursor) {
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $true }
+        $cursor = Split-Path $cursor -Parent
+    }
+    return $false
+}
+
+function Read-HistoryGit([string[]]$Arguments) {
+    $psi = [Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($arg in (@('-C', $Repo) + $Arguments)) { $psi.ArgumentList.Add($arg) }
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+    $proc = [Diagnostics.Process]::Start($psi)
+    try {
+        $stdout = $proc.StandardOutput.ReadToEndAsync()
+        $stderr = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit(15000)) {
+            $proc.Kill($true)
+            throw 'history command timed out'
+        }
+        if ($proc.ExitCode -ne 0) { throw 'history command failed' }
+        return $stdout.Result
+    } finally { $proc.Dispose() }
+}
+
+$HistoryCache = @{}
+function Get-StaleCommit([string]$Source, [string]$Hash) {
+    $path = $Source -replace '\\', '/'
+    if (-not $HistoryCache.ContainsKey($path)) {
+        $versions = @{}
+        try {
+            if ((Read-HistoryGit @('rev-parse', '--is-shallow-repository')).Trim() -ne 'false') { throw 'unknown history' }
+            $head = (Read-HistoryGit @('rev-parse', 'HEAD')).Trim()
+            $null = Read-HistoryGit @('cat-file', '-e', "${head}:$path")
+            $commits = (Read-HistoryGit @('rev-list', '--full-history', 'HEAD', '--', $path)) -split "`n"
+            # Read all requested blobs before trusting any match; errors fail closed.
+            foreach ($commit in $commits) {
+                $commit = $commit.Trim()
+                if (-not $commit -or $commit -eq $head) { continue }
+                if ($commit -notmatch '^[0-9a-f]{40}$') { throw 'invalid history' }
+                $text = Read-HistoryGit @('show', "${commit}:$path")
+                $versions[(Get-LfContentHash $text)] = $commit
+            }
+        } catch { $versions = @{} }
+        $HistoryCache[$path] = $versions
+    }
+    return $HistoryCache[$path][$Hash]
+}
+
+function Update-StaleTarget([string]$Path, [string]$Source, [string]$ExpectedHash) {
+    # Hold the same file through revalidation, backup and write. A /learn edit made
+    # while Git history was read must not be overwritten as if it were still stale.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $buffer = [IO.MemoryStream]::new()
+    try {
+        $stream.CopyTo($buffer)
+        $original = $buffer.ToArray()
+        $buffer.Position = 0
+        $reader = [IO.StreamReader]::new($buffer, [Text.Encoding]::UTF8, $true, 1024, $true)
+        try { $current = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        if ((Get-LfContentHash $current) -ne $ExpectedHash) { throw 'target changed since history check' }
+        # Sibling backup directory stays under the same already-approved skill root.
+        $backupRoot = Join-Path (Split-Path $Path -Parent) ('.deploy-backup-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '-' + [Guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $backupRoot -ErrorAction Stop
+        $backup = Join-Path $backupRoot (Split-Path $Path -Leaf)
+        [IO.File]::WriteAllBytes($backup, $original)
+        $originalHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($original))
+        if ((Get-FileHash -LiteralPath $backup).Hash -ne $originalHash) { throw 'backup verification failed' }
+        Write-Output "BACKUP $Path -> $backup"
+        $replacement = [Text.Encoding]::UTF8.GetBytes((Get-LfText $Source))
+        $stream.Position = 0
+        $stream.Write($replacement, 0, $replacement.Length)
+        $stream.SetLength($replacement.Length)
+        $stream.Flush($true)
+    } finally { $buffer.Dispose(); $stream.Dispose() }
 }
 
 if ($Check) {
@@ -260,6 +379,14 @@ if ($Deploy) {
     $forced = 0
     $junctioned = 0
     foreach ($p in $Pairs) {
+        if ($SkillsOnly -and -not (Test-SkillPair $p)) {
+            Write-Output "SKILLS-ONLY-SKIPPED $($p.Dst) (operator target)"
+            continue
+        }
+        if ($SkillsOnly -and (Test-ReparseAncestor $p.Dst)) {
+            Write-Output "JUNCTION-NOOP $($p.Dst) (not written; -Check does not cover trusted junctioned targets)"
+            continue
+        }
         # Never write through a junction: the destination IS the repo working
         # tree, and an uncommitted /learn edit there must survive -Deploy. This
         # test precedes the $Force branch, so -Force cannot clobber it either.
@@ -269,6 +396,20 @@ if ($Deploy) {
         $srcHash = Get-LfHash (Join-Path $Repo $p.Src)
         $dstHash = Get-LfHash $p.Dst
         $isDrift = ($null -ne $dstHash -and $srcHash -ne $dstHash)
+        $staleCommit = $null
+        if ($SkillsOnly -and $isDrift -and -not $Force) {
+            $staleCommit = Get-StaleCommit $p.Src $dstHash
+            if ($staleCommit) {
+                try {
+                    Update-StaleTarget $p.Dst (Join-Path $Repo $p.Src) $dstHash
+                    Write-Output "STALE-UPDATED $($p.Dst) (was $($staleCommit.Substring(0, 7)))"
+                } catch {
+                    Write-Output "ERROR: stale update failed for $($p.Dst): $($_.Exception.Message)"
+                    exit 1
+                }
+                continue
+            }
+        }
         if ($isDrift -and -not $Force) {
             Write-Output "DRIFT-SKIPPED $($p.Dst) (use -Force, or reconcile the live edit into the repo)"
             $skipped++
@@ -287,6 +428,8 @@ if ($Deploy) {
         Write-Output "JUNCTION-NOOP $junctioned file(s) across $($JunctionedRoots.Count) linked skill dir(s) - single copy, nothing to write, no working-tree content touched."
         foreach ($t in $JunctionedTargets) { Write-Output "  linked   $t" }
     }
+    # SkillsOnly never packages scripts or writes outside skill roots.
+    if (-not $SkillsOnly) {
     $zipOut = "$env:USERPROFILE\Downloads\factory-skills"
     if (-not (Test-Path $zipOut)) { New-Item -ItemType Directory -Force $zipOut | Out-Null }
     # Desktop skills are hand-uploaded, so they get no $Pairs entry; Compress-Archive
@@ -301,6 +444,7 @@ if ($Deploy) {
     $codexPluginItems = Get-ChildItem -LiteralPath (Join-Path $Repo "plugins\wolftac-factory") -Force
     Compress-Archive -Path $codexPluginItems.FullName -DestinationPath $codexPluginOut -Force
     Write-Output "zipped   wolftac-factory-codex-plugin.zip -> $zipOut"
+    }
     if ($skipped -gt 0) {
         Write-Output "Deploy finished with $skipped drift-skipped file(s). Reconcile the live edit(s) into the repo, or re-run with -Force to overwrite."
         exit 1
@@ -329,4 +473,4 @@ if ($Package) {
     exit 0
 }
 
-Write-Output "Usage: deploy.ps1 -Check | -Deploy [-Force] | -Package"
+Write-Output "Usage: deploy.ps1 -Check | -Deploy [-Force] [-SkillsOnly] | -Package"
