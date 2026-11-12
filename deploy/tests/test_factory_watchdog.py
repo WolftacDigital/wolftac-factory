@@ -1,4 +1,5 @@
-"""WD-549 behavior checks. Every watchdog invocation is -DryRun with fake credentials.
+"""WD-549/576 dry-run checks and WD-566 worker-output regression fixtures.
+WD-566 transition tests use a scratch AlertOutbox, never the live CLI or channel.
 
 Run: python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v
 Optional TP4: set WD549_REAL_CRON to the real cron directory (read-only).
@@ -542,6 +543,176 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("LEARN", diagnostics(after[1]))
         self.assertEqual(before_state, state.read_bytes() if state.exists() else None)
         print(f"TP4 real-cron comparison: identical findings ({len(findings(after[1]))}); state unchanged")
+
+
+@unittest.skipUnless(PWSH, "PowerShell 7 required")
+class WorkerStuckTests(unittest.TestCase):
+    """WD-566: real script, scratch-only inputs and local delivery interception."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="wd566-", dir=os.getenv("TMPDIR"))
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.cron = self.root / "cron"
+        self.cron.mkdir()
+        self.output = self.cron / "output/worker566"
+        self.output.mkdir(parents=True)
+        self.expiry = self.root / "expiry-fixture.txt"
+        self.expiry.write_text("LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT=2099-01-01T00:00:00Z\n")
+        self.outbox = self.root / "outbox"
+        self.state = self.cron / "watchdog-state.json"
+        self.job = dict(id="worker566", name="Wolftac Factory Build Worker - fixture",
+                        enabled=True, paused=False, last_status="ok",
+                        schedule=dict(minutes=120), next_run_at=timestamp(1))
+        self.env = {k: v for k, v in os.environ.items() if k.upper() in {
+            "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "PROGRAMFILES",
+            "PROGRAMFILES(X86)", "SYSTEMDRIVE"}}
+        for key in ("HOME", "USERPROFILE", "LOCALAPPDATA", "HERMES_HOME", "TEMP", "TMP", "TMPDIR"):
+            self.env[key] = str(self.root)
+
+    def history(self, lines):
+        for path in self.output.glob("*.md"):
+            path.unlink()
+        # Input is newest first, independent of file creation / modification order.
+        paths = []
+        for index, line in enumerate(lines):
+            path = self.output / f"2026-10-23_{23-index:02d}-00-00.md"
+            path.write_text("## Prompt\noperator attention PROMPT-SENTINEL\n\n## Response\n\n"
+                            "**Agent:** Fixture / synthetic\n\n" + line +
+                            "\nBODY-SENTINEL must not be quoted\n", encoding="utf-8")
+            paths.append(path)
+        return paths
+
+    def run_watchdog(self, dry=True, extra=(), expected=0, lock=None):
+        (self.cron / "ticker_heartbeat").write_text("fixture")
+        (self.cron / "jobs.json").write_text(json.dumps({"jobs": [self.job]}))
+        args = ["-CronDir", str(self.cron), "-EnvFile", str(self.expiry),
+                "-SkipDrift", "-SkipLearn", "-SkipAudit", "-AlertOutbox", str(self.outbox),
+                "-AlertPrefix", "[DRILL]", *extra]
+        if dry:
+            args.append("-DryRun")
+        cmd = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT), *args]
+        if lock:
+            wrapper = self.root / "locked.ps1"
+            quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+            wrapper.write_text("$lock=[IO.File]::Open(" + quote(lock) +
+                ",[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)\n"
+                "try { & " + quote(SCRIPT) + " " + " ".join(
+                    arg if arg.startswith("-") else quote(arg) for arg in args) +
+                "\nexit $LASTEXITCODE } finally { $lock.Dispose() }\n", encoding="utf-8")
+            cmd = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(wrapper)]
+        before = self.state.read_bytes() if self.state.exists() else None
+        result = subprocess.run(cmd, env=self.env, capture_output=True, encoding="utf-8", timeout=30)
+        text = result.stdout + result.stderr
+        self.assertEqual(result.returncode, expected, text)
+        self.assertNotIn("BODY-SENTINEL", text)
+        self.assertNotIn("PROMPT-SENTINEL", text)
+        if dry:
+            self.assertIn("DRY RUN:", text)
+            self.assertEqual(before, self.state.read_bytes() if self.state.exists() else None)
+            self.assertFalse(self.outbox.exists())
+        return text
+
+    def messages(self):
+        return [p.read_text(encoding="utf-8") for p in self.outbox.glob("*.txt")]
+
+    def test_three_stops_name_timestamp_and_bounded_headline(self):
+        headline = "Operator attention " + "x" * 180 + "TRUNCATE-SENTINEL"
+        paths = self.history([headline, "BUILD INTERRUPTED", "REVIEW INTERRUPTED"])
+        # Oldest by filename is newest by mtime. Filename order must win.
+        os.utime(paths[-1], (time.time() + 60, time.time() + 60))
+        text = self.run_watchdog(expected=1)
+        rows = findings(text)
+        self.assertEqual(len(rows), 1, text)
+        self.assertIn(self.job["name"], rows[0])
+        self.assertIn("since 2026-10-23_21-00-00", rows[0])
+        self.assertIn('Latest: "' + headline[:160] + '"', rows[0])
+        self.assertIn(str(paths[0]), rows[0])
+        self.assertNotIn("TRUNCATE-SENTINEL", text)
+
+    def test_progress_quiet_and_short_history_matrix(self):
+        stopped = "BUILD INTERRUPTED"
+        for lines, unhealthy in [([stopped] * 3, True),
+                ([stopped, stopped, "BUILD REPORT"], False),
+                ([stopped, "BUILD REPORT", stopped, stopped], False),
+                (["BUILD REPORT", stopped, stopped, stopped], False),
+                ([stopped, "[SILENT]", stopped, stopped], True),
+                (["[SILENT]"] * 6, False), ([stopped] * 2, False), ([], False),
+                ([stopped, "[SILENT]", stopped, "[SILENT]", "[SILENT]", "[SILENT]", stopped], False)]:
+            with self.subTest(lines=lines):
+                self.history(lines)
+                text = self.run_watchdog(expected=int(unhealthy))
+                self.assertEqual(len(findings(text)), int(unhealthy))
+
+    def test_all_markers_case_insensitive_and_header_required(self):
+        for marker in ["OPERATOR ATTENTION", "build interrupted", "review interrupted",
+                       "precondition: unavailable", "**Blocked: missing fixture",
+                       "Stopped without claiming", "Ended without claiming"]:
+            with self.subTest(marker=marker):
+                self.history([marker] * 3)
+                self.assertEqual(len(findings(self.run_watchdog(expected=1))), 1)
+        paths = self.history(["BUILD REPORT"] * 3)
+        # Neither the prompt nor a later body line is the response headline.
+        for path in paths:
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write("BUILD INTERRUPTED\n")
+        self.run_watchdog()
+        for path in paths:
+            path.write_text("BUILD INTERRUPTED\n", encoding="utf-8")
+        self.assertIn("no completed response", self.run_watchdog())
+
+    def test_threshold_lookback_disable_and_invalid_id(self):
+        self.history(["PRECONDITION: fixture"] * 4)
+        self.run_watchdog(extra=("-StuckRunThreshold", "0"))
+        self.run_watchdog(extra=("-StuckRunThreshold", "4"), expected=1)
+        self.run_watchdog(extra=("-StuckLookback", "2"))
+        self.run_watchdog(extra=("-StuckRunThreshold", "2", "-StuckLookback", "2"), expected=1)
+        self.job["id"] = "../worker566"
+        self.assertIn("invalid output job id", self.run_watchdog())
+
+    def test_nonworkers_missing_folder_and_wrong_filename(self):
+        self.history(["BUILD INTERRUPTED"] * 3)
+        self.job["no_agent"] = True
+        self.assertNotIn("worker-stuck", self.run_watchdog())
+        self.job.pop("no_agent")
+        self.job["name"] = "Wolftac Factory Gatekeeper"
+        self.assertNotIn("worker-stuck", self.run_watchdog())
+        self.job["name"] = "Wolftac Factory Review Worker"
+        for path in self.output.glob("*.md"):
+            path.rename(path.with_suffix(".txt"))
+        self.run_watchdog()
+        shutil.rmtree(self.output)
+        self.assertIn("output directory absent", self.run_watchdog())
+
+    @unittest.skipUnless(os.name == "nt", "Windows file-sharing denial fixture")
+    def test_unreadable_file_is_skipped_and_reported(self):
+        paths = self.history(["BUILD REPORT", "BUILD INTERRUPTED", "BUILD INTERRUPTED", "BUILD INTERRUPTED"])
+        text = self.run_watchdog(lock=paths[0], expected=1)
+        self.assertIn("unreadable output:", text)
+        self.assertEqual(len(findings(text)), 1)
+
+    def test_drill_transition_cooldown_nag_and_single_recovery(self):
+        self.history(["BUILD INTERRUPTED"] * 3)
+        self.run_watchdog(dry=False, expected=1)
+        self.assertEqual(len(self.messages()), 1)
+        self.assertIn("[DRILL]", self.messages()[0])
+        self.assertIn("3 runs in a row", self.messages()[0])
+        self.run_watchdog(dry=False, expected=1)
+        self.assertEqual(len(self.messages()), 1)
+        state = json.loads(self.state.read_text(encoding="utf-8-sig"))
+        state["last_alert_at"] = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
+        self.state.write_text(json.dumps(state))
+        self.run_watchdog(dry=False, expected=1)
+        self.assertEqual(len(self.messages()), 2)
+        self.assertTrue(any("still unhealthy" in m for m in self.messages()))
+        self.history(["BUILD REPORT", "BUILD INTERRUPTED", "BUILD INTERRUPTED"])
+        self.run_watchdog(dry=False)
+        self.run_watchdog(dry=False)
+        self.assertEqual(len(self.messages()), 3)
+        self.assertEqual(sum("recovered" in m for m in self.messages()), 1)
+        state = json.loads(self.state.read_text(encoding="utf-8-sig"))
+        self.assertEqual(state["status"], "healthy")
+        self.assertEqual(state["findings"], [])
 
 
 if __name__ == "__main__":

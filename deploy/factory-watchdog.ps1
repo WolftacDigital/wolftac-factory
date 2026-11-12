@@ -21,6 +21,7 @@ Checks, per cron directory:
   4. job next_run_at   — not more than -StaleIntervals scheduling intervals in the past
   5. job last_failure  — no failure recorded in the last -RecentFailureHours (default 6)
   6. gatekeeper auth  — newest Gatekeeper output does not contain linear-auth-failed
+  7. worker progress  — last 3 non-quiet outputs (within 6 files) did not all stop for help
 
 Once per run: the Linear bot expiry date in -EnvFile is valid and at least 3 days away.
 Only the expiry key is extracted; no Linear credentials are used or validated.
@@ -79,6 +80,11 @@ param(
     [int]$WorkerMinIntervalMinutes = 120,
     [int]$NagHours = 12,
     [int]$RecentFailureHours = 6,
+    # WD-566: bounded completed-output history; zero threshold disables the check.
+    [ValidateRange(0, 2147483647)]
+    [int]$StuckRunThreshold = 3,
+    [ValidateRange(1, 2147483647)]
+    [int]$StuckLookback = 6,
     # Prepended to alert text. Exists so fault-injection runs against the real channel
     # are unmistakably drills — an unmarked test alert that mentions Jonathan is
     # indistinguishable from the real outage this watchdog exists to announce.
@@ -113,6 +119,14 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# WD-566: build/review dirty-worktree stops and BUILD/REVIEW-NEVER-SILENT;
+# integrate's INTEGRATE-NEVER-HANG PRECONDITION and legacy Blocked reports.
+# Regexes are case-insensitive, as are PowerShell's -match operations below.
+$StuckStopMarkers = @(
+    'operator attention', 'BUILD INTERRUPTED', 'REVIEW INTERRUPTED',
+    'PRECONDITION:', '^\*\*Blocked', 'stopped without claiming', 'ended without claiming'
+)
 
 # Process-local command-line-precedence config covers every child git, including
 # deploy.ps1's identity probes. Never trust repo fsmonitor hooks or refresh indexes.
@@ -189,6 +203,93 @@ function Add-Report([string]$Scope, [string]$Check, [string]$Result, [string]$Ob
     $script:report.Add([pscustomobject]@{
         Scope = $Scope; Check = $Check; Result = $Result; Observed = $Observed
     })
+}
+
+function Get-WorkerResponseLine([string]$Path) {
+    # Stream only through the headline: prompt text, later lines and full logs never
+    # enter a finding. An absent/unfinished response is not a completed quiet run.
+    $reader = [IO.File]::OpenText($Path)
+    try {
+        $response = $false
+        $leading = $true
+        while ($null -ne ($line = $reader.ReadLine())) {
+            $line = $line.Trim()
+            if (-not $response) {
+                if ($line -eq '## Response') { $response = $true }
+                continue
+            }
+            if (-not $line) { continue }
+            if ($leading -and $line -match '^\*\*Agent:\*\*') {
+                $leading = $false
+                continue
+            }
+            return $line
+        }
+        return $null
+    } finally { $reader.Dispose() }
+}
+
+function Test-WorkerStuckRuns([string]$Dir) {
+    if ($StuckRunThreshold -eq 0) { return }
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return } # Existing cron checks own input failures.
+    foreach ($job in $jobs) {
+        $name = Get-Prop $job 'name'
+        if ($name -notlike $JobNamePattern -or $name -eq 'Wolftac Factory Gatekeeper' -or
+            (Get-Prop $job 'no_agent') -eq $true) { continue }
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') {
+            Add-Report $name 'worker-stuck' 'skipped' 'invalid output job id'
+            continue
+        }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) {
+            Add-Report $name 'worker-stuck' 'skipped' 'output directory absent'
+            continue
+        }
+        try {
+            # Completed cron outputs use timestamp names, not modification order.
+            $files = @(Get-ChildItem -LiteralPath $outputDir -File -ErrorAction Stop |
+                Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.md$' } |
+                Sort-Object Name -Descending | Select-Object -First $StuckLookback)
+        } catch {
+            Add-Report $name 'worker-stuck' 'skipped' 'output directory unreadable'
+            continue
+        }
+        $stopped = 0
+        $latest = $null
+        $latestPath = $null
+        $first = $null
+        foreach ($file in $files) {
+            try { $line = Get-WorkerResponseLine $file.FullName }
+            catch {
+                Add-Report $name 'worker-stuck' 'skipped' "unreadable output: $($file.FullName)"
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                Add-Report $name 'worker-stuck' 'skipped' "no completed response: $($file.FullName)"
+                continue
+            }
+            if ($line -eq '[SILENT]') { continue }
+            $isStopped = $false
+            foreach ($marker in $StuckStopMarkers) {
+                if ($line -match $marker) { $isStopped = $true; break }
+            }
+            if (-not $isStopped) { break } # Progress breaks the consecutive streak.
+            if ($stopped -eq 0) { $latest = $line; $latestPath = $file.FullName }
+            $stopped++
+            $first = $file.BaseName
+            if ($stopped -ge $StuckRunThreshold) { break }
+        }
+        if ($stopped -ge $StuckRunThreshold) {
+            $quote = $latest.Substring(0, [Math]::Min(160, $latest.Length))
+            $detail = "Factory watchdog: $name has stopped for operator attention $stopped runs in a row (since $first). Latest: `"$quote`" ($latestPath)"
+            Add-Finding $detail
+            Add-Report $name 'worker-stuck' 'FAIL' "$stopped stopped runs; since $first"
+        } else {
+            Add-Report $name 'worker-stuck' 'ok' "$stopped stopped runs before progress or end of lookback (threshold $StuckRunThreshold)"
+        }
+    }
 }
 
 function Test-LinearTokenExpiry {
@@ -795,7 +896,7 @@ function Invoke-LearnRetention {
 }
 
 # ── run the checks ───────────────────────────────────────────────────────────────
-foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir }
+foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir }
 Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
 if (-not $SkipLearn) { Measure-Learn }
