@@ -125,6 +125,8 @@ class WatchdogTests(unittest.TestCase):
 
     def run_watchdog(self, script=SCRIPT, cron=None, extra=(), deploy=None):
         before = self.envfile.read_bytes() if self.envfile.exists() else None
+        state = self.cron / 'watchdog-state.json'
+        before_state = state.read_bytes() if state.exists() else None
         result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(script),
                                  "-DryRun", "-CronDir", str(cron or self.cron),
                                  "-EnvFile", str(self.envfile), "-PolicyPath", str(self.policy),
@@ -138,7 +140,9 @@ class WatchdogTests(unittest.TestCase):
             self.assertNotIn(fake, text)
         self.assertRegex(text, r"DRY RUN: no (?:Slack|Discord) post, no snapshot, no state written\.")
         self.assertEqual(before, self.envfile.read_bytes() if self.envfile.exists() else None)
-        self.assertFalse((self.cron / "watchdog-state.json").exists())
+        self.assertEqual(before_state, state.read_bytes() if state.exists() else None)
+        self.assertFalse((self.cron / 'watchdog-drift-latest.txt').exists())
+        self.assertFalse((self.cron / 'watchdog-learn-latest.txt').exists())
         self.assertFalse(self.backups.exists(), "DryRun must not create snapshots")
         self.assertFalse(self.outbox.exists(), "DryRun must not attempt alert delivery")
         return result.returncode, text
@@ -156,7 +160,8 @@ class WatchdogTests(unittest.TestCase):
                 code, text = self.run_watchdog()
                 rows = findings(text)
                 self.assertEqual(len(rows), 1 if reason else 0)
-                self.assertEqual(code, 1 if reason else 0)
+                self.assertEqual(code, 0)  # WD-624: configuration, not liveness.
+                self.assertIn('CONFIG: warning' if reason else 'CONFIG: clean', text)
                 if reason:
                     self.assertIn("linear-token-expiry:", rows[0])
                     self.assertIn(reason, rows[0])
@@ -167,7 +172,7 @@ class WatchdogTests(unittest.TestCase):
         value = (datetime.now(timezone.utc) + timedelta(days=2)).astimezone(timezone(timedelta(hours=-5)))
         self.write_expiry(value.isoformat())
         code, text = self.run_watchdog()
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertIn(value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), findings(text)[0])
         self.assertIn("Z (expired", findings(text)[0])
 
@@ -212,10 +217,11 @@ class WatchdogTests(unittest.TestCase):
         _, text = self.run_watchdog(extra=("-JobNamePattern", "*Build Worker*"))
         self.assertEqual(sum("gatekeeper-linear-auth:" in row for row in findings(text)), 1)
 
-    def test_missing_env_is_unhealthy(self):
+    def test_missing_env_is_config_warning(self):
         self.envfile.unlink()
         code, text = self.run_watchdog()
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
+        self.assertIn('CONFIG: warning', text)
         self.assertIn("cannot read expiry date", text)
         self.assertNotIn("watchdog cannot read SLACK_FACTORY_BOT_TOKEN", text)
 
@@ -234,7 +240,7 @@ class WatchdogTests(unittest.TestCase):
                 code, text = self.run_watchdog()
                 rows = [r for r in findings(text) if "worker-safety-net" in r]
                 self.assertEqual(len(rows), int(minutes < 120))
-                self.assertEqual(code, int(minutes < 120))
+                self.assertEqual(code, 0)  # Schedule-only check is configuration.
                 if rows:
                     self.assertIn(job["name"], rows[0])
                     self.assertIn(f"every {minutes}m", rows[0])
@@ -262,7 +268,7 @@ class WatchdogTests(unittest.TestCase):
         self.safety_worker({"kind": "cron", "expr": "*/5 * * * *"})
         code, text = self.run_watchdog()
         rows = [r for r in findings(text) if "worker-safety-net" in r]
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertEqual(len(rows), 1)
         self.assertIn("kind 'cron' is not an interval", rows[0])
 
@@ -409,6 +415,99 @@ class WatchdogTests(unittest.TestCase):
                 self.assertEqual(findings(text), [])
                 self.assertIn("DRIFT CLEAN:", text)
                 self.assertIn("LEARN CLEAN:", text)
+
+    def seed_state(self, **fields):
+        (self.cron / 'watchdog-state.json').write_text(json.dumps(fields), encoding='utf-8')
+
+    def change_gatekeeper(self, **fields):
+        path = self.cron / 'jobs.json'
+        data = json.loads(path.read_text())
+        data['jobs'][0].update(fields)
+        path.write_text(json.dumps(data))
+
+    def test_new_outage_is_not_hidden_by_old_config_state(self):
+        self.write_expiry(None)
+        self.seed_state(status='unhealthy', findings=['linear-token-expiry: missing'],
+                        last_alert_at=timestamp(0))
+        self.change_gatekeeper(enabled=False)
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertEqual(text.count('DRY RUN POST: :warning:'), 1)
+        self.assertIn('new: [' + str(self.cron) + '] Wolftac Factory Gatekeeper: DISABLED', text)
+        self.assertNotIn('still unhealthy', text)
+        self.assertIn('1 liveness finding(s) still open', text)
+
+    def test_partial_recovery_and_new_key_during_existing_outage(self):
+        prefix = f'[{self.cron}] Wolftac Factory Gatekeeper'
+        keys = {prefix + '|DISABLED': timestamp(-1), prefix + '|PAUSED': timestamp(-1)}
+        self.seed_state(status='unhealthy', open_findings=keys, last_alert_at=timestamp(0))
+        self.change_gatekeeper(enabled=False, paused=False)
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertIn('recovered: ' + prefix + '|PAUSED', text)
+        self.assertNotIn('new:', text)
+        self.assertIn('1 liveness finding(s) still open', text)
+        self.change_gatekeeper(enabled=False, paused=True, last_status='error', last_error='synthetic')
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertIn('new: ' + prefix + ': last_status=error', text)
+        self.assertNotIn('new: ' + prefix + ': DISABLED', text)
+
+    def test_number_only_changes_keep_key_and_nag_window(self):
+        prefix = f'[{self.cron}] Wolftac Factory Gatekeeper'
+        self.seed_state(status='unhealthy', open_findings={prefix + '|OVERDUE': timestamp(-1)},
+                        finding_texts={prefix + '|OVERDUE': prefix + ': OVERDUE - next_run_at was 338m ago'},
+                        last_alert_at=timestamp(0))
+        for minutes in (398, 4398):
+            self.change_gatekeeper(next_run_at=timestamp(0, -minutes * 60))
+            code, text = self.run_watchdog()
+            self.assertEqual(code, 1)
+            self.assertIn('OVERDUE', text)
+            self.assertNotIn('DRY RUN POST:', text)
+        self.seed_state(status='unhealthy', open_findings={prefix + '|OVERDUE': timestamp(-1)},
+                        last_alert_at=timestamp(0, -13 * 3600))
+        self.assertIn('still unhealthy after 13h', self.run_watchdog()[1])
+
+    def test_config_daily_nag_recovery_and_no_liveness_failure(self):
+        self.write_expiry(None)
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 0)
+        self.assertIn('HEALTHY:', text)
+        self.assertEqual(text.count('DRY RUN POST:'), 1)
+        self.assertIn(KEY, text)
+        for hours, posts in ((0, 0), (23, 0), (24, 1), (25, 1)):
+            self.seed_state(status='healthy', open_findings={}, config_status='warning',
+                            config_last_alert_at=timestamp(0, -hours * 3600))
+            code, text = self.run_watchdog()
+            self.assertEqual(code, 0)
+            self.assertEqual(text.count('DRY RUN POST:'), posts)
+        self.write_expiry(timestamp())
+        self.assertIn('Factory configuration recovered', self.run_watchdog()[1])
+
+    def test_old_and_malformed_state_has_no_prior_keys(self):
+        self.change_gatekeeper(paused=True)
+        for state in ({}, {'status': 'unhealthy', 'findings': ['old']}, 'broken'):
+            if isinstance(state, dict):
+                self.seed_state(**state)
+            else:
+                (self.cron / 'watchdog-state.json').write_text(state)
+            code, text = self.run_watchdog()
+            self.assertEqual(code, 1)
+            self.assertIn('new:', text)
+            self.assertNotIn('recovered:', text)
+
+    def test_key_preserves_numbered_job_and_directory_identity(self):
+        second = self.make_cron('cron2')
+        a = json.loads((self.cron / 'jobs.json').read_text())
+        a['jobs'][0].update(name='Wolftac Factory Worker 1', paused=True)
+        b = json.loads(json.dumps(a))
+        b['jobs'][0]['name'] = 'Wolftac Factory Worker 2'
+        (self.cron / 'jobs.json').write_text(json.dumps({'jobs': a['jobs'] + b['jobs']}))
+        (second / 'jobs.json').write_text(json.dumps(a))
+        code, text = self.run_watchdog(cron=f'{self.cron};{second}')
+        self.assertEqual(code, 1)
+        self.assertEqual(sum(line.startswith('new:') for line in text.splitlines()), 3)
+        self.assertIn('3 liveness finding(s) still open', text)
 
     @unittest.skipUnless(os.getenv("WD549_REAL_CRON"), "TP4 opt-in real cron read-only comparison")
     def test_real_cron_findings_match_main(self):

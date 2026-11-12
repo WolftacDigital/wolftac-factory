@@ -37,8 +37,8 @@ Per cron directory, every run:
 
 The safety-net check excludes `Wolftac Factory Gatekeeper`, `no_agent: true`,
 disabled or paused jobs, and schedules without `kind`. Every checked worker has
-one `ok`/`FAIL` report row; each violation adds one finding to the existing
-transition/nag/recovery path, not a new sender. Unreadable jobs are still reported
+one `ok`/`FAIL` report row; each violation adds one configuration finding to the
+separate daily configuration transition/nag/recovery path, not a new sender. Unreadable jobs are still reported
 by the existing cron check. `-WorkerMinIntervalMinutes` overrides the threshold.
 
 After merge, Jonathan can restore the four worker schedules with
@@ -66,7 +66,8 @@ It reads only the newest file in `output\<job-id>\`, ordered by last-write time 
 newest output unhealthy. A missing Gatekeeper job, output directory or output file
 adds no finding; other checks cover scheduler liveness. An unreadable existing
 output produces an unhealthy read finding. Output contents are never included in
-alerts. Both checks feed the existing transition/nag/recovery path to Discord.
+alerts. Auth failures feed liveness; expiry warnings feed configuration. Both use
+the existing Discord sender, independently.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
@@ -121,10 +122,11 @@ normally" only when liveness actually passed this tick; when liveness is unhealt
 points at the separate worker alert instead. Asserting normal operation in the same tick
 as an outage alert can mask the failure the watchdog exists to surface.
 
-Alerts carry **paths and line counts only, never file content**: a `/learn` edit can
-pick up anything, and this goes to the private Discord #approvals channel.
+Daily alerts carry counts and a latest-file path, never file content. Full path and
+line-count diagnostics stay in `watchdog-drift-latest.txt` inside the first watched
+cron directory, refreshed on each non-DryRun check (empty when clean).
 
-Drift has its own transition, its own 12h nag, and its own single recovery message,
+Drift has its own transition, its own 24h digest, and its own single recovery message,
 tracked in `watchdog-state.json` under `drift_status` / `drift_last_alert_at`. A sidecar
 written before this feature has no drift keys; that is treated as "no prior state", not
 an error, so rollback and roll-forward both work with no migration step.
@@ -153,7 +155,7 @@ separate from liveness and drift.
   most recent is never removed.
 - **Restore by hand:** copy the file from the newest snapshot back into the live
   worktree, then review with `git diff` and commit. Nothing is ever auto-committed.
-- **Alerts:** its own transition, 12h nag and single recovery message, tracked as
+- **Alerts:** its own transition, 24h digest and single recovery message, tracked as
   `learn_status` / `learn_last_alert_at` (plus `learn_fingerprint` / `learn_snapshot`)
   in the same sidecar. A sidecar without these keys counts as "no prior state". The
   check never affects the exit code.
@@ -164,8 +166,9 @@ separate from liveness and drift.
 Regression suite: `deploy/tests/factory-watchdog-learn.tests.ps1` (hermetic: scratch
 repo, scratch junctioned worktree, `-AlertOutbox` interception).
 
-An unreadable `jobs.json`, missing heartbeat, or unreadable expiry input is an
-UNHEALTHY finding that alerts. Approval policy is no longer a delivery dependency. The watchdog must never fail quiet: quiet failure is
+An unreadable `jobs.json` or missing heartbeat is an UNHEALTHY finding that alerts.
+Unreadable expiry input is a configuration warning, not a worker outage.
+Approval policy is no longer a delivery dependency. The watchdog must never fail quiet: quiet failure is
 the disease it treats.
 
 ### Done-without-integration audit (WD-580)
@@ -214,11 +217,32 @@ modifies nor deploys those components.
 
 ## Alerts
 
-On a healthy → unhealthy transition it posts to Discord **#approvals**
+When a liveness finding first appears it posts to Discord **#approvals**
 (`discord:1562236246158221323`), @-mentioning Jonathan (`<@1022999767753691186>`),
-naming the job, the failing check, and the observed value. While it stays unhealthy it
-re-pings at most every `-NagHours` (default 12) so a dead factory cannot decay into
-normalized silence. On unhealthy → healthy it posts exactly one recovery message.
+naming the job, the failing check, and the observed value. Each newly added key gets
+a `new:` line even when other findings remain open; each cleared key gets a
+`recovered:` line even on partial recovery. Transition messages include only those
+changes plus the number still open. An unchanged open set re-pings with the full
+list every `-NagHours` (default 12).
+
+`open_findings` maps stable scope/job/check keys to their first-seen times;
+`finding_texts` supplies recovery labels. Ages, overdue minutes and changing error
+details do not change keys. Digits in directory and job names remain significant.
+Missing keys in an old sidecar mean no prior findings, not an error. Invalid JSON
+also starts without prior state. Existing sidecar fields remain for rollback.
+
+Expiry and schedule-safety warnings read only configuration and use separate
+`config_status`, `config_findings`, `config_last_alert_at` fields. They post on
+clean/warning transitions, then once per 24h while unresolved. They never count
+toward `unhealthy` or exit 1. Transport failure still returns exit 3.
+
+Drift and pending `/learn` each send one short daily digest, not per-file messages.
+Clean/problem and problem/clean transitions are immediate; additional pending files
+inside the 24h window update the local list and snapshots without another alert.
+`watchdog-learn-latest.txt` in the first cron directory contains paths and line
+counts only, just like the drift latest file. A latest-file write failure becomes
+a liveness read/write finding, not an unhandled exception. Detection functions,
+thresholds, snapshot content-change detection and retention are unchanged.
 
 Alerts use Harper's Hermes profile `integrator` (expected bot user
 `1562178628211449966`), never a human session. `-DiscordTarget` and
@@ -245,14 +269,27 @@ No messaging token is read by this script. Hermes handles its own credentials.
 `-EnvFile` remains solely for the existing Linear expiry-date check.
 
 The optional `delivery_failure` object in the sidecar holds pending messages by
-concern (`liveness`, `drift`, `learn`) and a bounded error code. A nonzero CLI exit,
+concern (`liveness`, `config`, `drift`, `learn`) and a bounded error code. A nonzero CLI exit,
 missing id, malformed response or command failure returns exit 3, preserves the
 last delivered timestamp and retries on the next run. A pending unhealthy alert
 is delivered even if checks have since recovered, then the recovery is delivered.
 A failed recovery is also retried. A same-state retry does not produce a duplicate
 nag. Each concern is independent; skipped concerns retain their pending records.
 Missing, malformed or old-format sidecars start with no pending delivery.
-`-DryRun` returns before any send, replay, snapshot or state write.
+`-DryRun` prints proposed messages as `DRY RUN POST:` without any actual send,
+replay, snapshot, retention, latest-file or state write. It reads scratch sidecars
+to preview the same transition rules as a normal run. A pending liveness send is
+identified by its finding set, so a second outage during delivery failure is not
+swallowed as a duplicate unhealthy status.
+
+WD-624 regressions use synthetic scratch cron/env/deploy/snapshot inputs only.
+Non-DryRun persistence tests require a scratch `-AlertOutbox` or a stubbed Hermes
+command; they never reach live delivery, credentials, cron or Task Scheduler.
+Set `TEMP`, `TMP` and `TMPDIR` to the same long-form scratch path. Run both
+`factory-watchdog-drift.tests.ps1` and `factory-watchdog-learn.tests.ps1`, then
+`python -m unittest discover -s deploy/tests -v`, parity and semantic checks.
+After an approved merge, Jonathan updates the protected installed watchdog using
+the installer procedure below; pulling the repo alone does not update that copy.
 
 ### Operator-only cutover and rollback
 

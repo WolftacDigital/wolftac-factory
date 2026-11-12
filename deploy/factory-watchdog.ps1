@@ -255,6 +255,7 @@ function Get-Jobs([string]$Path) {
 
 function Get-Prop($Object, [string]$Name) {
     if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) { return $Object[$Name] }
     $property = $Object.PSObject.Properties[$Name]
     if ($null -ne $property) { return $property.Value }
     return $null
@@ -457,6 +458,7 @@ function Test-CronDirectory([string]$Dir) {
 function Get-StatePath([string]$Dir) { Join-Path $Dir "watchdog-state.json" }
 
 function Send-DiscordAlert([string]$Text) {
+    if ($DryRun) { Write-Host "DRY RUN POST: $Text"; return $true }
     # One Boolean on the success pipeline. Never echo CLI output/errors, which may
     # include private diagnostics. The CLI owns credentials; this script does not.
     $script:deliveryError = 'send-failed'
@@ -502,7 +504,7 @@ function Send-DiscordAlert([string]$Text) {
     }
 }
 
-function Send-Concern([string]$Key, [bool]$ShouldPost, [string]$Message, [string]$Status) {
+function Send-Concern([string]$Key, [bool]$ShouldPost, [string]$Message, [string]$Status, [string]$Identity = '') {
     # Retain undelivered messages, including recoveries, in one optional sidecar
     # field. Retry before the current transition even if checks have become healthy.
     $pending = $script:deliveryFailures[$Key]
@@ -514,7 +516,9 @@ function Send-Concern([string]$Key, [bool]$ShouldPost, [string]$Message, [string
         $script:lastDelivery[$Key] = (Get-Date).ToString('o')
         $script:deliveryFailures.Remove($Key)
         # Same state: replay is the alert, not replay plus a duplicate/new nag.
-        if ($pending.status -eq $Status) { return $true }
+        if ($Identity) {
+            if ((Get-Prop $pending 'identity') -eq $Identity) { return $true }
+        } elseif ($pending.status -eq $Status) { return $true }
     }
     if (-not $ShouldPost) { return $true }
     if ($AlertPrefix) { $Message = "$AlertPrefix`n$Message" }
@@ -523,7 +527,7 @@ function Send-Concern([string]$Key, [bool]$ShouldPost, [string]$Message, [string
         return $true
     }
     $script:deliveryFailures[$Key] = @{
-        message = $Message; status = $Status; error = $script:deliveryError
+        message = $Message; status = $Status; identity = $Identity; error = $script:deliveryError
     }
     return $false
 }
@@ -796,6 +800,24 @@ Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
 if (-not $SkipLearn) { Measure-Learn }
 
+# Configuration-only checks keep their detection/thresholds, but not liveness state.
+$configFindings = @($findings | Where-Object { $_ -match '^linear-token-expiry:|: worker-safety-net -' })
+foreach ($finding in $configFindings) { [void]$findings.Remove($finding) }
+
+# Keep complete path/count diagnostics local, never in the short daily messages.
+# DryRun must not write even these latest-file reports.
+$driftLatest = Join-Path $CronDir[0] 'watchdog-drift-latest.txt'
+$learnLatest = Join-Path $CronDir[0] 'watchdog-learn-latest.txt'
+if (-not $DryRun) {
+    foreach ($digest in @(
+        @{ skip = $SkipDrift; path = $driftLatest; name = 'drift'; lines = @($driftFindings) + @($driftUnreadable) },
+        @{ skip = $SkipLearn; path = $learnLatest; name = 'learn'; lines = @($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ }) }
+    )) {
+        if ($digest.skip) { continue }
+        try { [IO.File]::WriteAllLines($digest.path, [string[]]$digest.lines, [Text.UTF8Encoding]::new($false)) }
+        catch { Add-Finding "[$($CronDir[0])] digest-$($digest.name): cannot write latest diagnostic file" }
+    }
+}
 $healthy = ($findings.Count -eq 0)
 
 Write-Output "Factory watchdog $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - watching: $($CronDir -join ', ')"
@@ -803,11 +825,14 @@ foreach ($r in $report) {
     Write-Output ("  {0,-6} {1,-20} {2}  [{3}]" -f $r.Result, $r.Check, $r.Observed, $r.Scope)
 }
 if ($healthy) {
-    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Linear expiry, Gatekeeper auth)"
+    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Gatekeeper auth)"
 } else {
     Write-Output "UNHEALTHY: $($findings.Count) finding(s)"
     foreach ($f in $findings) { Write-Output "  - $f" }
 }
+
+Write-Output "CONFIG: $(if ($configFindings.Count) { 'warning' } else { 'clean' })"
+foreach ($f in $configFindings) { Write-Output "  - $f" }
 
 # Drift is reported on its own line so a reader can tell at a glance which concern
 # is speaking. Silence here must mean "compared and clean", never "failed to compare".
@@ -858,11 +883,6 @@ if ($SkipAudit) {
 }
 # AUDIT END: output
 
-if ($DryRun) {
-    Write-Output "DRY RUN: no Discord post, no snapshot, no state written."
-    exit ($healthy ? 0 : 1)
-}
-
 # ── transition-based alerting ────────────────────────────────────────────────────
 # State lives per cron directory, so a scratch-dir fault-injection run can never
 # read or clobber the live watchdog's memory.
@@ -875,11 +895,11 @@ $deliveryFailures = @{}
 $lastDelivery = @{}
 $oldFailures = Get-Prop $prev 'delivery_failure'
 if ($oldFailures) {
-    foreach ($key in @('liveness', 'drift', 'learn')) {
+    foreach ($key in @('liveness', 'config', 'drift', 'learn')) {
         $entry = Get-Prop $oldFailures $key
         if ($entry -and (Get-Prop $entry 'message') -and (Get-Prop $entry 'status')) {
             $deliveryFailures[$key] = @{
-                message = $entry.message; status = $entry.status; error = 'pending'
+                message = $entry.message; status = $entry.status; identity = Get-Prop $entry 'identity'; error = 'pending'
             }
         }
     }
@@ -901,29 +921,80 @@ $shouldPost = $false
 $message = $null
 $mention = "<@1022999767753691186>"
 
-if (-not $healthy) {
-    $detail = ($findings | ForEach-Object { "- $_" }) -join "`n"
-    if ($prevStatus -ne 'unhealthy') {
-        $shouldPost = $true
-        $message = ":warning: *Factory watchdog: the worker loops need attention* $mention`n$detail"
-    } else {
-        $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
-        if ($hoursSince -ge $NagHours) {
-            $shouldPost = $true
-            $message = (":warning: *Factory watchdog: still unhealthy after {0:N0}h* {1}`n{2}" -f $hoursSince, $mention, $detail)
-        } else {
-            Write-Output "COOLDOWN: still unhealthy, last alert $([math]::Round($hoursSince,1))h ago (nag every ${NagHours}h) - not posting."
+function Get-FindingKey([string]$Text) {
+    # Retain scope/job identity verbatim (including digits); discard only the
+    # observation after a known check marker. Ages/errors are not incident IDs.
+    if ($Text -match '^(\[.+?\] .+?): (DISABLED|PAUSED|last_status=error|FAILED|unparseable last_failure.at|OVERDUE|unparseable next_run_at|worker-safety-net)(?:\b| )') {
+        $check = switch ($Matches[2]) {
+            'unparseable last_failure.at' { 'FAILED' }
+            'unparseable next_run_at' { 'OVERDUE' }
+            default { $Matches[2] }
         }
+        return "$($Matches[1])|$check"
     }
-} elseif ($prevStatus -eq 'unhealthy') {
+    if ($Text -match '^(\[.+?\] (?:ticker|jobs|gatekeeper-linear-auth|digest-drift|digest-learn)):') {
+        return $Matches[1]
+    }
+    return $Text
+}
+function Get-FindingMap($Value) {
+    $map = @{}
+    if ($Value -is [System.Collections.IDictionary]) {
+        foreach ($key in $Value.Keys) { $map[$key] = $Value[$key] }
+    } elseif ($Value) {
+        foreach ($property in $Value.PSObject.Properties) { $map[$property.Name] = $property.Value }
+    }
+    return ,$map
+}
+$previousOpen = Get-FindingMap (Get-Prop $prev 'open_findings')
+$previousTexts = Get-FindingMap (Get-Prop $prev 'finding_texts')
+$openFindings = @{}
+$findingTexts = @{}
+foreach ($finding in $findings) {
+    $key = Get-FindingKey $finding
+    $openFindings[$key] = if ($previousOpen.ContainsKey($key)) { $previousOpen[$key] } else { $now.ToString('o') }
+    $findingTexts[$key] = $finding
+}
+$added = @($openFindings.Keys | Where-Object { -not $previousOpen.ContainsKey($_) } | Sort-Object)
+$removed = @($previousOpen.Keys | Where-Object { -not $openFindings.ContainsKey($_) } | Sort-Object)
+if ($added.Count -or $removed.Count) {
+    $lines = @($added | ForEach-Object { "new: $($findingTexts[$_])" }) +
+             @($removed | ForEach-Object { "recovered: $(if ($previousTexts[$_]) { $previousTexts[$_] } else { $_ })" })
     $shouldPost = $true
-    $message = ":white_check_mark: *Factory watchdog: recovered* - all checks passing again."
+    $message = ":warning: *Factory watchdog: the worker loops need attention* $mention`n$($lines -join "`n")`n$($openFindings.Count) liveness finding(s) still open."
+} elseif (-not $healthy) {
+    $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
+    if ($hoursSince -ge $NagHours) {
+        $shouldPost = $true
+        $detail = ($findings | ForEach-Object { "- $_" }) -join "`n"
+        $message = (":warning: *Factory watchdog: still unhealthy after {0:N0}h* {1}`n{2}" -f $hoursSince, $mention, $detail)
+    } else { Write-Output "COOLDOWN: unchanged liveness findings - not posting." }
+}
+# Identity distinguishes two different unhealthy sets while an earlier send is pending.
+$livenessIdentity = ConvertTo-Json -Compress -InputObject @($openFindings.Keys | Sort-Object)
+$pendingBefore = $deliveryFailures['liveness']
+$delivered = Send-Concern 'liveness' $shouldPost $message $(if ($healthy) { 'healthy' } else { 'unhealthy' }) $livenessIdentity
+# Keep the observation corresponding to the oldest pending message until it sends.
+# This preserves changes across repeated failures, even if status stays unhealthy.
+if (-not $delivered -and $pendingBefore -and $deliveryFailures['liveness'] -eq $pendingBefore) {
+    $openFindings = $previousOpen
+    $findingTexts = $previousTexts
 }
 
-$delivered = Send-Concern 'liveness' $shouldPost $message $(if ($healthy) { 'healthy' } else { 'unhealthy' })
+$configStatus = if ($configFindings.Count) { 'warning' } else { 'clean' }
+$prevConfigStatus = Get-Prop $prev 'config_status'
+if (-not $prevConfigStatus) { $prevConfigStatus = 'clean' }
+if ($deliveryFailures['config']) { $prevConfigStatus = $deliveryFailures['config'].status }
+$prevConfigAlert = Get-Prop $prev 'config_last_alert_at'
+$configHours = if ($prevConfigAlert) { ($now - [datetime]::Parse($prevConfigAlert)).TotalHours } else { [double]::MaxValue }
+$configShouldPost = ($configStatus -ne $prevConfigStatus) -or ($configStatus -eq 'warning' -and $configHours -ge 24)
+$configMessage = if ($configStatus -eq 'warning') {
+    ":wrench: *Factory configuration warning* (not a worker outage)`n$($configFindings -join "`n")"
+} else { ':white_check_mark: *Factory configuration recovered*' }
+$configDelivered = Send-Concern 'config' $configShouldPost $configMessage $configStatus
 
 # ── drift alerting, on its own transition ────────────────────────────────────────
-# Same discipline as liveness (post on transition, nag at most every -NagHours, one
+# Post on transition, daily digest while unresolved, one
 # recovery message) but a separate state machine and unmistakably different wording:
 # a drift alert must never read as "the factory is dead".
 $driftShouldPost = $false
@@ -933,7 +1004,10 @@ $driftStatus = $prevDriftStatus
 if (-not $SkipDrift) {
     $driftStatus = if ($driftClean -and $driftAvailable) { 'clean' } else { 'drifted' }
     if ($driftStatus -eq 'drifted') {
-        $detail = (@($driftFindings) + @($driftUnreadable) | ForEach-Object { "- $_" }) -join "`n"
+        $targets = @($driftFindings | ForEach-Object {
+            if ($_ -match '^DRIFT\s+(.+) \(deployed ') { Split-Path $Matches[1] -Parent }
+            else { 'watchdog' }
+        } | Sort-Object -Unique)
         # The liveness clause is CONDITIONAL. Asserting "the factory is running
         # normally" in the same tick that liveness reported unhealthy contradicts the
         # outage alert and can mask the very failure this watchdog exists to surface.
@@ -943,20 +1017,20 @@ if (-not $SkipDrift) {
             " - NOTE: liveness is UNHEALTHY this tick; see the separate worker alert"
         }
         $headline = if ($driftAvailable) {
-            "*Deploy drift: $($driftFindings.Count) target(s) out of sync*$livenessClause"
+            "*Deploy drift: $($driftFindings.Count) files differ across $($targets.Count) targets*$livenessClause"
         } else {
             "*Deploy drift check could not run*$livenessClause, and drift is currently unmonitored"
         }
         if ($prevDriftStatus -ne 'drifted') {
             $driftShouldPost = $true
-            $driftMessage = ":triangular_flag_on_post: $headline`n$detail`nRun ``deploy.ps1 -Check`` to inspect, ``deploy.ps1 -Reconcile`` to pull deployed edits into the repo."
+            $driftMessage = ":triangular_flag_on_post: $headline. $($driftUnreadable.Count) unreadable. Full list: ``$driftLatest``."
         } else {
             $hoursSinceDrift = if ($prevDriftAlert) { ($now - [datetime]::Parse($prevDriftAlert)).TotalHours } else { [double]::MaxValue }
-            if ($hoursSinceDrift -ge $NagHours) {
+            if ($hoursSinceDrift -ge 24) {
                 $driftShouldPost = $true
-                $driftMessage = (":triangular_flag_on_post: *Deploy drift still unresolved after {0:N0}h*{1}`n{2}" -f $hoursSinceDrift, $livenessClause, $detail)
+                $driftMessage = ":triangular_flag_on_post: $headline. $($driftUnreadable.Count) unreadable. Full list: ``$driftLatest``."
             } else {
-                Write-Output "DRIFT COOLDOWN: still drifted, last drift alert $([math]::Round($hoursSinceDrift,1))h ago (nag every ${NagHours}h) - not posting."
+                Write-Output "DRIFT COOLDOWN: still drifted, last drift alert $([math]::Round($hoursSinceDrift,1))h ago (digest every 24h) - not posting."
             }
         }
     } elseif ($prevDriftStatus -eq 'drifted') {
@@ -990,7 +1064,7 @@ if (-not $SkipLearn) {
     $learnStatus = if ($learnUnreadable.Count -gt 0) { 'cannot-check' }
                    elseif ($learnPending.Count -gt 0) { 'pending' }
                    else { 'clean' }
-    if ($learnPending.Count -gt 0) {
+    if ($learnPending.Count -gt 0 -and -not $DryRun) {
         # Snapshot whenever the pending content changes, alert or not: the snapshot is
         # the recovery path, and unchanged content needs no second copy.
         $fp = Get-LearnFingerprint
@@ -1011,35 +1085,30 @@ if (-not $SkipLearn) {
     }
 
     if ($learnStatus -ne 'clean') {
-        $lines = @($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ })
-        if ($snapshotError) { $lines += "SNAPSHOT FAILED: $snapshotError" }
-        $detail = ($lines | ForEach-Object { "- $_" }) -join "`n"
-        $where = $learnWorktrees -join ', '
         $headline = if ($learnStatus -eq 'pending') {
-            "*Uncommitted /learn edits in the live skill worktree* ($($learnPending.Count) file(s), committed nowhere yet)"
+            "*Uncommitted /learn edits: $($learnPending.Count) files across $($learnWorktrees.Count) worktrees*"
         } else {
             "*Pending /learn edits: cannot check the live skill worktree* - uncommitted /learn work is currently unmonitored"
         }
-        $footer = if ($learnStatus -eq 'pending') {
-            "Snapshot: ``$learnSnapshot```nReview with ``git -C $where diff``, commit what belongs, push. (Not a worker outage; not a copy-deploy mismatch.)"
-        } else { "(Not a worker outage; not a copy-deploy mismatch.)" }
-        if ($prevLearnStatus -ne $learnStatus) {
+        $footer = "$($learnUnreadable.Count) unreadable. Full list: ``$learnLatest``. (Not a worker outage.)"
+        if ($snapshotError) { $footer += ' SNAPSHOT FAILED.' }
+        if ($prevLearnStatus -eq 'clean') {
             $learnShouldPost = $true
-            $learnMessage = ":pencil2: $headline`n$detail`n$footer"
+            $learnMessage = ":pencil2: $headline. $footer"
         } else {
             $hoursSinceLearn = if ($prevLearnAlert) { ($now - [datetime]::Parse($prevLearnAlert)).TotalHours } else { [double]::MaxValue }
-            if ($hoursSinceLearn -ge $NagHours) {
+            if ($hoursSinceLearn -ge 24) {
                 $learnShouldPost = $true
-                $learnMessage = (":pencil2: *Still uncommitted after {0:N0}h:* {1}`n{2}`n{3}" -f $hoursSinceLearn, $headline, $detail, $footer)
+                $learnMessage = ":pencil2: $headline. $footer"
             } else {
-                Write-Output "LEARN COOLDOWN: last /learn alert $([math]::Round($hoursSinceLearn,1))h ago (nag every ${NagHours}h) - not posting."
+                Write-Output "LEARN COOLDOWN: last /learn alert $([math]::Round($hoursSinceLearn,1))h ago (digest every 24h) - not posting."
             }
         }
     } elseif ($prevLearnStatus -ne 'clean') {
         $learnShouldPost = $true
         $learnMessage = ":white_check_mark: */learn edits resolved* - the live skill worktree is clean again."
     }
-    Invoke-LearnRetention
+    if (-not $DryRun) { Invoke-LearnRetention }
 }
 
 $learnDelivered = $true
@@ -1092,10 +1161,19 @@ if ($auditShouldPost) {
 
 # Persist AFTER the attempt. A failed delivery leaves last_alert_at untouched so the
 # next tick retries rather than silently swallowing the alert.
+if ($DryRun) {
+    Write-Output "DRY RUN: no Discord post, no snapshot, no state written."
+    exit ($healthy ? 0 : 1)
+}
 $newState = [ordered]@{
     status              = if ($healthy) { 'healthy' } else { 'unhealthy' }
     checked_at          = $now.ToString('o')
     findings            = @($findings)
+    open_findings       = $openFindings
+    finding_texts       = $findingTexts
+    config_status       = $configStatus
+    config_findings     = @($configFindings)
+    config_last_alert_at = if ($lastDelivery.ContainsKey('config')) { $lastDelivery['config'] } else { $prevConfigAlert }
     last_alert_at       = if ($lastDelivery.ContainsKey('liveness')) { $lastDelivery['liveness'] } else { $prevAlert }
     # Drift state rides alongside liveness state in the same disposable sidecar.
     # -SkipDrift carries the previous drift state forward untouched rather than
@@ -1123,7 +1201,7 @@ try {
     exit 4
 }
 
-if (-not $delivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered) { exit 3 }
+if (-not $delivered -or -not $configDelivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered) { exit 3 }
 # Drift and pending /learn edits deliberately do NOT change the exit code: a drifted-but-running factory is
 # not an outage, and Task Scheduler's Last Result is the liveness signal (AC-3).
 exit ($healthy ? 0 : 1)
