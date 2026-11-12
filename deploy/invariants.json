@@ -1,5 +1,35 @@
 [
   {
+    "id": "integrate-factory-skills-post-merge",
+    "description": "Factory-only post-merge skill deployment preserves live edits and discloses junction and operator gaps.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*FACTORY-SKILLS-POST-MERGE:\\*\\*\\s+Only for a verified\\s+`WolftacDigital/wolftac-factory`[\\s\\S]*?pull --ff-only[\\s\\S]*?-Deploy -SkillsOnly[\\s\\S]*?deploy\\.ps1 -Check[\\s\\S]*?Never pass `-Force`[\\s\\S]*?does not cover junctioned targets[\\s\\S]*?\\*\\*Skill deployment:\\*\\*"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*FACTORY-SKILLS-POST-MERGE:\\*\\*\\s+Only for a verified\\s+`WolftacDigital/wolftac-factory`[\\s\\S]*?pull --ff-only[\\s\\S]*?-Deploy -SkillsOnly[\\s\\S]*?deploy\\.ps1 -Check[\\s\\S]*?Never pass `-Force`[\\s\\S]*?does not cover junctioned targets[\\s\\S]*?\\*\\*Skill deployment:\\*\\*"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*FACTORY-SKILLS-POST-MERGE:\\*\\*\\s+Only for a verified\\s+`WolftacDigital/wolftac-factory`[\\s\\S]*?pull --ff-only[\\s\\S]*?-Deploy -SkillsOnly[\\s\\S]*?deploy\\.ps1 -Check[\\s\\S]*?Never pass `-Force`[\\s\\S]*?does not cover junctioned targets[\\s\\S]*?\\*\\*Skill deployment:\\*\\*"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "\\*\\*FACTORY-SKILLS-POST-MERGE:\\*\\*\\s+Only for a verified\\s+`WolftacDigital/wolftac-factory`[\\s\\S]*?pull --ff-only[\\s\\S]*?-Deploy -SkillsOnly[\\s\\S]*?deploy\\.ps1 -Check[\\s\\S]*?Never pass `-Force`[\\s\\S]*?does not cover junctioned targets[\\s\\S]*?\\*\\*Skill deployment:\\*\\*"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*FACTORY-SKILLS-POST-MERGE:\\*\\*\\s+Only for a verified\\s+`WolftacDigital/wolftac-factory`[\\s\\S]*?pull --ff-only[\\s\\S]*?-Deploy -SkillsOnly[\\s\\S]*?deploy\\.ps1 -Check[\\s\\S]*?Never pass `-Force`[\\s\\S]*?does not cover junctioned targets[\\s\\S]*?\\*\\*Skill deployment:\\*\\*"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*FACTORY-SKILLS-POST-MERGE:\\*\\*\\s+Only for a verified\\s+`WolftacDigital/wolftac-factory`[\\s\\S]*?pull --ff-only[\\s\\S]*?-Deploy -SkillsOnly[\\s\\S]*?deploy\\.ps1 -Check[\\s\\S]*?Never pass `-Force`[\\s\\S]*?does not cover junctioned targets[\\s\\S]*?\\*\\*Skill deployment:\\*\\*"
+      }
+    ]
+  },
+  {
     "id": "untrusted-content-rule",
     "description": "Every factory stage distinguishes its verified work order from untrusted content.",
     "checks": [

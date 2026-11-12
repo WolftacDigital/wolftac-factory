@@ -41,6 +41,66 @@ Two consequences that are easy to get wrong:
    "deployed-only" result is a **stop**, not a warning.
 6. **Only then deploy.** Back up the live tree first.
 
+## Skills-only post-merge deployment (WD-632)
+
+`pwsh deploy/deploy.ps1 -Deploy -SkillsOnly` copies only mapped skill Markdown,
+flat Codex prompt Markdown, `spec-template.md`, and Markdown references within the
+existing owned skill roots. Script helpers, metadata, credentials, schedules and
+other targets print `SKILLS-ONLY-SKIPPED` and remain operator work. It does not
+build Desktop/plugin archives, delete files, restart sessions, or write through
+any reparse-point ancestor (including foreign/unregistered junctions).
+
+For an existing unequal target, without `-Force`:
+
+- **Stale:** its LF-normalized content hash matches the **same source path** at an
+  earlier commit reachable from checked-out `HEAD`. The script reads that path's
+  history, not `origin/main`, another path, or a deployed-only-line heuristic.
+  It makes a byte-verified backup in a unique sibling `.deploy-backup-<UTC>-<id>`
+  directory **before** writing, then prints `STALE-UPDATED <Dst> (was <sha7>)`.
+  The backup filename is `<original-name>.bak` (for example `SKILL.md.bak`),
+  never `SKILL.md` or a `.md` file: recursive skill/prompt discovery must not load
+  a second copy of the old skill. The `BACKUP <Dst> -> <backup-path>` line identifies
+  the byte-preserved restore source. Repeated updates keep separate backups;
+  existing backups are never renamed or deleted automatically.
+- **Live-edited or unknown:** print `DRIFT-SKIPPED`, preserve the target and return
+  nonzero. No repository, shallow history, failed Git lookup or an untracked path
+  cannot establish stale content. A local deletion with zero deployed-only lines
+  is still protected unless its complete content actually matches history.
+- **Identical or missing:** the normal copy behavior applies. A repeat deploy
+  creates no new stale backup for a target already updated.
+
+Plain `-Deploy`, `-Force`, and `-Check` retain their existing behavior. Integrate
+never passes `-Force`. `-SkillsOnly` is valid only with `-Deploy`, not `-Check` or
+`-Package`. `-Check` still checks all ordinary targets, so script/live-edit drift
+may keep its overall exit nonzero even when every updated skill is clean.
+
+Only after a verified `WolftacDigital/wolftac-factory` merge, the six integrate
+surfaces check the source checkout identity/default branch/cleanliness, then run:
+
+1. `git -C D:/Wolftac/Factory pull --ff-only`
+2. `pwsh -NoProfile -File D:/Wolftac/Factory/deploy/deploy.ps1 -Deploy -SkillsOnly`
+3. `pwsh -NoProfile -File D:/Wolftac/Factory/deploy/deploy.ps1 -Check`
+
+A failure stops this sequence, not the already-completed merge. The INTEGRATION
+REPORT records each step's exit/result, later steps not run, remaining files and
+reasons, and operator work. Other repositories and branchless landings do not run
+this sequence. The existing verified Discord approval gate is unchanged.
+
+**Junction gap:** `-Check` does not cover junctioned targets. When the merge changes
+`ports/hermes/`, the report must retain `fast-forward D:\Wolftac\.factory-live` as
+an operator step, requiring a clean tree and no worker in flight. This feature
+never fast-forwards that worktree or claims that a clean copy check proves workers
+are current. Scripts, schedules, credentials and non-skill targets remain manual.
+
+For rollback, keep the backup and repository evidence. A previous checkout is not
+permission to overwrite a newer or live-edited target: if that content is not in
+its reachable history, the same fail-closed skip still applies. An operator must
+reconcile/restore the verified backup explicitly; integrate does not force it.
+
+Tests: `python -B -m unittest discover -s deploy/tests -p test_deploy_skills_only.py -v`
+executes the real entry point on synthetic three-commit repositories and scratch
+homes. WSL probing is shadowed by an inert executable. It never deploys to live homes.
+
 ## Check the invariant patterns before reflowing text
 
 `deploy/invariants.json` patterns differ per surface. Some are wrap-tolerant
