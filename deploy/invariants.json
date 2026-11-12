@@ -369,29 +369,66 @@
   },
   {
     "id": "needs-human-unpark-clearing",
-    "description": "Every build and review pickup surface states the park-clearing test: a later Jonathan decision comment plus removal of his assignment. Build must carry the identical test to review, or a decision Jonathan comments can un-park review while build skips the issue forever.",
+    "description": "Every build and review pickup surface carries DECISION-RECORD-UNPARK directly after PARKED-NEEDS-HUMAN-SKIP and states the one park-clearing test: Jonathan's assignment is removed AND a comment newer than the NEEDS HUMAN report is either a DECISION RECORD for that issue with a Discord message link or a comment Jonathan wrote himself in Linear. Build must carry the identical test to review, or a recorded decision can un-park review while build skips the issue forever.",
     "checks": [
-      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "ports/codex/wolftac-build.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "ports/codex/wolftac-review.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,600}later Jonathan decision comment" }
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "PARKED-NEEDS-HUMAN-SKIP[\\s\\S]{0,400}DECISION-RECORD-UNPARK[\\s\\S]{0,200}assignment\\s+is\\s+removed\\s+AND[\\s\\S]{0,200}DECISION\\s+RECORD\\s+—\\s+<ISSUE-ID>[\\s\\S]{0,200}Discord\\s+message\\s+link[\\s\\S]{0,200}comment\\s+Jonathan\\s+wrote\\s+himself\\s+in\\s+Linear" }
     ]
   },
   {
-    "id": "unpark-requires-jonathan-authorship",
-    "description": "Every build surface states that an agent-relayed decision does NOT clear the park — the comment author must be Jonathan. Motivating case: WD-288's un-park comment was authored by the factory bot, so the issue stayed parked.",
+    "id": "unpark-never-asks-jonathan-in-linear",
+    "description": "Every build and review surface states, under DECISION-RECORD-UNPARK, that Jonathan is never asked to comment in Linear: he answers in Discord and Logan records it.",
     "checks": [
-      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
-      { "file": "ports/codex/wolftac-build.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
-      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
-      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" },
-      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "relayed on his behalf by an agent does NOT clear" }
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Jonathan\\s+is\\s+never\\s+asked\\s+to\\s+comment\\s+in\\s+Linear\\." }
+    ]
+  },
+  {
+    "id": "unpark-relay-requires-discord-link",
+    "description": "Every build and review surface states, under DECISION-RECORD-UNPARK, that a relayed decision without the Discord message link does NOT clear the park. Replaces unpark-requires-jonathan-authorship: the earlier rule required Jonathan's own Linear comment, which he no longer writes.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}A\\s+relay\\s+without\\s+the\\s+Discord\\s+message\\s+link\\s+does\\s+NOT\\s+clear\\s+the\\s+park\\." }
+    ]
+  },
+  {
+    "id": "workers-never-write-decision-record",
+    "description": "Every build and review surface states, under DECISION-RECORD-UNPARK, that workers never write a DECISION RECORD: Logan is the only recorder, so a build or review worker cannot un-park its own queue.",
+    "checks": [
+      { "file": "canonical/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "ports/codex/wolftac-build.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "ports/claude-desktop/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "canonical/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "ports/codex/wolftac-review.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "ports/claude-desktop/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." },
+      { "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md", "pattern": "DECISION-RECORD-UNPARK[\\s\\S]{0,1000}Workers\\s+never\\s+write\\s+a\\s+DECISION\\s+RECORD\\." }
     ]
   },
   {

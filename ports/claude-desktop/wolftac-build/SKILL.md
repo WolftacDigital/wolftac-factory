@@ -130,12 +130,18 @@ or the reporting failure. This reporting contract does not authorize live instal
    `Factory Queue`. If the user gave a lane filter (e.g. "build the crm lane"), only
    consider issues whose Linear project name or labels contain it (case-insensitive).
    **PARKED-NEEDS-HUMAN-SKIP:** Skip any issue whose latest review report is
-   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
-   later Jonathan decision comment. Do not change state; record `parked` for NO-SILENT-SKIP. A later decision
-   comment from Jonathan plus removal of his assignment clears the park; the issue is
-   then buildable and that comment is part of its work order. The comment author must
-   be Jonathan himself — a decision relayed on his behalf by an agent does NOT clear
-   the park.
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or no later
+   comment clears the park. Do not change state; record `parked` for NO-SILENT-SKIP.
+   **DECISION-RECORD-UNPARK:** A park clears only when Jonathan's assignment is
+   removed AND a comment newer than that report is either a
+   `DECISION RECORD — <ISSUE-ID>` comment naming this issue with a Discord message
+   link (`https://discord.com/channels/<guild>/<channel-or-thread>/<message>`), or a
+   comment Jonathan wrote himself in Linear. The issue is then buildable and that
+   record or comment is part of its work order.
+   Logan asks Jonathan in Discord `#exec` and posts the record.
+   Jonathan is never asked to comment in Linear.
+   A relay without the Discord message link does NOT clear the park.
+   Workers never write a DECISION RECORD.
    **REWORK-FIRST-ORDERING:** Among eligible `Todo` issues, select issues whose latest
    review report is `REVIEW REPORT — FAIL` before fresh `Todo` issues. Within the
    rework tier and within the fresh tier, preserve priority order

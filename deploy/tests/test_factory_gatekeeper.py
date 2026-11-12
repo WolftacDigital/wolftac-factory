@@ -1025,6 +1025,90 @@ class GatekeeperTests(unittest.TestCase):
         row["comments"]["nodes"].append(comment("BLOCKED: decision needed", "2026-09-19T15:00:00Z"))
         self.assertFalse(g.build_eligible(row))
 
+    def test_decision_record_clears_park_only_with_link_own_issue_and_unassignment(self):
+        # WD-638. Synthetic ids and links only; the record's shape is checked, not its truth.
+        link = "https://discord.com/channels/111111111111111111/222222222222222222/333333333333333333"
+        recorder = "synthetic-recorder"
+        self.assertNotEqual(recorder, g.PARK_OWNER_ID)
+
+        def record(identifier="WD-615", evidence=link, created="2026-09-19T13:00:00Z",
+                   header="**DECISION RECORD — {}**"):
+            row = comment("**Agent:** Synthetic / fixture (Logan)\n\n"
+                          + header.format(identifier) + "\n"
+                          "- **Decision asked:** [SCOPE-CONFLICT] Decide synthetic option A or B\n"
+                          "- **Jonathan's answer:** synthetic option A\n"
+                          f"- **Discord message:** {evidence}\n"
+                          "- **Recorded by:** Logan. This is an agent's record.", created)
+            row["user"] = {"id": recorder}
+            return row
+
+        def parked(*later, assignee=None):
+            row = self.ready()
+            self.assertEqual(row["identifier"], "WD-615")
+            row["assignee"] = assignee
+            row["comments"]["nodes"] = [comment("**REVIEW REPORT — NEEDS HUMAN**"), *later]
+            return row
+
+        # AC-1: a valid newer record by someone other than the park owner clears the park.
+        self.assertFalse(g.build_eligible(parked()))
+        self.assertTrue(g.build_eligible(parked(record())))
+        for header in ("DECISION RECORD - {}", "## DECISION RECORD — {}", "- **DECISION RECORD — {}**",
+                       "  ### - **DECISION RECORD - {}"):
+            with self.subTest(header=header):
+                self.assertTrue(g.build_eligible(parked(record(header=header))))
+        # AC-2: no Discord message link, another issue's identifier, or older than the report.
+        for label, kwargs in (
+            ("no link", {"evidence": "answered in the exec thread"}),
+            ("other issue", {"identifier": "WD-616"}),
+            ("identifier prefix", {"identifier": "WD-61"}),
+            ("identifier extension", {"identifier": "WD-6150"}),
+            ("older than report", {"created": "2026-09-19T11:00:00Z"}),
+            ("same instant as report", {"created": "2026-09-19T12:00:00Z"}),
+        ):
+            with self.subTest(case=label):
+                self.assertFalse(g.build_eligible(parked(record(**kwargs))))
+        # Malformed links and loose mentions are not records; doubtful cases stay parked.
+        for evidence in (
+            "https://discord.com/channels/1111111111111111/222222222222222222/333333333333333333",
+            "https://discord.com/channels/111111111111111111/222222222222222222/333333333333333333333",
+            "https://discord.com/channels/111111111111111111/222222222222222222",
+            "http://discord.com/channels/111111111111111111/222222222222222222/333333333333333333",
+            "https://discordapp.com/channels/111111111111111111/222222222222222222/333333333333333333",
+            "https://discord.com/channels/@me/222222222222222222/333333333333333333",
+        ):
+            with self.subTest(evidence=evidence):
+                self.assertFalse(g.build_eligible(parked(record(evidence=evidence))))
+        mention = comment(f"I will post DECISION RECORD — WD-615 later, see {link}", "2026-09-19T13:00:00Z")
+        mention["user"] = {"id": recorder}
+        self.assertFalse(g.build_eligible(parked(mention)))
+        for body in (None, "", link):
+            empty = comment(body, "2026-09-19T13:00:00Z")
+            empty["user"] = {"id": recorder}
+            with self.subTest(body=body):
+                self.assertFalse(g.build_eligible(parked(empty)))
+        self.assertFalse(g.is_decision_record(record()["body"], None))
+        # AC-3: a valid newer record does not clear the park while Jonathan is still assigned.
+        self.assertFalse(g.build_eligible(parked(record(), assignee={"id": g.PARK_OWNER_ID})))
+        # AC-4: the older form still clears it: no record, unassigned, newer park-owner comment.
+        owner = comment("decision", "2026-09-19T13:00:00Z")
+        owner["user"] = {"id": g.PARK_OWNER_ID}
+        self.assertTrue(g.build_eligible(parked(owner)))
+        # A newer NEEDS HUMAN report parks the issue again until a newer record arrives.
+        again = comment("REVIEW REPORT — NEEDS HUMAN", "2026-09-19T14:00:00Z")
+        self.assertFalse(g.build_eligible(parked(record(), again)))
+        self.assertTrue(g.build_eligible(parked(record(), again, record(created="2026-09-19T15:00:00Z"))))
+        # The helper is pure and order-independent, and is true when nothing is parked.
+        row = parked(record())
+        before = copy.deepcopy(row)
+        self.assertTrue(g.park_cleared(row, list(reversed(row["comments"]["nodes"]))))
+        self.assertEqual(row, before)
+        self.assertFalse(g.park_cleared(row, row["comments"]["nodes"][:1]))
+        self.assertTrue(g.park_cleared(row, []))
+        self.assertTrue(g.park_cleared(row, [comment("REVIEW REPORT — NEEDS HUMAN", "2026-09-19T11:00:00Z"),
+                                              comment("REVIEW REPORT — FAIL")]))
+        del row["identifier"]
+        self.assertFalse(g.park_cleared(row, row["comments"]["nodes"]))
+
     def test_review_mentions_are_not_verdicts_and_paging_errors_are_safe(self):
         row = self.ready()
         row["comments"]["nodes"] = [comment("REVIEW REPORT — NEEDS HUMAN")]
