@@ -16,7 +16,9 @@ param(
     [string]$PwshPath = 'C:\Program Files\PowerShell\7\pwsh.exe',
     [string]$TaskXmlOut = '',
     [switch]$Apply,
+    [switch]$FilesOnly,
     [switch]$Verify,
+    [ValidateSet('S4U', 'Interactive')][string]$ExpectedLogon = 'S4U',
     [string]$TaskXmlIn = '',
     [string]$ExpectedManifest = '',
     [string]$ManifestOut = '',
@@ -25,6 +27,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($FilesOnly -and (-not $Apply -or $Verify)) { Write-Output 'APPLY REFUSED: FilesOnly requires Apply without Verify'; exit 3 }
 if ($Apply -and $Verify) { throw 'Choose Apply or Verify, not both.' }
 if ($TaskXmlIn -and -not $Verify) { throw 'TaskXmlIn requires Verify.' }
 if ($ExpectedManifest -and -not $Verify) { throw 'ExpectedManifest requires Verify.' }
@@ -257,6 +260,80 @@ function Get-WdSha256([byte[]]$Bytes) {
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes))
 }
 
+# SID-based registry lookup, never inferred from the caller's environment.
+# Library tests supply the same read-only methods with synthetic facts.
+function New-WdProfileIo {
+    $io = [pscustomobject]@{}
+    $io | Add-Member ScriptMethod ReadOperatorProfile {
+        param([string]$Sid)
+        (Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$Sid" -Name ProfileImagePath -ErrorAction Stop).ProfileImagePath
+    }
+    $io | Add-Member ScriptMethod ProfileExists { param([string]$Path) Test-Path -LiteralPath $Path -PathType Container }
+    $io
+}
+
+function Resolve-WdOperatorProfile {
+    param($Io, [string]$Sid)
+    try {
+        if (-not $Sid) { return '' }
+        $path = [string]$Io.ReadOperatorProfile($Sid)
+        if (-not $path -or -not [IO.Path]::IsPathFullyQualified($path) -or -not $Io.ProfileExists($path)) { return '' }
+        [IO.Path]::GetFullPath($path)
+    } catch { return '' }
+}
+
+function Get-WdProfilePaths {
+    param([string]$Profile, [string[]]$Cron = @(), [string]$Env = '')
+    $homeRoot = [IO.Path]::Combine($Profile, 'AppData\Local\hermes')
+    if (-not $Cron.Count) {
+        $Cron = @('cron', 'profiles\builder\cron', 'profiles\reviewer\cron', 'profiles\integrator\cron' | ForEach-Object { [IO.Path]::Combine($homeRoot, $_) })
+    }
+    if (-not $Env) { $Env = [IO.Path]::Combine($homeRoot, '.env') }
+    [pscustomobject]@{ CronDir = $Cron; EnvFile = $Env }
+}
+
+function Get-WdTaskFields {
+    param([string]$Text)
+    $doc = [xml]$Text
+    $ns = [Xml.XmlNamespaceManager]::new($doc.NameTable)
+    $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+    if ($doc.SelectNodes('/t:Task', $ns).Count -ne 1) { throw 'task XML required' }
+    $paths = [ordered]@{
+        principal = '/t:Task/t:Principals/t:Principal/t:UserId'
+        logon = '/t:Task/t:Principals/t:Principal/t:LogonType'
+        runlevel = '/t:Task/t:Principals/t:Principal/t:RunLevel'
+        executable = '/t:Task/t:Actions/t:Exec/t:Command'
+        arguments = '/t:Task/t:Actions/t:Exec/t:Arguments'
+        interval = '/t:Task/t:Triggers/t:TimeTrigger/t:Repetition/t:Interval'
+        limit = '/t:Task/t:Settings/t:ExecutionTimeLimit'
+    }
+    $values = [ordered]@{}
+    foreach ($key in $paths.Keys) {
+        $nodes = $doc.SelectNodes($paths[$key], $ns)
+        $values[$key] = if ($nodes.Count -eq 1) { $nodes[0].InnerText } else { $null }
+    }
+    if ($doc.SelectNodes('/t:Task/t:Principals/t:Principal', $ns).Count -ne 1) { $values.principal = $null }
+    if ($doc.SelectNodes('/t:Task/t:Actions/*', $ns).Count -ne 1) { $values.executable = $null }
+    $values
+}
+
+function Get-WdVerificationCode {
+    param([bool]$Failed, [bool]$Degraded)
+    if ($Failed) { return 1 }
+    if ($Degraded) { return 6 }
+    return 0
+}
+
+function Get-WdLogonResult {
+    param([string]$Actual, [ValidateSet('S4U', 'Interactive')][string]$Expected = 'S4U')
+    # Task Scheduler XML calls the Interactive API mode InteractiveToken.
+    if ($Expected -ceq 'Interactive' -and $Actual -cin @('Interactive', 'InteractiveToken')) {
+        return [pscustomobject]@{ Line = 'DEGRADED task logon Interactive (signed-in only; does not run after a reboot until sign-in)'; Failed = $false; Degraded = $true }
+    }
+    $ok = $Actual -ceq $Expected
+    [pscustomobject]@{ Line = "$(if ($ok) { 'PASS' } else { 'FAIL' }) logon type"; Failed = -not $ok; Degraded = $false }
+}
+
 # ── Apply core (side effects only through $Io) ─────────────────────────────────
 # Order: assess every existing component -> create missing application directories
 # one level at a time, each held open without FILE_SHARE_DELETE and reassessed with
@@ -264,8 +341,13 @@ function Get-WdSha256([byte[]]$Bytes) {
 # -> write files through the held chain -> revalidate -> register the task.
 function Invoke-WdApplyCore {
     param([Parameter(Mandatory)]$Io, [Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][object[]]$Copies,
-          [Parameter(Mandatory)]$SidSet, [Parameter(Mandatory)][string]$OperatorSid, [Parameter(Mandatory)][string]$TaskXml)
+          [Parameter(Mandatory)]$SidSet, [Parameter(Mandatory)][string]$OperatorSid, [Parameter(Mandatory)][string]$TaskXml,
+          [string]$Account = $OperatorUser, $ProfileIo = (New-WdProfileIo), [switch]$FilesOnly)
     $lines = [Collections.Generic.List[string]]::new()
+    if (-not (Resolve-WdOperatorProfile -Io $ProfileIo -Sid $OperatorSid)) {
+        $lines.Add("APPLY REFUSED: operator profile not found for $Account")
+        return [pscustomobject]@{ Code = 3; Lines = $lines }
+    }
     $chain = Get-WdChain -Path $Path -FileNames @($Copies | ForEach-Object { $_.Name })
     $dirSddl = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;$OperatorSid)"
     $fileSddl = "O:BAD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;$OperatorSid)"
@@ -340,10 +422,42 @@ function Invoke-WdApplyCore {
         $lines.Add('APPLY FAILED: post-write revalidation; task not registered')
         return [pscustomobject]@{ Code = 4; Lines = $lines }
     }
-    $Io.RegisterTask($TaskXml)
-    $Io.Release()
-    $lines.Add('APPLIED: WolftacFactoryWatchdog')
-    [pscustomobject]@{ Code = 0; Lines = $lines }
+    try {
+        if ($FilesOnly) {
+            $lines.Add('FILES APPLIED: WolftacFactoryWatchdog files only; task untouched')
+            return [pscustomobject]@{ Code = 0; Lines = $lines }
+        }
+        try { $Io.RegisterTask($TaskXml) }
+        catch {
+            $errorType = $_.Exception.GetBaseException()
+            $lines.Add(('APPLY FAILED: task registration refused ({0}, HRESULT 0x{1:X8})' -f $errorType.GetType().Name, $errorType.HResult))
+            $lines.Add('FILES INSTALLED: 5 of 5 current; task NOT registered')
+            return [pscustomobject]@{ Code = 5; Lines = $lines }
+        }
+        try {
+            $actualFields = Get-WdTaskFields ([string]$Io.ReadTaskXml())
+            $planFields = Get-WdTaskFields $TaskXml
+        } catch {
+            $lines.Add('APPLY FAILED: task not found after registration')
+            return [pscustomobject]@{ Code = 5; Lines = $lines }
+        }
+        $different = @(foreach ($key in $planFields.Keys) {
+            # Windows may export the same principal as its resolved SID.
+            $equal = if ($key -eq 'principal') {
+                ($actualFields[$key] -ieq $planFields[$key]) -or
+                ($actualFields[$key] -ceq $OperatorSid -and $planFields[$key] -ieq $Account)
+            }
+                     elseif ($key -eq 'executable') { $actualFields[$key] -ieq $planFields[$key] }
+                     else { $actualFields[$key] -ceq $planFields[$key] }
+            if ($null -eq $actualFields[$key] -or -not $equal) { $key }
+        })
+        if ($different.Count) {
+            $lines.Add('APPLY FAILED: registered task differs: ' + ($different -join ', '))
+            return [pscustomobject]@{ Code = 5; Lines = $lines }
+        }
+        $lines.Add('APPLIED: WolftacFactoryWatchdog')
+        return [pscustomobject]@{ Code = 0; Lines = $lines }
+    } finally { $Io.Release() }
 }
 
 # ── Verify core (reads only through $Io) ───────────────────────────────────────
@@ -570,6 +684,43 @@ function New-WdReadIo {
     $io
 }
 
+function Get-WdInstallChecks {
+    param([string]$InstallDir, [string]$OperatorUser, [bool]$Elevated)
+    try {
+        $acl = Get-Acl -LiteralPath $InstallDir
+        $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+        [pscustomobject]@{ Name = 'install-dir owner'; Ok = ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -eq $adminSid.Value); Detail = '' }
+        $operatorSid = ([Security.Principal.NTAccount]::new($OperatorUser)).Translate([Security.Principal.SecurityIdentifier]).Value
+        $expected = @{'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl'}
+        $expected[$operatorSid] = 'ReadAndExecute'
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        $aclOk = $acl.AreAccessRulesProtected -and $rules.Count -eq 3
+        $seen = @{}
+        foreach ($rule in $rules) {
+            $sid = $rule.IdentityReference.Value
+            if ($seen.ContainsKey($sid) -or -not $expected.ContainsKey($sid) -or
+                "$($rule.FileSystemRights)" -ne $expected[$sid] -or
+                "$($rule.AccessControlType)" -ne 'Allow' -or $rule.IsInherited -or
+                "$($rule.InheritanceFlags)" -ne 'ContainerInherit, ObjectInherit' -or
+                "$($rule.PropagationFlags)" -ne 'None') { $aclOk = $false }
+            $seen[$sid] = $true
+        }
+        [pscustomobject]@{ Name = 'install-dir ACL'; Ok = $aclOk; Detail = '' }
+    } catch { [pscustomobject]@{ Name = 'install-dir ACL'; Ok = $false; Detail = '' } }
+    # This tests the current non-elevated user, not an impersonated account.
+    $probe = Join-Path $InstallDir ('.write-probe-' + [guid]::NewGuid().ToString('N'))
+    $denied = $false
+    if (-not $elevated -and (Test-Path -LiteralPath $InstallDir -PathType Container)) {
+        try {
+            $stream = [IO.File]::Open($probe, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $stream.Dispose()
+            [IO.File]::Delete($probe)
+        } catch [UnauthorizedAccessException] { $denied = $true }
+          catch { $denied = $false }
+    }
+    [pscustomobject]@{ Name = 'operator cannot write'; Ok = $denied; Detail = '' }
+}
+
 if ($LibraryOnly) { return }
 
 $files = $script:WdFileNames
@@ -577,17 +728,16 @@ $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 $SourceRoot = [IO.Path]::GetFullPath($SourceRoot)
 $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 $actionFile = Join-Path $InstallDir 'deploy\factory-watchdog.ps1'
-# Pure path construction, no profile registry or Task Scheduler lookup in plan mode.
-# Override CronDir/EnvFile for an operator with a nonstandard profile location.
-$profileName = ($OperatorUser -split '\\')[-1]
-if ($profileName -match '[/\\:"<>|\r\n]' -or $profileName -in @('.', '..')) { throw 'Invalid operator account.' }
-$operatorProfile = Join-Path (Split-Path $env:USERPROFILE -Parent) $profileName
-$homeRoot = Join-Path $operatorProfile 'AppData\Local\hermes'
-if (-not $CronDir.Count) {
-    $CronDir = @((Join-Path $homeRoot 'cron'), (Join-Path $homeRoot 'profiles\builder\cron'),
-                (Join-Path $homeRoot 'profiles\reviewer\cron'), (Join-Path $homeRoot 'profiles\integrator\cron'))
+# Fully explicit offline plans/Verify need no account lookup. Apply always checks
+# the profile, even when both path overrides are supplied, before any write.
+$operatorProfile = ''; $operatorSid = ''
+if ($Apply -or -not $CronDir.Count -or -not $EnvFile) {
+    try { $operatorSid = ([Security.Principal.NTAccount]::new($OperatorUser)).Translate([Security.Principal.SecurityIdentifier]).Value } catch { }
+    $operatorProfile = Resolve-WdOperatorProfile -Io (New-WdProfileIo) -Sid $operatorSid
+    if (-not $operatorProfile) { Write-Output "APPLY REFUSED: operator profile not found for $OperatorUser"; exit 3 }
 }
-if (-not $EnvFile) { $EnvFile = Join-Path $homeRoot '.env' }
+$profilePaths = Get-WdProfilePaths -Profile $operatorProfile -Cron $CronDir -Env $EnvFile
+$CronDir = $profilePaths.CronDir; $EnvFile = $profilePaths.EnvFile
 function Quote-Argument([string]$Value) {
     if ($Value -match '["\r\n\x00]') { throw 'Task argument contains a quote or control character.' }
     '"' + $Value + '"'
@@ -595,13 +745,14 @@ function Quote-Argument([string]$Value) {
 $arguments = '-NoProfile -NonInteractive -File ' + (Quote-Argument $actionFile) +
     ' -CronDir ' + (Quote-Argument ($CronDir -join ';')) + ' -EnvFile ' + (Quote-Argument $EnvFile) +
     ' -RepoRoot ' + (Quote-Argument $RepoRoot)
-$xml = [xml]'<?xml version="1.0" encoding="utf-16"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><TimeTrigger><Repetition><Interval>PT15M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>2020-01-01T00:00:00</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers><Principals><Principal id="Operator"><UserId/><LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable></Settings><Actions Context="Operator"><Exec><Command/><Arguments/></Exec></Actions></Task>'
+$xml = [xml]'<?xml version="1.0" encoding="utf-16"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><TimeTrigger><Repetition><Interval>PT15M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>2020-01-01T00:00:00</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers><Principals><Principal id="Operator"><UserId/><LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT10M</ExecutionTimeLimit><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable></Settings><Actions Context="Operator"><Exec><Command/><Arguments/></Exec></Actions></Task>'
 $xml.Task.Principals.Principal.UserId = $OperatorUser
 $xml.Task.Actions.Exec.Command = $PwshPath
 $xml.Task.Actions.Exec.Arguments = $arguments
 
 if ($Verify) {
     $script:failed = $false
+    $script:degraded = $false
     function Result([string]$Name, [bool]$Ok, [string]$Detail = '') {
         Write-Output ("$(if ($Ok) { 'PASS' } else { 'FAIL' }) $Name" + $(if ($Detail) { ": $Detail" } else { '' }))
         if (-not $Ok) { $script:failed = $true }
@@ -618,46 +769,19 @@ if ($Verify) {
         $users = $actual.SelectNodes('//t:Principal', $ns)
         $user = Value '//t:Principal/t:UserId'
         Result 'task principal' ($users.Count -eq 1 -and $user -ieq $OperatorUser -and $user -notmatch '^(SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$')
-        Result 'logon type' ((Value '//t:Principal/t:LogonType') -ceq 'S4U')
+        $logon = Get-WdLogonResult -Actual (Value '//t:Principal/t:LogonType') -Expected $ExpectedLogon
+        Write-Output $logon.Line
+        if ($logon.Failed) { $script:failed = $true }
+        $script:degraded = $logon.Degraded
         Result 'run level' ((Value '//t:Principal/t:RunLevel') -ceq 'LeastPrivilege')
         Result 'no password' ($actual.SelectNodes('//*[local-name()="Password"]').Count -eq 0)
         Result 'action path' ($actual.SelectNodes('//t:Actions/*', $ns).Count -eq 1 -and
             (Value '//t:Exec/t:Command') -ieq $PwshPath -and
             (Value '//t:Exec/t:Arguments') -ceq $arguments)
     } catch { Result 'task definition readable' $false }
-    try {
-        $acl = Get-Acl -LiteralPath $InstallDir
-        $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
-        Result 'install-dir owner' ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -eq $adminSid.Value)
-        $operatorSid = ([Security.Principal.NTAccount]::new($OperatorUser)).Translate([Security.Principal.SecurityIdentifier]).Value
-        $expected = @{'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl'}
-        $expected[$operatorSid] = 'ReadAndExecute'
-        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
-        $aclOk = $acl.AreAccessRulesProtected -and $rules.Count -eq 3
-        $seen = @{}
-        foreach ($rule in $rules) {
-            $sid = $rule.IdentityReference.Value
-            if ($seen.ContainsKey($sid) -or -not $expected.ContainsKey($sid) -or
-                "$($rule.FileSystemRights)" -ne $expected[$sid] -or
-                "$($rule.AccessControlType)" -ne 'Allow' -or $rule.IsInherited -or
-                "$($rule.InheritanceFlags)" -ne 'ContainerInherit, ObjectInherit' -or
-                "$($rule.PropagationFlags)" -ne 'None') { $aclOk = $false }
-            $seen[$sid] = $true
-        }
-        Result 'install-dir ACL' $aclOk
-    } catch { Result 'install-dir ACL' $false }
-    # This tests the current non-elevated user, not an impersonated account.
-    $probe = Join-Path $InstallDir ('.write-probe-' + [guid]::NewGuid().ToString('N'))
-    $denied = $false
-    if (-not $elevated -and (Test-Path -LiteralPath $InstallDir -PathType Container)) {
-        try {
-            $stream = [IO.File]::Open($probe, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-            $stream.Dispose()
-            [IO.File]::Delete($probe)
-        } catch [UnauthorizedAccessException] { $denied = $true }
-          catch { $denied = $false }
+    foreach ($check in Get-WdInstallChecks -InstallDir $InstallDir -OperatorUser $OperatorUser -Elevated $elevated) {
+        Result $check.Name $check.Ok $check.Detail
     }
-    Result 'operator cannot write' $denied
     # AC-16: the whole chain, every installed file and pinned hashes. Expected hashes
     # come only from the operator-supplied manifest, never from the current checkout.
     $manifest = $null; $manifestProblem = ''
@@ -670,7 +794,7 @@ if ($Verify) {
             Result $check.Name $check.Ok $check.Detail
         }
     } catch { Result 'path assessment' $false "UNKNOWN $($_.Exception.Message)" }
-    exit ([int]$script:failed)
+    exit (Get-WdVerificationCode -Failed $script:failed -Degraded $script:degraded)
 }
 
 $copies = @()
@@ -687,7 +811,7 @@ Write-Output 'PLAN ACL owner=BUILTIN\Administrators inheritance=protected'
 Write-Output 'PLAN ACE NT AUTHORITY\SYSTEM FullControl ContainerInherit,ObjectInherit'
 Write-Output 'PLAN ACE BUILTIN\Administrators FullControl ContainerInherit,ObjectInherit'
 Write-Output "PLAN ACE $OperatorUser ReadAndExecute ContainerInherit,ObjectInherit"
-Write-Output "PLAN TASK account=$OperatorUser logon=S4U runlevel=LeastPrivilege interval=PT15M"
+Write-Output "PLAN TASK account=$OperatorUser logon=S4U runlevel=LeastPrivilege interval=PT15M limit=PT10M"
 Write-Output "PLAN ACTION $PwshPath $arguments"
 Write-Output 'PLAN GUARD refuse unless every existing component from the volume root to the five files is trusted against the operator''s non-elevated token'
 if ($ManifestOut) {
@@ -720,8 +844,9 @@ if ($Apply) {
         $info
     }
     $io | Add-Member ScriptMethod RegisterTask { param([string]$Xml) Register-ScheduledTask -TaskName 'WolftacFactoryWatchdog' -Xml $Xml -Force | Out-Null }
+    $io | Add-Member ScriptMethod ReadTaskXml { Export-ScheduledTask -TaskName 'WolftacFactoryWatchdog' -ErrorAction Stop }
     try {
-        $result = Invoke-WdApplyCore -Io $io -Path $InstallDir -Copies $copies -SidSet $sidSet -OperatorSid $operatorSid -TaskXml $xml.OuterXml
+        $result = Invoke-WdApplyCore -Io $io -Path $InstallDir -Copies $copies -SidSet $sidSet -OperatorSid $operatorSid -TaskXml $xml.OuterXml -FilesOnly:$FilesOnly
     } finally { $io.Release() }
     foreach ($line in $result.Lines) { Write-Output $line }
     if ($result.Code -ne 0) { exit $result.Code }

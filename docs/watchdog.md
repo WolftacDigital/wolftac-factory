@@ -346,6 +346,59 @@ is idempotent. It installs byte-exact copies of `factory-watchdog.ps1`, `deploy.
 `junctions.json`, `approval-policy.json` and `junction-lib.ps1` into
 `C:\ProgramData\WolftacFactory\watchdog\deploy`. The task executes only that copy.
 
+### Registration read-back and files-only refresh (WD-641)
+
+Default profile paths come from the operator's SID and
+`HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\<SID>\ProfileImagePath`,
+not the caller's `USERPROFILE` or `LOCALAPPDATA`. The profile directory must exist.
+A missing/unreadable profile refuses with `APPLY REFUSED: operator profile not found
+for <account>` (exit 3), before writes. Explicit `-CronDir` and `-EnvFile` still
+override the derived paths; supplying both also permits an offline plan or Verify
+without account lookup. Apply always validates the profile, even with overrides.
+
+After the five files and ACLs pass post-write reassessment, Apply registers the task
+and exports it again. It compares principal, logon type, run level, executable,
+arguments, repetition interval and execution time limit. Only matching read-back
+prints `APPLIED: WolftacFactoryWatchdog`. Missing/unreadable XML prints
+`APPLY FAILED: task not found after registration`; a mismatch prints
+`APPLY FAILED: registered task differs: <field names>`. Both exit 5.
+Registration exceptions also exit 5, with only the exception type and hexadecimal
+HRESULT, followed by `FILES INSTALLED: 5 of 5 current; task NOT registered`.
+No raw exception message is printed. These failures do not roll back the current
+protected files and do not claim that registration succeeded.
+
+For an elevated, operator-only refresh after an approved merge:
+
+```powershell
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Apply -FilesOnly
+```
+
+`-FilesOnly` requires `-Apply` and cannot accompany `-Verify` (invalid combinations
+exit 3). It uses the same path assessment, five-file copy, three-entry ACL and
+post-write reassessment, but never registers or reads a task. Success is
+`FILES APPLIED: WolftacFactoryWatchdog files only; task untouched` (exit 0).
+It does not update the existing task's settings. Newly planned/registered task XML
+keeps `IgnoreNew` and adds `ExecutionTimeLimit` `PT10M`; `PLAN TASK` ends in
+`limit=PT10M`. Task Scheduler ends a stuck run after ten minutes rather than its
+72-hour default. A files-only refresh alone does not apply that limit.
+
+**Recorded live result, 2026-11-12 (not a build/review test):** the protected files
+and ACLs installed, but S4U registration from a different elevated administrator
+account was refused. A SYSTEM invocation had printed success without a task
+remaining. The operator's signed-in-only Interactive fallback runs the protected
+copy. Why cross-account S4U registration fails is not established; fixing that is
+NG-1 and requires Jonathan's separate live investigation. This change neither
+repairs that Windows permission issue nor grants rights or stores a password.
+Until it is resolved, refresh the files only and leave that fallback task intact.
+
+For that fallback, `-Verify -ExpectedLogon Interactive` recognizes both the
+`Interactive` label and Task Scheduler's `InteractiveToken` XML spelling, and prints
+`DEGRADED task logon Interactive (signed-in only; does not run after a reboot until sign-in)`.
+All other checks are unchanged. Exit 6 means degradation was the only non-pass;
+any real failure still exits 1. Without the parameter, Interactive remains a FAIL.
+S4U is still the default and all-pass S4U still exits 0. This is truthful reporting
+of reduced availability, not permission to replace S4U or a full verification PASS.
+
 The install directory is owned by `BUILTIN\Administrators`. Its protected DACL
 disables inherited permissions and contains exactly three inheritable ACEs:
 `NT AUTHORITY\SYSTEM` FullControl, `BUILTIN\Administrators` FullControl, and the
