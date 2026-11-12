@@ -23,8 +23,11 @@ SCRIPT = 'canonical/wolftac-integrate/scripts/linear_bot.py'
 class SkillsOnlyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='wd632-')
-        self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        # Python file enumeration/cleanup needs extended paths for deep backups;
+        # keep ordinary paths for PowerShell, Git and the child's environment.
+        self.tmp.name = str(self.longpath(self.root))
+        self.addCleanup(self.tmp.cleanup)
         self.repo = self.root / 'repo'
         self.home = self.root / 'home'
         self.local = self.home / 'AppData/Local'
@@ -100,8 +103,13 @@ class SkillsOnlyTests(unittest.TestCase):
         self.assertEqual(proc.stderr, '', proc.stderr)
         return proc.stdout
 
+    @staticmethod
+    def longpath(path):
+        text = os.path.abspath(path)
+        return Path('\\\\?\\' + text) if os.name == 'nt' and not text.startswith('\\\\?\\') else Path(text)
+
     def backups(self, path):
-        return list(path.parent.glob('.deploy-backup-*/' + path.name))
+        return list(self.longpath(path.parent).glob('.deploy-backup-*/' + path.name + '.bak'))
 
     def test_stale_live_edit_deleted_line_script_and_check_together(self):
         self.put(self.skill, 'version one\r\n')
@@ -139,6 +147,60 @@ class SkillsOnlyTests(unittest.TestCase):
         again = self.deploy('-Deploy', '-SkillsOnly', expected=1)
         self.assertNotIn('STALE-UPDATED', again)
         self.assertEqual(len(self.backups(self.skill)), 1)
+
+    def test_repeated_backups_never_create_discoverable_skill_or_prompt_markdown(self):
+        # Real frontmatter reproduces the review's duplicate-name discovery defect.
+        # Cover every copy-based local skill root plus flat prompts and references.
+        sources = [SKILL, 'ports/hermes/wolftac-build/SKILL.md',
+                   'plugins/wolftac-factory/skills/wolftac-build/SKILL.md',
+                   'ports/codex/wolftac-build.md', REFERENCE]
+        roots = [self.home / '.claude/skills', self.home / '.agents/skills',
+                 self.local / 'hermes/skills']
+        roots += [self.local / f'hermes/profiles/{profile}/skills'
+                  for profile in ['builder', 'reviewer', 'integrator']]
+        skills = [root / 'wolftac-build/SKILL.md' for root in roots]
+        prompts = self.home / '.codex/prompts'
+        references = [root / 'wolftac-build/references/example.md' for root in roots[2:]]
+        targets = skills + [prompts / 'wolftac-build.md'] + references
+        first = '---\nname: wolftac-build\ndescription: Synthetic fixture\n---\nold\n'
+        second = first.replace('old\n', 'new\n')
+        third = first.replace('old\n', 'newest\n')
+        for text in [first, second]:
+            for source in sources:
+                self.put(self.repo / source, text)
+            self.git('add', '.')
+            self.git('commit', '-qm', 'synthetic discoverable skill')
+        for target in targets:
+            self.put(target, first.replace('\n', '\r\n'))
+
+        for current, previous in [(second, first.replace('\n', '\r\n')), (third, second)]:
+            if current == third:
+                for source in sources:
+                    self.put(self.repo / source, current)
+                self.git('commit', '-qam', 'synthetic repeated refresh')
+            out = self.deploy('-Deploy', '-SkillsOnly')
+            for target in targets:
+                with self.subTest(target=target, current=current):
+                    self.assertIn(f'STALE-UPDATED {target}', out)
+                    self.assertEqual(target.read_bytes(), current.encode())
+                    backups = list(self.longpath(target.parent).glob('.deploy-backup-*/*'))
+                    self.assertIn(previous.encode(), [p.read_bytes() for p in backups])
+                    self.assertTrue(backups)
+                    self.assertTrue(all(p.suffix.lower() != '.md' for p in backups))
+                    self.assertTrue(all(p.name.lower() != 'skill.md' for p in backups))
+            for skill in skills:
+                self.assertEqual(list(self.longpath(skill.parent).rglob('SKILL.md')), [self.longpath(skill)])
+            self.assertEqual(list(self.longpath(prompts).rglob('wolftac-build.md')),
+                             [self.longpath(prompts / 'wolftac-build.md')])
+            check = self.deploy('-Check', expected=1)  # Scripts are intentionally not deployed.
+            for target in targets:
+                self.assertNotIn(f'DRIFT    {target}', check)
+        before = {p: p.read_bytes() for p in self.longpath(self.home).rglob('*.bak')}
+        again = self.deploy('-Deploy', '-SkillsOnly')
+        self.assertNotIn('STALE-UPDATED', again)
+        self.assertEqual({p: p.read_bytes() for p in self.longpath(self.home).rglob('*.bak')}, before)
+        for target in targets:
+            self.assertEqual(len(self.backups(target)), 2)
 
     def test_plain_deploy_still_skips_and_force_still_overwrites(self):
         self.put(self.skill, 'version one\n')

@@ -57,6 +57,11 @@ For an existing unequal target, without `-Force`:
   history, not `origin/main`, another path, or a deployed-only-line heuristic.
   It makes a byte-verified backup in a unique sibling `.deploy-backup-<UTC>-<id>`
   directory **before** writing, then prints `STALE-UPDATED <Dst> (was <sha7>)`.
+  The backup filename is `<original-name>.bak` (for example `SKILL.md.bak`),
+  never `SKILL.md` or a `.md` file: recursive skill/prompt discovery must not load
+  a second copy of the old skill. The `BACKUP <Dst> -> <backup-path>` line identifies
+  the byte-preserved restore source. Repeated updates keep separate backups;
+  existing backups are never renamed or deleted automatically.
 - **Live-edited or unknown:** print `DRIFT-SKIPPED`, preserve the target and return
   nonzero. No repository, shallow history, failed Git lookup or an untracked path
   cannot establish stale content. A local deletion with zero deployed-only lines

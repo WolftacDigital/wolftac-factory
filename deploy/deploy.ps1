@@ -328,10 +328,11 @@ function Update-StaleTarget([string]$Path, [string]$Source, [string]$ExpectedHas
         $reader = [IO.StreamReader]::new($buffer, [Text.Encoding]::UTF8, $true, 1024, $true)
         try { $current = $reader.ReadToEnd() } finally { $reader.Dispose() }
         if ((Get-LfContentHash $current) -ne $ExpectedHash) { throw 'target changed since history check' }
-        # Sibling backup directory stays under the same already-approved skill root.
+        # Keep backups inside the approved root, but never as discoverable Markdown.
+        # Hermes indexes nested SKILL.md files, even in .deploy-backup directories.
         $backupRoot = Join-Path (Split-Path $Path -Parent) ('.deploy-backup-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '-' + [Guid]::NewGuid().ToString('N'))
         $null = New-Item -ItemType Directory -Path $backupRoot -ErrorAction Stop
-        $backup = Join-Path $backupRoot (Split-Path $Path -Leaf)
+        $backup = Join-Path $backupRoot ((Split-Path $Path -Leaf) + '.bak')
         [IO.File]::WriteAllBytes($backup, $original)
         $originalHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($original))
         if ((Get-FileHash -LiteralPath $backup).Hash -ne $originalHash) { throw 'backup verification failed' }
