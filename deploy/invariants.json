@@ -747,5 +747,31 @@
         "pattern": "(?=[\\s\\S]*model fallback)(?=[\\s\\S]*restore before launch)(?=[\\s\\S]*no compliance, certification or security claim)"
       }
     ]
+  },
+  {
+    "id": "build-ci-capacity-hold",
+    "description": "Build detects CI capacity blockers by annotation, reports once with a fixed heading, and holds the repo silently until a newer non-SWEPT comment (V4, WD-461).",
+    "checks": [
+      {
+        "file": "canonical/wolftac-build/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*CI-CAPACITY-HOLD:\\*\\*)(?=[\\s\\S]*CI-CAPACITY-BLOCKER)(?=[\\s\\S]*BUILD REPORT — INCOMPLETE: CI CAPACITY BLOCKER)(?=[\\s\\S]*The job was not started because)(?=[\\s\\S]*SWEPT:)"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*CI-CAPACITY-HOLD:\\*\\*)(?=[\\s\\S]*CI-CAPACITY-BLOCKER)(?=[\\s\\S]*BUILD REPORT — INCOMPLETE: CI CAPACITY BLOCKER)(?=[\\s\\S]*The job was not started because)(?=[\\s\\S]*SWEPT:)"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-build/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*CI-CAPACITY-HOLD:\\*\\*)(?=[\\s\\S]*CI-CAPACITY-BLOCKER)(?=[\\s\\S]*BUILD REPORT — INCOMPLETE: CI CAPACITY BLOCKER)(?=[\\s\\S]*The job was not started because)(?=[\\s\\S]*SWEPT:)"
+      },
+      {
+        "file": "ports/codex/wolftac-build.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*CI-CAPACITY-HOLD:\\*\\*)(?=[\\s\\S]*CI-CAPACITY-BLOCKER)(?=[\\s\\S]*BUILD REPORT — INCOMPLETE: CI CAPACITY BLOCKER)(?=[\\s\\S]*The job was not started because)(?=[\\s\\S]*SWEPT:)"
+      },
+      {
+        "file": "ports/hermes/wolftac-build/SKILL.md",
+        "pattern": "(?=[\\s\\S]*\\*\\*CI-CAPACITY-HOLD:\\*\\*)(?=[\\s\\S]*CI-CAPACITY-BLOCKER)(?=[\\s\\S]*BUILD REPORT — INCOMPLETE: CI CAPACITY BLOCKER)(?=[\\s\\S]*The job was not started because)(?=[\\s\\S]*SWEPT:)"
+      }
+    ]
   }
 ]
