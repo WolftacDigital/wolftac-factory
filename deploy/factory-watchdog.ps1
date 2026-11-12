@@ -961,7 +961,12 @@ if ($added.Count -or $removed.Count) {
     $lines = @($added | ForEach-Object { "new: $($findingTexts[$_])" }) +
              @($removed | ForEach-Object { "recovered: $(if ($previousTexts[$_]) { $previousTexts[$_] } else { $_ })" })
     $shouldPost = $true
-    $message = ":warning: *Factory watchdog: the worker loops need attention* $mention`n$($lines -join "`n")`n$($openFindings.Count) liveness finding(s) still open."
+    # A full recovery must read as a recovery, not as a new attention alert.
+    $message = if ($healthy) {
+        ":white_check_mark: *Factory watchdog: recovered* - all liveness checks passing again.`n$($lines -join "`n")"
+    } else {
+        ":warning: *Factory watchdog: the worker loops need attention* $mention`n$($lines -join "`n")`n$($openFindings.Count) liveness finding(s) still open."
+    }
 } elseif (-not $healthy) {
     $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
     if ($hoursSince -ge $NagHours) {

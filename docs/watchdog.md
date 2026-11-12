@@ -222,7 +222,9 @@ When a liveness finding first appears it posts to Discord **#approvals**
 naming the job, the failing check, and the observed value. Each newly added key gets
 a `new:` line even when other findings remain open; each cleared key gets a
 `recovered:` line even on partial recovery. Transition messages include only those
-changes plus the number still open. An unchanged open set re-pings with the full
+changes plus the number still open. When the last liveness finding clears, the
+message is a recovery headline with its `recovered:` lines and no mention, so it
+never reads as a new attention alert. An unchanged open set re-pings with the full
 list every `-NagHours` (default 12).
 
 `open_findings` maps stable scope/job/check keys to their first-seen times;

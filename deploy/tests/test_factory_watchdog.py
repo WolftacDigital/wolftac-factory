@@ -453,6 +453,18 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn('new: ' + prefix + ': last_status=error', text)
         self.assertNotIn('new: ' + prefix + ': DISABLED', text)
 
+    def test_full_recovery_reads_as_recovery(self):
+        prefix = f'[{self.cron}] Wolftac Factory Gatekeeper'
+        self.seed_state(status='unhealthy', open_findings={prefix + '|DISABLED': timestamp(-1)},
+                        finding_texts={prefix + '|DISABLED': prefix + ': DISABLED (enabled: false)'},
+                        last_alert_at=timestamp(0))
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 0)
+        self.assertEqual(text.count('DRY RUN POST:'), 1)
+        self.assertIn('DRY RUN POST: :white_check_mark: *Factory watchdog: recovered*', text)
+        self.assertIn('recovered: ' + prefix + ': DISABLED (enabled: false)', text)
+        self.assertNotIn('need attention', text)
+
     def test_number_only_changes_keep_key_and_nag_window(self):
         prefix = f'[{self.cron}] Wolftac Factory Gatekeeper'
         self.seed_state(status='unhealthy', open_findings={prefix + '|OVERDUE': timestamp(-1)},
