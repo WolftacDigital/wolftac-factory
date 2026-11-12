@@ -169,6 +169,7 @@ foreach ($file in $approvalSurfaces) {
 $canonicalHelper = "canonical/wolftac-integrate/scripts/linear_bot.py"
 $helperCopies = @{
     "ports/hermes/wolftac-integrate/SKILL.md"                     = "ports/hermes/wolftac-integrate/scripts/linear_bot.py"
+    "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md" = "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py"
     "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md"   = "plugins/wolftac-factory/skills/wolftac-integrate/scripts/linear_bot.py"
     "ports/codex/wolftac-integrate.md"                            = "ports/codex/wolftac-integrate-scripts/linear_bot.py"
     # The Desktop bundle ships the helper for portability, but Desktop invokes the
@@ -177,12 +178,29 @@ $helperCopies = @{
     # The parked factory-integrate port still ships the sixth copy; keep it identical too.
     "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md" = "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py"
 }
-$canonicalHelperText = (Read-RepoFile $canonicalHelper) -replace "`r`n", "`n"
+$canonicalHelperText = Read-RepoFile $canonicalHelper
+$canonicalHelperHash = (Get-FileHash -LiteralPath (Join-Path $RepoRoot $canonicalHelper) -Algorithm SHA256).Hash
 foreach ($surface in $helperCopies.Keys) {
     $copy = $helperCopies[$surface]
     $copyText = (Read-RepoFile $copy) -replace "`r`n", "`n"
-    if ($copyText -and $canonicalHelperText -and $copyText -ne $canonicalHelperText) {
+    $copyHash = if ($copyText) { (Get-FileHash -LiteralPath (Join-Path $RepoRoot $copy) -Algorithm SHA256).Hash } else { "" }
+    if ($copyText -and $canonicalHelperText -and $copyHash -ne $canonicalHelperHash) {
         $errors.Add("$copy - drifted from $canonicalHelper; the helper must stay identical across integrate surfaces")
+    }
+}
+
+# Token-home registry is data, not a second credential implementation. Ship it
+# alongside every helper, including tree/junction and portable Desktop installs.
+$registry = "deploy/token-homes.json"
+$registryText = Read-RepoFile $registry
+if ($registryText) {
+    $registryHash = (Get-FileHash -LiteralPath (Join-Path $RepoRoot $registry) -Algorithm SHA256).Hash
+    foreach ($helper in @($canonicalHelper) + @($helperCopies.Values)) {
+        $copy = (Split-Path $helper -Parent) + "/token-homes.json"
+        $copyText = Read-RepoFile $copy
+        if ($copyText -and (Get-FileHash -LiteralPath (Join-Path $RepoRoot $copy) -Algorithm SHA256).Hash -ne $registryHash) {
+            $errors.Add("$copy - drifted from $registry")
+        }
     }
 }
 

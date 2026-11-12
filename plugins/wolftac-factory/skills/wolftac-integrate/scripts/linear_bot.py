@@ -1,41 +1,51 @@
 #!/usr/bin/env python3
 """Bot-authenticated Linear client for /wolftac-integrate.
 
-Reads LINEAR_FACTORY_BOT_TOKEN internally (process env first, then the Hermes
-.env) so the credential never appears on a command line. Every subcommand
-prints JSON to stdout and exits non-zero on any failure, so the skill's
-fail-closed rule holds without the caller inspecting output.
-
-Usage:
-  python linear_bot.py viewer
-  python linear_bot.py queue [--state Approved] [--lane crm]
-  python linear_bot.py issue WD-123
-  python linear_bot.py comment WD-123 --body-file -
-  python linear_bot.py claim WD-123
-  python linear_bot.py unclaim WD-123
-  python linear_bot.py state WD-123 Done
+Credentials stay off command lines and output. Hermes profile files take
+precedence over the process snapshot; other callers retain env-first loading.
+Run `remint` (renew if due, then verify), followed by `viewer`, before pickup.
+Any request can recover once from HTTP 401. --no-mint forbids credential writes.
 """
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import json
 import os
+from pathlib import Path
+import re
+import stat
 import sys
+import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # Proof packs carry emoji and em dashes; Windows consoles default to cp1252.
 for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8")
-    except (AttributeError, ValueError):  # not a reconfigurable text stream
+    except (AttributeError, ValueError):
         pass
 
 API = "https://api.linear.app/graphql"
+OAUTH_API = "https://api.linear.app/oauth/token"
+EXPECTED_BOT_ID = "b8fece8e-8ec5-4125-b4b2-d7fa882db137"
+OAUTH_SCOPE = "read,write,app:assignable,app:mentionable"
 TEAM_KEY = "WD"
 QUEUE_LABEL = "Factory Queue"
 TOKEN_KEY = "LINEAR_FACTORY_BOT_TOKEN"
+EXPIRY_KEY = "LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT"
+APP_ID_KEY = "LINEAR_FACTORY_APP_ID"
+APP_SECRET_KEY = "LINEAR_FACTORY_APP_SECRET"
+RENEW_WINDOW = timedelta(days=5)
+TEST_HOMES_OVERRIDE = "LINEAR_FACTORY_TOKEN_HOMES_TEST_JSON"
 
 _TOKEN = None
+_TOKEN_SOURCE = None
+_TOKEN_PATH = None
+_NO_MINT = False
+_MINT_ATTEMPTED = False
+_SECRETS = set()
 
 
 def fail(msg, code=1):
@@ -45,116 +55,336 @@ def fail(msg, code=1):
 
 def redact(text):
     text = str(text)
-    if _TOKEN:
-        text = text.replace(_TOKEN, "<redacted>")
+    for value in sorted(_SECRETS | ({_TOKEN} if _TOKEN else set()), key=len, reverse=True):
+        text = text.replace(value, "<redacted>")
     return text
 
 
 def env_path():
-    # A Hermes profile is its own home with its own .env. HERMES_HOME is the
-    # global var Hermes exports for the executing profile, so honor it first:
-    # an isolated worker must read the credential ITS OWN preflight re-mints,
-    # not the default profile's copy. Getting this wrong is silent and total --
-    # the profile refreshes a valid token while every call here 401s on the
-    # stale default one (observed 2026-08-30 on the factory-integrate worker).
     home = os.environ.get("HERMES_HOME", "").strip()
     if home:
         return os.path.join(home, ".env")
-    local = os.environ.get("LOCALAPPDATA") or os.path.expanduser(
-        r"~\AppData\Local"
-    )
+    local = os.environ.get("LOCALAPPDATA") or os.path.expanduser(r"~\AppData\Local")
     return os.path.join(local, "hermes", ".env")
 
 
-def _token_from_file(path):
-    """Read TOKEN_KEY out of a .env, or None. Never printed."""
-    if not os.path.exists(path):
-        return None
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line.startswith(TOKEN_KEY + "="):
-                continue
-            val = line.split("=", 1)[1].strip().strip('"').strip("'")
-            if val:
-                return val
-    return None
+def _read_env(path):
+    """Return original bytes and parsed values, without logging any values."""
+    try:
+        raw = Path(path).read_bytes()
+    except FileNotFoundError:
+        return b"", {}
+    except OSError:
+        fail("Cannot read credential file", 5)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError:
+        fail("Credential file is not valid UTF-8", 5)
+    values = {}
+    for line in text.splitlines():
+        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$", line)
+        if match:
+            value = match[2].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            values[match[1]] = value
+    for key in (TOKEN_KEY, APP_ID_KEY, APP_SECRET_KEY):
+        if values.get(key):
+            _SECRETS.add(values[key])
+    return raw, values
 
 
 def load_token():
-    """Inside a Hermes profile the profile .env WINS over the process env;
-    elsewhere the process env wins. Never printed.
+    """Profile file wins over Hermes' start-of-job process env snapshot.
 
-    The precedence flip matters on any tick where integrate-preflight.py
-    re-mints. Hermes loads the profile .env into the process environment when
-    the job starts, so that value is a start-of-job SNAPSHOT. Preflight then
-    mints a fresh token, verifies it live against the pinned bot id, and
-    rewrites the file mid-job. Preferring the process env there returns the
-    token preflight just replaced -- every call 401s while preflight correctly
-    reports OK, because the two are talking about different tokens. Traced
-    2026-08-30: process env f626e3d0, file rewritten to 3bc653bf, viewer
-    exit 1. The file is the authority; the environment is the stale copy.
+    Outside Hermes, retain env-first compatibility. After renewal this process
+    uses the new token directly; subsequent Hermes calls read the new file.
+    App credentials are always read from this same resolved file, not inherited
+    from a different profile's environment.
     """
-    home = os.environ.get("HERMES_HOME", "").strip()
-    if home:
-        val = _token_from_file(env_path())
-        if val:
-            return val
-    tok = os.environ.get(TOKEN_KEY)
-    if tok:
-        return tok.strip()
-    path = env_path()
-    if not os.path.exists(path):
-        fail("%s not set and %s not found" % (TOKEN_KEY, path))
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line.startswith(TOKEN_KEY + "="):
-                continue
-            val = line.split("=", 1)[1].strip().strip('"').strip("'")
-            if val:
-                return val
-    fail("%s absent or empty in %s" % (TOKEN_KEY, path))
+    global _TOKEN_SOURCE, _TOKEN_PATH
+    _TOKEN_PATH = os.path.abspath(env_path())
+    _, values = _read_env(_TOKEN_PATH)
+    file_token = values.get(TOKEN_KEY)
+    process_token = os.environ.get(TOKEN_KEY, "").strip()
+    if process_token:
+        _SECRETS.add(process_token)
+    if os.environ.get("HERMES_HOME", "").strip() and file_token:
+        _TOKEN_SOURCE = "file"
+        return file_token
+    if process_token:
+        _TOKEN_SOURCE = "env"
+        return process_token
+    _TOKEN_SOURCE = "file"
+    return file_token
 
 
-def gq(query, variables=None):
-    """POST a GraphQL request. Retries once with a Bearer prefix on 401/403."""
+def initialize(no_mint=False):
+    global _TOKEN, _NO_MINT, _MINT_ATTEMPTED
+    _NO_MINT = no_mint
+    _MINT_ATTEMPTED = False
+    _SECRETS.clear()
+    _TOKEN = load_token()
+
+
+def _request(query, variables, token):
+    """One logical request, preserving the existing raw/Bearer compatibility."""
     payload = json.dumps({"query": query, "variables": variables or {}}).encode()
 
     def attempt(auth):
         req = urllib.request.Request(
-            API,
-            data=payload,
+            API, data=payload,
             headers={"Content-Type": "application/json", "Authorization": auth},
         )
         with urllib.request.urlopen(req, timeout=45) as resp:
             return json.load(resp)
 
-    header = _TOKEN
     try:
-        body = attempt(header)
+        body = attempt(token)
     except urllib.error.HTTPError as exc:
-        if exc.code in (400, 401, 403) and not header.lower().startswith("bearer "):
-            try:
-                body = attempt("Bearer " + _TOKEN)
-            except urllib.error.HTTPError as exc2:
-                fail("Linear API HTTP %s (token invalid or expired)" % exc2.code)
-            except Exception as exc2:  # noqa: BLE001
-                fail("Linear API request failed: %s" % exc2)
-        else:
-            fail("Linear API HTTP %s" % exc.code)
-    except Exception as exc:  # noqa: BLE001
-        fail("Linear API request failed: %s" % exc)
-
-    if body.get("errors"):
-        fail("Linear GraphQL error: %s" % json.dumps(body["errors"]))
+        exc.close()
+        if exc.code not in (400, 401, 403) or token.lower().startswith("bearer "):
+            raise
+        body = attempt("Bearer " + token)
+    if not isinstance(body, dict) or body.get("errors") or not isinstance(body.get("data"), dict):
+        # Do not echo server-controlled error bodies, which can contain secrets.
+        fail("Linear GraphQL error or malformed response")
     return body["data"]
 
 
+def _verified_viewer(data):
+    viewer = data.get("viewer")
+    if not isinstance(viewer, dict) or viewer.get("id") != EXPECTED_BOT_ID:
+        fail("Linear viewer does not match the pinned factory bot id", 4)
+    return viewer
+
+
+def _renewed_bytes(original, token, expires_at):
+    """Replace only credential lines, including duplicates; keep all other bytes."""
+    replacements = {TOKEN_KEY: token, EXPIRY_KEY: expires_at}
+    lines = []
+    seen = set()
+    for line in original.splitlines(keepends=True):
+        match = re.match(rb"^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=", line)
+        key = match[1].decode("ascii") if match else None
+        if key in replacements:
+            ending = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b"\r" if line.endswith(b"\r") else b""
+            line = (key + "=" + replacements[key]).encode("utf-8") + ending
+            seen.add(key)
+        lines.append(line)
+    # Prepend missing keys: appending would alter an unrelated unterminated line.
+    missing = b"".join(f"{key}={value}\n".encode("utf-8") for key, value in replacements.items() if key not in seen)
+    return missing + b"".join(lines)
+
+
+def _persist_token(path, original, token, expires_at):
+    """Atomic replacement; callers decide whether a failure is fatal or advisory."""
+    tmp = None
+    try:
+        target = Path(path)
+        if target.is_symlink() or not target.is_file() or not target.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+            raise OSError("Credential file is missing, linked or read-only")
+        fd, tmp = tempfile.mkstemp(prefix=".linear-bot-", suffix=".tmp", dir=os.path.dirname(path))
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(_renewed_bytes(original, token, expires_at))
+            fh.flush()
+            os.fsync(fh.fileno())
+        # Fail closed instead of overwriting a concurrent profile edit.
+        if Path(path).read_bytes() != original:
+            raise OSError("Credential file changed during renewal; nothing persisted")
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _propagation_skip(path):
+    # Never include exception messages or file contents from an optional home.
+    print(json.dumps({"token_home_skipped": redact(str(path))}), file=sys.stderr)
+
+
+def _registered_token_homes():
+    """Load the checked-in registry (packaged alongside each deployed helper).
+
+    The explicitly test-only override is a JSON array of absolute scratch file
+    paths; it replaces the registry entirely, never supplements live homes.
+    Production entries are LOCALAPPDATA-relative, never arbitrary absolute paths.
+    """
+    registry = Path(__file__).resolve().with_name("token-homes.json")
+    override = os.environ.get(TEST_HOMES_OVERRIDE)
+    try:
+        if override is not None:
+            entries = json.loads(override)
+            if not isinstance(entries, list) or any(not isinstance(p, str) or "\x00" in p or not Path(p).is_absolute() for p in entries):
+                raise ValueError()
+            return [Path(p) for p in entries]
+        entries = json.loads(registry.read_text(encoding="utf-8"))
+        if not isinstance(entries, list):
+            raise ValueError()
+        local = Path(os.environ.get("LOCALAPPDATA") or os.path.expanduser(r"~\AppData\Local"))
+        homes = []
+        for entry in entries:
+            if not isinstance(entry, str):
+                raise ValueError()
+            parts = entry.replace("\\", "/").split("/")
+            if any(p in ("", ".", "..") or ":" in p or "\x00" in p for p in parts):
+                raise ValueError()
+            homes.append(local.joinpath(*parts))
+        return homes
+    except (OSError, ValueError):
+        # A broken optional registry cannot turn a verified current mint into
+        # a failed run, and a bad test override must never fall back to live files.
+        _propagation_skip(registry)
+        return []
+
+
+def _propagate_token(token, expires_at):
+    seen = {os.path.normcase(os.path.abspath(_TOKEN_PATH))}
+    for home in _registered_token_homes():
+        identity = os.path.normcase(os.path.abspath(home))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        try:
+            if home.is_symlink() or not home.is_file():
+                raise OSError()
+            original = home.read_bytes()
+            # No parsing/copying of another home's app credentials is needed.
+            if not re.search(rb"(?m)^[ \t]*(?:export[ \t]+)?LINEAR_FACTORY_BOT_TOKEN[ \t]*=", original):
+                raise OSError()
+            _persist_token(str(home), original, token, expires_at)
+        except OSError:
+            _propagation_skip(home)
+
+
+def mint():
+    """Mint at most once per invocation, verify the pinned identity, then persist."""
+    global _TOKEN, _TOKEN_SOURCE, _MINT_ATTEMPTED
+    if _NO_MINT:
+        fail("Token renewal required but --no-mint forbids minting")
+    if _MINT_ATTEMPTED:
+        fail("Linear token rejected after one renewal; refusing another mint")
+    _MINT_ATTEMPTED = True
+    original, values = _read_env(_TOKEN_PATH)
+    for key in (APP_ID_KEY, APP_SECRET_KEY):
+        if not values.get(key):
+            fail("Missing " + key + " in credential file", 2)
+    payload = urllib.parse.urlencode({
+        "grant_type": "client_credentials",
+        "client_id": values[APP_ID_KEY],
+        "client_secret": values[APP_SECRET_KEY],
+        "scope": OAUTH_SCOPE,
+    }).encode()
+    req = urllib.request.Request(
+        OAUTH_API, data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        fail("Linear OAuth HTTP %s; nothing persisted" % exc.code)
+    except Exception:
+        fail("Linear OAuth request failed; nothing persisted")
+    if not isinstance(result, dict):
+        fail("Linear OAuth returned an invalid response; nothing persisted")
+    fresh = result.get("access_token")
+    if not isinstance(fresh, str) or not fresh or any(c.isspace() for c in fresh):
+        fail("Linear OAuth returned an invalid access token; nothing persisted")
+    _SECRETS.add(fresh)
+    ttl = result.get("expires_in")
+    try:
+        if isinstance(ttl, bool) or not isinstance(ttl, (int, str)) or int(ttl) <= 0:
+            raise ValueError()
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(ttl))).isoformat().replace("+00:00", "Z")
+    except (ValueError, OverflowError):
+        fail("Linear OAuth returned an invalid expiry; nothing persisted")
+    try:
+        viewer = _verified_viewer(_request("{ viewer { id name email } }", None, fresh))
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        fail("Renewed token verification HTTP %s; nothing persisted" % exc.code)
+    except Exception:
+        fail("Renewed token verification failed; nothing persisted")
+    try:
+        _persist_token(_TOKEN_PATH, original, fresh, expires_at)
+    except OSError:
+        fail("Could not atomically persist renewed credential (file changed during renewal or unavailable); old file retained")
+    _TOKEN = fresh
+    _TOKEN_SOURCE = "minted"
+    _propagate_token(fresh, expires_at)
+    return viewer
+
+
+def gq(query, variables=None):
+    """Retry the original request once on HTTP 401, never recursively mint."""
+    if not _TOKEN:
+        if _NO_MINT:
+            fail(TOKEN_KEY + " absent or empty", 2)
+        mint()
+    try:
+        return _request(query, variables, _TOKEN)
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        if exc.code != 401 or _NO_MINT or _MINT_ATTEMPTED:
+            fail("Linear API HTTP %s (token invalid or expired)" % exc.code)
+        mint()
+        try:
+            return _request(query, variables, _TOKEN)
+        except urllib.error.HTTPError as retry_error:
+            retry_error.close()
+            fail("Linear API HTTP %s (token invalid or expired after renewal)" % retry_error.code)
+        except Exception:
+            fail("Linear API request failed after renewal")
+    except Exception:
+        fail("Linear API request failed")
+
+
+def ensure_fresh_token():
+    """Renew if expiry is absent/invalid or at most five days away, then verify."""
+    _, values = _read_env(_TOKEN_PATH)
+    expiry = None
+    # An expiry stored for a different token cannot validate an env-only override.
+    if values.get(TOKEN_KEY) == _TOKEN and values.get(EXPIRY_KEY):
+        try:
+            expiry = datetime.fromisoformat(values[EXPIRY_KEY].replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                expiry = None
+        except ValueError:
+            pass
+    if not _TOKEN or expiry is None or expiry <= datetime.now(timezone.utc) + RENEW_WINDOW:
+        return mint()
+    return get_viewer()
+
+
+def token_metadata():
+    return {"token_source": _TOKEN_SOURCE, "token_path": _TOKEN_PATH}
+
+
+def cmd_remint(_args):
+    viewer = ensure_fresh_token()
+    _, values = _read_env(_TOKEN_PATH)
+    emit({"viewer": viewer, **token_metadata(), "expires_at": values.get(EXPIRY_KEY)})
+
+
 def emit(data):
+    def clean(value):
+        if isinstance(value, str):
+            return redact(value)
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+
     out = {"ok": True}
     out.update(data)
-    sys.stdout.write(redact(json.dumps(out, indent=2)) + "\n")
+    sys.stdout.write(json.dumps(clean(out), indent=2) + "\n")
 
 
 ISSUE_FIELDS = """
@@ -186,7 +416,7 @@ COMMENT_FIELDS = """
 
 
 def get_viewer():
-    return gq("{ viewer { id name email } }")["viewer"]
+    return _verified_viewer(gq("{ viewer { id name email } }"))
 
 
 def resolve_issue(identifier):
@@ -229,7 +459,8 @@ def get_all_comments(issue_id):
 
 
 def cmd_viewer(_args):
-    emit({"viewer": get_viewer()})
+    viewer = get_viewer()
+    emit({"viewer": viewer, **token_metadata()})
 
 
 def cmd_queue(args):
@@ -390,12 +621,12 @@ def cmd_state(args):
 
 
 def main():
-    global _TOKEN
-
     parser = argparse.ArgumentParser(prog="linear_bot.py", description=__doc__)
+    parser.add_argument("--no-mint", action="store_true", help="never mint or write credentials")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("viewer", help="fetch the bot's own Linear identity")
+    sub.add_parser("remint", help="renew if expiry is absent/within five days, then verify")
 
     p_queue = sub.add_parser("queue", help="list Factory Queue issues in a state")
     p_queue.add_argument("--state", default="Approved")
@@ -426,11 +657,15 @@ def main():
         help="resolve the target state without mutating the issue",
     )
 
+    for child in sub.choices.values():
+        child.add_argument("--no-mint", action="store_true", default=argparse.SUPPRESS,
+                           help="never mint or write credentials")
     args = parser.parse_args()
-    _TOKEN = load_token()
+    initialize(args.no_mint)
 
     {
         "viewer": cmd_viewer,
+        "remint": cmd_remint,
         "queue": cmd_queue,
         "issue": cmd_issue,
         "comment": cmd_comment,
