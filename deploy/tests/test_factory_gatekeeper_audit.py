@@ -47,7 +47,7 @@ class AuditTests(unittest.TestCase):
         self.comment_pages = {}
         self.repeat_cursor = False
         self.requests = []
-        for name, value in [("hermes_home", str(self.root)), ("now_utc", NOW)]:
+        for name, value in [("hermes_home", str(self.root)), ("now_utc", NOW), ("needs_you_issues", [])]:
             mocker = patch.object(g, name, return_value=value)
             mocker.start()
             self.addCleanup(mocker.stop)
