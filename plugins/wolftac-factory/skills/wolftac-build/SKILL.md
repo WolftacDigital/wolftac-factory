@@ -29,6 +29,7 @@ Implement exactly one queued issue and publish immutable evidence for review.
   review's pass verdict is `Approved`.
 - Reports start with `**Agent:** Codex / <actual model>`.
 - A lane argument filters project names or labels case-insensitively.
+- **RESIDUAL-LANE:** A lane argument that, trimmed, is `residual` or starts with `residual:` (case-insensitive) selects the residual lane instead of a word filter. Its exclude list is the text after `residual:`, split on `;`, each term trimmed. If the list is empty or any term is empty, stop without claiming anything and output `Factory queue: invalid residual lane argument; nothing claimed`. In the residual lane, consider only an issue that (a) matches none of the exclude terms, where a term matches when the issue's Linear project name or any of its label names contains it (case-insensitive), and (b) is a spec: the first non-empty line of its description, ignoring leading spaces, starts with `**Repo:**`. Skip every other issue SILENTLY: no comment, no state change. Unlike the normal rule, the residual lane never posts `BLOCKED:` because an issue lacks a `**Repo:**` first line; the Repo-check `BLOCKED:` rule still applies to an issue that passed this filter. Apply the residual filter wherever this skill applies the lane filter, including the stale-claim sweep. When a job prompt shows the argument inside backticks, the argument is the text inside the backticks.
 
 ## Autonomous-run override
 
