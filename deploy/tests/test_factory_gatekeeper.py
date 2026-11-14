@@ -12,6 +12,7 @@ import tempfile
 import unittest
 import urllib.error
 from datetime import datetime, timedelta, timezone
+from email.message import Message
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -19,7 +20,15 @@ SPEC = importlib.util.spec_from_file_location("gatekeeper", Path(__file__).resol
 g = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(g)
 LINEAR = "lin_TEST_SENTINEL"
-SLACK = "xoxb-TEST-SENTINEL"
+DISCORD = "discord-TEST-SENTINEL"
+GUILD = "923752167293222912"
+CHANNEL = "1562236246158221323"
+APPROVER = "1022999767753691186"
+HARPER = "1562178628211449966"
+MESSAGE = "1569128910862684180"
+POLICY = {"discord_guild_id": GUILD, "discord_channel_id": CHANNEL, "approver_discord_user_id": APPROVER,
+          "pack_author_discord_user_ids": [HARPER], "reader_bot_discord_user_id": HARPER,
+          "approval_emoji": "\U0001F680"}
 NOW = datetime(2026, 9, 19, 20, 0, tzinfo=timezone.utc)
 REAL_POPEN = subprocess.Popen
 
@@ -40,8 +49,20 @@ def issue(identifier="WD-1", state="Todo"):
             "inverseRelations": connection([{"type": "blocks", "issue": {"identifier": "WD-0", "state": {"name": "Done"}}}])}
 
 
-def proof(ts="1789819979335359", channel="C123", created="2026-09-19T13:00:00Z", marker="MERGE PROOF PACK"):
-    return comment(f"{marker}\nhttps://example.slack.com/archives/{channel}/p{ts}", created)
+def permalink(message=MESSAGE, channel=CHANNEL, guild=GUILD):
+    return f"https://discord.com/channels/{guild}/{channel}/{message}"
+
+
+def proof(message=MESSAGE, channel=CHANNEL, created="2026-09-19T13:00:00Z", marker="MERGE PROOF PACK", guild=GUILD):
+    return comment(f"{marker}\nDiscord request: {permalink(message, channel, guild)}", created)
+
+
+def reader_line(reactors, message=MESSAGE, ok=True, error=None):
+    if not ok:
+        return json.dumps({"ok": False, "contract": 1, "error": error})
+    return json.dumps({"ok": True, "contract": 1, "reader_bot_id": HARPER, "guild_id": GUILD,
+                       "channel_id": CHANNEL, "parent_id": None, "emoji": "\U0001F680",
+                       "message": {"id": message}, "reactors": reactors, "reactor_pages": 1})
 
 
 class GatekeeperTests(unittest.TestCase):
@@ -53,17 +74,18 @@ class GatekeeperTests(unittest.TestCase):
         self.jobs = self.root / "jobs.json"
         self.state = self.root / "state.json"
         self.policy = self.root / "approval-policy.json"
-        self.env.write_text(f"LINEAR_FACTORY_BOT_TOKEN={LINEAR}\nSLACK_FACTORY_BOT_TOKEN={SLACK}\n", encoding="utf-8")
+        self.env.write_text(f"LINEAR_FACTORY_BOT_TOKEN={LINEAR}\nDISCORD_BOT_TOKEN={DISCORD}\n", encoding="utf-8")
         self.write(self.jobs, {"jobs": [{"id": pair[1], "last_run_at": "2026-09-19T10:00:00Z"}
                                        for pair in g.DEFAULT_JOB_MAP.values()]})
-        self.write(self.policy, {"slack_channel_id": "C123", "approver_slack_user_id": "U123"})
+        self.write(self.policy, POLICY)
         self.issues = {"Todo": [issue()], "In Review": [], "Approved": []}
-        self.reactions = [{"name": "rocket", "users": ["U123"]}]
+        self.reactors = [{"id": APPROVER, "bot": False}]
         self.linear_error = None
-        self.slack_error = None
+        self.reader_result = None
+        self.reader_calls = []
         self.requests = []
         self.comment_pages = {}
-        self.args = ["gatekeeper", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
+        self.args = ["gatekeeper", "--no-audit", "--env-path", str(self.env), "--jobs-path", str(self.jobs),
                      "--state-path", str(self.state), "--approval-policy", str(self.policy),
                      "--exec-override", json.dumps(["fake-noop"])]
         self.addCleanup(patch.stopall)
@@ -71,6 +93,7 @@ class GatekeeperTests(unittest.TestCase):
         patch.object(g, "now_utc", return_value=NOW).start()
         self.http = patch.object(g.urllib.request, "urlopen", side_effect=self.open).start()
         self.spawn = patch.object(g.subprocess, "Popen", return_value=SimpleNamespace(pid=1234)).start()
+        patch.object(g, "run_reader", side_effect=self.reader).start()
         self.output = []
 
     def write(self, path, data):
@@ -97,18 +120,24 @@ class GatekeeperTests(unittest.TestCase):
             offset = int(variables["after"] or 0)
             following = str(offset + 100) if len(rows) > offset + 100 else None
             return io.StringIO(json.dumps({"data": {"issues": connection(rows[offset:offset + 100], following)}}))
-        self.assertTrue(request.full_url.startswith("https://slack.com/api/reactions.get?"))
-        self.assertEqual(request.get_header("Authorization"), "Bearer " + SLACK)
-        if isinstance(self.slack_error, Exception):
-            raise self.slack_error
-        payload = self.slack_error or {"ok": True, "message": {"reactions": self.reactions}}
-        return io.StringIO(json.dumps(payload))
+        self.fail("the gatekeeper made a non-Linear HTTP request: " + request.full_url)
+
+    def reader(self, argv, env, timeout=None):
+        """Fake R1. The gatekeeper never makes a Discord request itself."""
+        self.reader_calls.append(list(argv))
+        self.assertEqual(argv[-10:-6], ["-p", "integrator", "wolftac-approval-read", "--channel"])
+        self.assertEqual([argv[-5], argv[-3], argv[-2], argv[-1]], ["--message", "--emoji", "\U0001F680", "--json"])
+        self.assertFalse([name for name in env if name.upper().startswith("DISCORD_")])
+        if self.reader_result is not None:
+            return self.reader_result
+        return 0, "hermes banner line\n" + reader_line(self.reactors, argv[argv.index("--message") + 1]) + "\n"
 
     def tick(self, *extra):
         stdout, stderr = io.StringIO(), io.StringIO()
         self.spawn.reset_mock()
         self.http.reset_mock()
         self.requests.clear()
+        self.reader_calls.clear()
         with patch.object(g.sys, "argv", self.args + list(extra)), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             self.assertEqual(g.main(), 0)
         output = stdout.getvalue() + stderr.getvalue()
@@ -189,6 +218,38 @@ class GatekeeperTests(unittest.TestCase):
         rows[0]["comments"]["nodes"].append(comment("not a sweep"))
         self.assertNotEqual(swept, g.lane_fingerprint(rows))
 
+    def test_build_skipped_never_changes_fingerprint(self):
+        for existing in ([], [comment()], [comment("SWEPT: old")]):
+            with self.subTest(existing=existing):
+                row = issue()
+                row["comments"]["nodes"] = copy.deepcopy(existing)
+                baseline = g.lane_fingerprint([row])
+                row["comments"]["nodes"].append(comment(
+                    "BUILD SKIPPED: completion budget (files=29, checks=6, reserve=20%)",
+                    NOW.isoformat()))
+                self.assertEqual(baseline, g.lane_fingerprint([row]))
+                for field in ("comment", "state", "description"):
+                    changed = copy.deepcopy(row)
+                    if field == "comment":
+                        changed["comments"]["nodes"].append(comment("Ready", NOW.isoformat()))
+                    elif field == "state":
+                        changed["state"]["name"] = "In Progress"
+                    else:
+                        changed["description"] = "Revised spec"
+                    self.assertNotEqual(baseline, g.lane_fingerprint([changed]))
+
+    def test_build_skipped_prefix_is_exact_and_case_sensitive(self):
+        row = issue()
+        baseline = g.lane_fingerprint([row])
+        for body in ("build skipped: parked", " BUILD SKIPPED: parked",
+                     "BUILD SKIPPED parked", "Decision: BUILD SKIPPED: parked"):
+            with self.subTest(body=body):
+                changed = copy.deepcopy(row)
+                changed["comments"]["nodes"].append(comment(body, NOW.isoformat()))
+                self.assertNotEqual(baseline, g.lane_fingerprint([changed]))
+        row["comments"]["nodes"].append(comment("BUILD SKIPPED:parked", NOW.isoformat()))
+        self.assertEqual(baseline, g.lane_fingerprint([row]))
+
     def test_empty_lane_is_idle(self):
         for has_baseline in (False, True):
             with self.subTest(baseline=has_baseline):
@@ -241,76 +302,120 @@ class GatekeeperTests(unittest.TestCase):
         with self.assertRaises(g.ProbeError):
             g.next_cursor({"pageInfo": {"hasNextPage": True, "endCursor": "repeat"}}, {"repeat"})
 
-    def test_slack_rocket_dispatches_once(self):
+    def test_discord_rocket_dispatches_once(self):
         self.with_pack()
-        self.assertIn("integrate: slack-approval WD-1 -> dispatched(pid=1234)", self.tick())
+        self.assertIn("integrate: discord-approval WD-1 -> dispatched(pid=1234)", self.tick())
         self.spawn.assert_called_once()
+        self.assertEqual(len(self.reader_calls), 1)
+        self.assertEqual(self.reader_calls[0][-9:], ["integrator", "wolftac-approval-read", "--channel", CHANNEL,
+                                                     "--message", MESSAGE, "--emoji", "\U0001F680", "--json"])
         state = json.loads(self.state.read_text())
-        self.assertEqual(state["approval_dispatched"], {"WD-1": "1789819979.335359"})
+        self.assertEqual(state["approval_dispatched"], {"WD-1": MESSAGE})
         self.confirm()
         self.assertIn("integrate: unchanged (skip)", self.tick())
         self.spawn.assert_not_called()
-        self.assertFalse(any("slack.com" in r.full_url for r in self.requests))
+        self.assertEqual(self.reader_calls, [])
 
-    def test_slack_negative_cases(self):
-        for case in ("other-user", "other-reaction", "other-channel", "no-permalink", "newest-no-permalink"):
+    def test_permalink_in_pack_thread_reply_dispatches(self):
+        self.with_pack()
+        nodes = self.issues["Approved"][0]["comments"]["nodes"]
+        nodes[-1] = comment("MERGE PROOF PACK\nDiscord request: not delivered: operator step pending",
+                            "2026-09-19T13:00:00Z")
+        nodes.append(comment(f"Discord message id {MESSAGE}: {permalink()}", "2026-09-19T13:01:00Z"))
+        self.baseline()
+        self.assertIn("integrate: discord-approval WD-1 -> dispatched(pid=1234)", self.tick())
+
+    def test_discord_negative_cases(self):
+        cases = ("other-user", "approver-as-bot", "no-reactors", "other-channel", "other-guild", "no-permalink",
+                 "newest-no-permalink", "link-older-than-newest-pack")
+        for case in cases:
             with self.subTest(case=case):
                 self.with_pack()
-                self.reactions = [{"name": "rocket", "users": ["U123"]}]
+                self.reactors = [{"id": APPROVER, "bot": False}]
                 packs = self.issues["Approved"][0]["comments"]["nodes"]
                 if case == "other-user":
-                    self.reactions[0]["users"] = ["U999"]
-                elif case == "other-reaction":
-                    self.reactions[0]["name"] = "thumbsup"
+                    self.reactors = [{"id": "1022999767753691187", "bot": False}, {"id": HARPER, "bot": True}]
+                elif case == "approver-as-bot":
+                    self.reactors = [{"id": APPROVER, "bot": True}]
+                elif case == "no-reactors":
+                    self.reactors = []
                 elif case == "other-channel":
-                    packs[-1] = proof(channel="C999")
+                    packs[-1] = proof(channel="1562236246158221999")
+                elif case == "other-guild":
+                    packs[-1] = proof(guild="923752167293222999")
                 elif case == "no-permalink":
                     packs[-1] = comment("MERGE PROOF PACK", "2026-09-19T13:00:00Z")
-                else:
+                elif case == "newest-no-permalink":
                     packs.append(comment("LANDING PROOF PACK no URL", "2026-09-19T14:00:00Z"))
+                else:
+                    packs.append(comment("MERGE PROOF PACK refreshed, request not sent yet", "2026-09-19T14:00:00Z"))
                 self.baseline()
                 self.assertIn("integrate: unchanged (skip)", self.tick())
                 self.spawn.assert_not_called()
-                self.assertLessEqual(sum("slack.com" in r.full_url for r in self.requests), 1)
+                self.assertLessEqual(len(self.reader_calls), 1)
+                if case in ("other-channel", "other-guild", "no-permalink", "newest-no-permalink",
+                            "link-older-than-newest-pack"):
+                    self.assertEqual(self.reader_calls, [])
 
-    def test_new_pack_ts_dispatches_again(self):
+    def test_new_pack_message_dispatches_again(self):
         self.with_pack()
         self.tick()
         self.confirm()
         self.tick()
-        self.issues["Approved"][0]["comments"]["nodes"].append(proof("1789819979444444", created="2026-09-19T14:00:00Z", marker="LANDING PROOF PACK"))
+        self.issues["Approved"][0]["comments"]["nodes"].append(
+            proof("1569128910862684999", created="2026-09-19T14:00:00Z", marker="LANDING PROOF PACK"))
         state = json.loads(self.state.read_text())
         state["fingerprints"]["integrate"] = g.lane_fingerprint(self.issues["Approved"])
         self.write(self.state, state)
-        self.assertIn("integrate: slack-approval WD-1 -> dispatched", self.tick())
-        self.assertEqual(json.loads(self.state.read_text())["approval_dispatched"]["WD-1"], "1789819979.444444")
+        self.assertIn("integrate: discord-approval WD-1 -> dispatched", self.tick())
+        self.assertEqual(json.loads(self.state.read_text())["approval_dispatched"]["WD-1"], "1569128910862684999")
 
-    def test_slack_check_failures(self):
-        for case in ("missing-token", "missing-policy", "invalid-policy", "empty-policy", "http", "ok-false"):
+    def test_discord_check_failures(self):
+        failures = {
+            "missing-policy": None, "invalid-policy": None, "empty-policy": None, "slack-policy": None,
+            "extra-key-policy": None,
+            "timeout": ((None, "timeout"), "timeout"),
+            "launch-failed": ((None, "launch-failed"), "launch-failed"),
+            "nonzero-exit": ((5, json.dumps({"ok": False, "contract": 1, "error": "http_error",
+                                             "http_status": 500})), "http_error"),
+            "identity-mismatch": ((4, json.dumps({"ok": False, "contract": 1, "error": "identity_mismatch"})),
+                                  "identity_mismatch"),
+            "ok-false-exit-zero": ((0, json.dumps({"ok": False, "contract": 1, "error": "message_changed"})),
+                                   "message_changed"),
+            "unparseable": ((0, "not json at all"), "malformed-output"),
+            "two-documents": ((0, reader_line([]) + "\n" + reader_line([])), "malformed-output"),
+            "exit-without-json": ((7, ""), "exit-7"),
+            "ok-but-nonzero": ((3, reader_line([{"id": APPROVER, "bot": False}])), "exit-3"),
+            "secret-in-error": ((5, json.dumps({"ok": False, "contract": 1, "error": DISCORD})), "reader-error"),
+        }
+        for case, expected in failures.items():
             with self.subTest(case=case):
                 self.with_pack()
-                self.env.write_text(f"LINEAR_FACTORY_BOT_TOKEN={LINEAR}\nSLACK_FACTORY_BOT_TOKEN={SLACK}\n")
-                self.write(self.policy, {"slack_channel_id": "C123", "approver_slack_user_id": "U123"})
-                self.slack_error = None
-                if case == "missing-token":
-                    self.env.write_text(f"LINEAR_FACTORY_BOT_TOKEN={LINEAR}\n")
-                elif case == "missing-policy":
+                self.write(self.policy, POLICY)
+                self.reader_result = None
+                if case == "missing-policy":
                     self.policy.unlink()
                 elif case == "invalid-policy":
                     self.policy.write_text("broken")
                 elif case == "empty-policy":
                     self.write(self.policy, {})
-                elif case == "http":
-                    self.slack_error = OSError("remote echoed " + SLACK)
+                elif case == "slack-policy":
+                    self.write(self.policy, {"slack_channel_id": "C123", "approver_slack_user_id": "U123"})
+                elif case == "extra-key-policy":
+                    self.write(self.policy, dict(POLICY, slack_channel_id="C123"))
                 else:
-                    self.slack_error = {"ok": False, "error": SLACK}
+                    self.reader_result = expected[0]
                 # Integrate FIRST demonstrates that failures do not starve later lanes.
                 mapping = dict(reversed(list(g.DEFAULT_JOB_MAP.items())))
                 out = self.tick("--job-map", json.dumps(mapping))
-                self.assertIn("integrate: slack-check-failed (", out)
+                if expected is None:
+                    self.assertIn("integrate: discord-check-failed (approval policy", out)
+                else:
+                    self.assertIn(f"integrate: discord-check-failed ({expected[1]})", out)
                 self.assertIn("build: idle", out)
-                self.assertNotIn(SLACK, out)
+                self.assertNotIn(DISCORD, out)
                 self.spawn.assert_not_called()
+                self.assertEqual(json.loads(self.state.read_text())["approval_dispatched"], {})
 
     def test_linear_failure_fails_open(self):
         for failure in (OSError("echo " + LINEAR), {"errors": [{"message": LINEAR}]}):
@@ -360,7 +465,7 @@ class GatekeeperTests(unittest.TestCase):
                     self.assertEqual(state["approval_dispatched"], {})
                     self.assertNotIn("FAIL-OPEN", out)
                     self.assertNotIn(LINEAR, out)
-                    self.assertFalse(any("slack.com" in r.full_url for r in self.requests))
+                    self.assertEqual(self.reader_calls, [])
 
     def test_two_phase_dispatch_preserves_each_lane_profile(self):
         i = self.args.index("--exec-override")
@@ -482,16 +587,14 @@ class GatekeeperTests(unittest.TestCase):
         self.assertEqual(json.loads(self.state.read_text())["lanes"], {})
         self.spawn.assert_called_once()
 
-    def test_slack_401_does_not_become_linear_auth_failure(self):
+    def test_reader_401_does_not_become_linear_auth_failure(self):
         self.with_pack()
         self.issues["Todo"] = [issue()]
-        self.slack_error = urllib.error.HTTPError("https://slack.com/api/reactions.get", 401, SLACK, {}, None)
-        self.addCleanup(self.slack_error.close)
+        self.reader_result = (5, json.dumps({"ok": False, "contract": 1, "error": "http_error", "http_status": 401}))
         out = self.tick()
-        self.assertIn("integrate: slack-check-failed (HTTPError)", out)
+        self.assertIn("integrate: discord-check-failed (http_error)", out)
         self.assertIn("build: changed -> dispatched", out)
         self.assertNotIn("linear-auth-failed", out)
-        self.assertNotIn(SLACK, out)
         self.spawn.assert_called_once()
 
     def test_inflight_guard_and_ttl_clears_fingerprint(self):
@@ -502,7 +605,7 @@ class GatekeeperTests(unittest.TestCase):
         self.write(self.state, state)
         self.assertIn("integrate: in-flight (skip)", self.tick())
         self.spawn.assert_not_called()
-        self.assertFalse(any("slack.com" in r.full_url for r in self.requests))
+        self.assertEqual(self.reader_calls, [])
         self.assertFalse(any(r.data and json.loads(r.data)["variables"]["state"] == "Approved" for r in self.requests))
         state["lanes"]["integrate"]["dispatched_at"] = (NOW - timedelta(minutes=91)).isoformat()
         self.write(self.state, state)
@@ -521,7 +624,7 @@ class GatekeeperTests(unittest.TestCase):
         self.spawn.assert_called_once()
 
     def test_dry_run_writes_nothing(self):
-        for mode in ("new", "changed", "same", "slack", "fail-open", "inflight", "expired"):
+        for mode in ("new", "changed", "same", "discord", "fail-open", "inflight", "expired"):
             with self.subTest(mode=mode):
                 self.issues = {"Todo": [issue()], "In Review": [], "Approved": []}
                 self.linear_error = None
@@ -530,7 +633,7 @@ class GatekeeperTests(unittest.TestCase):
                     self.state.write_text('{"lanes":{}}')
                 elif mode == "changed":
                     self.issues["Todo"][0]["description"] = "new"
-                elif mode == "slack":
+                elif mode == "discord":
                     self.with_pack()
                 elif mode == "fail-open":
                     self.linear_error = OSError("failed")
@@ -549,12 +652,14 @@ class GatekeeperTests(unittest.TestCase):
         self.tick("--dry-run")
         self.assertFalse(self.state.exists())
 
-    def test_no_slack_and_process_environment_ignored(self):
+    def test_no_discord_and_process_environment_ignored(self):
         self.with_pack()
-        self.env.write_text(f"LINEAR_FACTORY_BOT_TOKEN={LINEAR}\n")
-        with patch.dict(os.environ, {"SLACK_FACTORY_BOT_TOKEN": SLACK}):
-            self.assertIn("slack-check-failed", self.tick())
-        self.assertIn("integrate: unchanged (skip)", self.tick("--no-slack"))
+        self.reader_result = (4, json.dumps({"ok": False, "contract": 1, "error": "token_unavailable"}))
+        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": DISCORD, "discord_other": DISCORD}):
+            self.assertIn("discord-check-failed (token_unavailable)", self.tick())
+        self.assertEqual(len(self.reader_calls), 1)
+        self.assertIn("integrate: unchanged (skip)", self.tick("--no-discord"))
+        self.assertEqual(self.reader_calls, [])
         self.spawn.assert_not_called()
         self.env.unlink()
         with patch.dict(os.environ, {"LINEAR_FACTORY_BOT_TOKEN": LINEAR}):
@@ -562,14 +667,14 @@ class GatekeeperTests(unittest.TestCase):
 
     def test_spawn_failure_does_not_consume_baseline_or_approval(self):
         self.with_pack()
-        self.spawn.side_effect = OSError(LINEAR + SLACK)
+        self.spawn.side_effect = OSError(LINEAR + DISCORD)
         out = self.tick()
         self.assertIn("dispatch-failed(OSError)", out)
         state = json.loads(self.state.read_text())
         self.assertEqual(state["lanes"], {})
         self.assertEqual(state["approval_dispatched"], {})
         self.assertNotIn(LINEAR, out)
-        self.assertNotIn(SLACK, out)
+        self.assertNotIn(DISCORD, out)
 
     def test_tokens_never_leak(self):
         self.with_pack()
@@ -577,31 +682,32 @@ class GatekeeperTests(unittest.TestCase):
         self.confirm()
         self.tick()
         self.baseline()
-        self.slack_error = OSError(LINEAR + SLACK)
+        self.reader_result = (5, json.dumps({"ok": False, "contract": 1, "error": LINEAR + DISCORD}))
+        self.tick()
+        self.reader_result = (5, "Traceback: " + LINEAR + DISCORD)
         self.tick()
         self.issues["Todo"] = [issue()]
-        self.linear_error = {"errors": [{"message": LINEAR + SLACK}]}
+        self.linear_error = {"errors": [{"message": LINEAR + DISCORD}]}
         self.tick()
         artifacts = "".join(self.output) + self.state.read_text()
         for log in (self.root / "cron/gatekeeper-logs").glob("*.log"):
             artifacts += log.read_text()
-        for token in (LINEAR, SLACK):
+        for token in (LINEAR, DISCORD):
             self.assertNotIn(token, artifacts)
 
     def test_read_only_traffic(self):
         self.with_pack()
         self.tick()
-        self.assertTrue(any("slack.com" in r.full_url for r in self.requests))
+        self.assertEqual(len(self.reader_calls), 1)
         for request in self.requests:
-            if request.data:
-                self.assertEqual(request.get_method(), "POST")
-                self.assertNotIn("mutation", json.loads(request.data)["query"].lower())
-            else:
-                self.assertEqual(request.get_method(), "GET")
-                self.assertEqual(g.urllib.parse.urlparse(request.full_url).path, "/api/reactions.get")
-                params = g.urllib.parse.parse_qs(g.urllib.parse.urlparse(request.full_url).query)
-                self.assertEqual(params["timestamp"], ["1789819979.335359"])
-                self.assertEqual(params["full"], ["true"])
+            self.assertEqual(request.full_url, "https://api.linear.app/graphql")
+            self.assertEqual(request.get_method(), "POST")
+            self.assertNotIn("mutation", json.loads(request.data)["query"].lower())
+
+    def test_gatekeeper_has_no_slack_route(self):
+        source = (Path(__file__).resolve().parents[1] / "factory-gatekeeper.py").read_text(encoding="utf-8")
+        for needle in ("slack.com", "SLACK_FACTORY_BOT_TOKEN", "slack_bot", "reactions.get", "approver_slack_user_id"):
+            self.assertNotIn(needle, source)
 
     def test_default_lanes_run_as_exec_team_profiles(self):
         profiles = {lane: g.lane_entry(entry)[2] for lane, entry in g.DEFAULT_JOB_MAP.items()}
@@ -639,190 +745,6 @@ class GatekeeperTests(unittest.TestCase):
         self.assertIn("build: no-baseline -> dispatched(pid=1234)", out)
         state = json.loads(self.state.read_text())
         self.assertEqual(state["lanes"]["build"]["job_last_run_at"], "2026-09-19T10:00:00Z")
-
-    def approval_fixture(self, hours=30, body="MERGE PROOF PACK", identifier="WD-354"):
-        row = issue(identifier, "Approved")
-        row["comments"] = connection([comment(body, (NOW - timedelta(hours=hours)).isoformat())])
-        self.issues["Approved"] = [row]
-        self.baseline()
-        return row
-
-    def approval_tick(self, *extra):
-        result = self.tick("--no-slack", *extra)
-        for request in self.requests:
-            self.assertNotIn("slack.com", request.full_url)
-            self.assertNotIn("mutation", json.loads(request.data)["query"].lower())
-        return result
-
-    def test_approval_stale_ages(self):
-        for hours, segment in [(360, "approval-stale: WD-354=15d"),
-                               (30, "approval-stale: WD-354=30h"),
-                               (23, "approval-wait: ok (1 approved)"),
-                               (24, "approval-wait: ok (1 approved)"),
-                               (48, "approval-stale: WD-354=2d")]:
-            with self.subTest(hours=hours):
-                self.approval_fixture(hours)
-                out = self.approval_tick()
-                self.assertIn(segment, out)
-                if hours <= 24:
-                    self.assertNotIn("approval-stale:", out)
-                self.spawn.assert_not_called()
-
-    def test_approval_lane_down_disclosure(self):
-        for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"):
-            for hours, age in ((1, "1h"), (72, "3d")):
-                self.approval_fixture(hours, marker + "\nSlack LaNe\nUNAVAILABLE this pack", "WD-1")
-                out = self.approval_tick()
-                self.assertIn("approval-lane-down: WD-1=" + age, out)
-                self.assertNotIn("approval-stale:", out)
-        row = self.approval_fixture(1, "LANDING PROOF PACK", "WD-1")
-        row["comments"]["nodes"].append(comment("MERGE PROOF PACK\nlane unavailable", (NOW - timedelta(days=3)).isoformat()))
-        self.baseline()
-        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
-
-    def test_approval_pack_beyond_newest_50(self):
-        row = self.approval_fixture()
-        pack = row["comments"]["nodes"][0]
-        row["comments"] = connection([comment("SWEPT: churn") for _ in range(50)], "older")
-        self.comment_pages[("WD-354", "older")] = connection([pack], "unused")
-        self.baseline()
-        original = copy.deepcopy(row)
-        out = self.approval_tick()
-        self.assertIn("approval-stale: WD-354=30h", out)
-        self.assertEqual(row, original)
-        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 1)
-        success_lines, success_spawns = out.split("; approval-")[0], self.spawn.call_count
-        for error in (urllib.error.URLError(LINEAR),
-                      urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)):
-            self.comment_pages[("WD-354", "older")] = error
-            self.baseline()
-            out = self.approval_tick()
-            self.assertIn("approval-wait: unknown (" + type(error).__name__ + ")", out)
-            self.assertEqual(out.split("; approval-")[0], success_lines)
-            self.assertEqual(self.spawn.call_count, success_spawns)
-            self.assertNotIn(LINEAR, out)
-        row["comments"] = connection([], "0")
-        self.comment_pages = {("WD-354", str(n)): connection([comment()], str(n + 1)) for n in range(10)}
-        self.baseline()
-        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
-        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 10)
-        self.comment_pages[("WD-354", "0")] = connection([], "0")
-        self.assertIn("approval-wait: unknown (Linear pagination did not advance)", self.approval_tick())
-        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 1)
-        self.comment_pages[("WD-354", "0")] = connection([])
-        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
-
-    def test_approval_unknown_when_integrate_not_probed(self):
-        self.approval_fixture()
-        state = json.loads(self.state.read_text())
-        state["lanes"]["integrate"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
-        self.write(self.state, state)
-        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
-        self.assertFalse(any(json.loads(r.data)["variables"].get("state") == "Approved" for r in self.requests))
-        self.assertFalse(any(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests))
-        self.baseline()
-        self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)
-        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
-        self.linear_error = None
-        self.baseline()
-        self.env.unlink()
-        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
-        self.assertEqual(self.requests, [])
-
-    def test_approval_status_missing_invalid_and_sorted(self):
-        row = self.approval_fixture()
-        row["comments"]["nodes"][0]["createdAt"] = "not-a-date"
-        self.assertEqual(g.approval_status([row], NOW), ["approval-wait: ok (1 approved)"])
-        row["comments"] = {"nodes": []}
-        self.baseline()
-        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
-        self.assertFalse(any(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests))
-        first = copy.deepcopy(self.approval_fixture(30, identifier="WD-2"))
-        second = copy.deepcopy(self.approval_fixture(72, identifier="WD-1"))
-        down = copy.deepcopy(self.approval_fixture(1, "LANDING PROOF PACK\nlane unavailable", "WD-3"))
-        rows = [down, first, second]
-        before = copy.deepcopy(rows)
-        self.assertEqual(g.approval_status(rows, NOW), ["approval-stale: WD-1=3d,WD-2=30h", "approval-lane-down: WD-3=1h"])
-        self.assertEqual(rows, before)
-        self.assertEqual(g.approval_status([], NOW), ["approval-wait: ok (0 approved)"])
-
-    def test_approval_dry_run_and_job_map_boundaries(self):
-        self.approval_fixture()
-        before = {p: p.read_bytes() for p in (self.env, self.jobs, self.state)}
-        self.assertIn("approval-stale: WD-354=30h", self.approval_tick("--dry-run"))
-        self.spawn.assert_not_called()
-        for path, contents in before.items():
-            self.assertEqual(path.read_bytes(), contents)
-        self.assertNotIn("approval-", self.approval_tick("--job-map", json.dumps({"build": ["Todo", "x"]})))
-        out = self.approval_tick("--job-map", json.dumps({"integrate": ["Approved", "x", "../bad"]}))
-        self.assertIn("approval-wait: unknown (integrate lane not probed)", out)
-        self.assertEqual(self.requests, [])
-        self.baseline()
-        with patch.object(g, "lane_issues", side_effect=OSError(LINEAR)):
-            self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
-        self.write(self.state, {})
-        with patch.object(g, "dispatch", side_effect=RuntimeError(LINEAR)):
-            self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
-
-    def test_approval_status_leaks_nothing(self):
-        self.approval_fixture(72, "MERGE PROOF PACK\nR3A-BODY-SENTINEL " + LINEAR + SLACK + "\nlane unavailable")
-        self.approval_tick()
-        artifacts = "".join(self.output) + self.state.read_text()
-        for log in (self.root / "cron/gatekeeper-logs").glob("*.log"):
-            artifacts += log.read_text()
-        for value in ("R3A-BODY-SENTINEL", LINEAR, SLACK):
-            self.assertNotIn(value, artifacts)
-
-    def test_approval_state_and_dispatch_equal_main(self):
-        # Execute actual remote-main code against the same synthetic inputs.
-        with patch.object(subprocess, "Popen", REAL_POPEN):
-            source = subprocess.check_output(["git", "show", "origin/main:deploy/factory-gatekeeper.py"],
-                                             cwd=Path(__file__).resolve().parents[2], encoding="utf-8", timeout=10)
-        path = self.root / "gk-main.py"
-        path.write_text(source, encoding="utf-8")
-        spec = importlib.util.spec_from_file_location("gk_main_581", path)
-        base = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(base)
-        for mode in ("stale", "down", "paging", "paging-failure", "slack", "inflight", "401", "changed"):
-            with self.subTest(mode=mode):
-                row = self.approval_fixture()
-                self.linear_error = None
-                if mode == "down":
-                    row["comments"]["nodes"][0]["body"] += "\nlane unavailable"
-                if mode in ("paging", "paging-failure"):
-                    pack = row["comments"]["nodes"][0]
-                    row["comments"] = connection([comment("SWEPT: churn")], "older")
-                    self.comment_pages[("WD-354", "older")] = (connection([pack]) if mode == "paging"
-                                                               else urllib.error.URLError(LINEAR))
-                if mode == "slack":
-                    row["comments"]["nodes"] = [proof()]
-                self.baseline()
-                if mode == "inflight":
-                    state = json.loads(self.state.read_text())
-                    state["lanes"]["integrate"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
-                    self.write(self.state, state)
-                if mode == "401":
-                    self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)
-                if mode == "changed":
-                    row["description"] = "new scope"
-                base_state = self.root / "main-state.json"
-                base_state.write_bytes(self.state.read_bytes())
-                current_out = self.tick()
-                current_argv = [c.args for c in self.spawn.call_args_list]
-                current_slack = [r.full_url for r in self.requests if "slack.com" in r.full_url]
-                current_data = json.loads(self.state.read_text())
-                args = [str(base_state) if a == str(self.state) else a for a in self.args]
-                stdout = io.StringIO()
-                self.requests.clear()
-                self.spawn.reset_mock()
-                with patch.object(base, "hermes_home", return_value=str(self.root)), \
-                        patch.object(base, "now_utc", return_value=NOW), \
-                        patch.object(base.sys, "argv", args), contextlib.redirect_stdout(stdout):
-                    self.assertEqual(base.main(), 0)
-                self.assertEqual(current_data, json.loads(base_state.read_text()))
-                self.assertEqual(current_out.split("; approval-")[0], stdout.getvalue().strip())
-                self.assertEqual(current_argv, [c.args for c in self.spawn.call_args_list])
-                self.assertEqual(current_slack, [r.full_url for r in self.requests if "slack.com" in r.full_url])
 
     @staticmethod
     def crm_issue(identifier="WD-CRM"):
@@ -992,10 +914,535 @@ class GatekeeperTests(unittest.TestCase):
         row["labels"]["nodes"].append({"name": "prefix WOLFTAC crm V2 suffix"})
         self.assertTrue(g.lane_matches(row, "Wolftac CRM v2"))
 
+    def approval_fixture(self, hours=30, body="MERGE PROOF PACK", identifier="WD-354"):
+        row = issue(identifier, "Approved")
+        row["comments"] = connection([comment(body, (NOW - timedelta(hours=hours)).isoformat())])
+        self.issues["Approved"] = [row]
+        self.baseline()
+        return row
+
+    def approval_tick(self, *extra):
+        result = self.tick("--no-discord", *extra)
+        for request in self.requests:
+            self.assertEqual(request.full_url, "https://api.linear.app/graphql")
+            self.assertNotIn("mutation", json.loads(request.data)["query"].lower())
+        self.assertEqual(self.reader_calls, [])
+        return result
+
+    def test_approval_stale_ages(self):
+        for hours, segment in [(360, "approval-stale: WD-354=15d"),
+                               (30, "approval-stale: WD-354=30h"),
+                               (23, "approval-wait: ok (1 approved)"),
+                               (24, "approval-wait: ok (1 approved)"),
+                               (48, "approval-stale: WD-354=2d")]:
+            with self.subTest(hours=hours):
+                self.approval_fixture(hours)
+                out = self.approval_tick()
+                self.assertIn(segment, out)
+                if hours <= 24:
+                    self.assertNotIn("approval-stale:", out)
+                self.spawn.assert_not_called()
+
+    def test_approval_lane_down_disclosure(self):
+        for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"):
+            for hours, age in ((1, "1h"), (72, "3d")):
+                self.approval_fixture(hours, marker + "\nSlack LaNe\nUNAVAILABLE this pack", "WD-1")
+                out = self.approval_tick()
+                self.assertIn("approval-lane-down: WD-1=" + age, out)
+                self.assertNotIn("approval-stale:", out)
+        for disclosure in ("not delivered: operator step pending", "NOT  DELIVERED:\n operator STEP pending"):
+            self.approval_fixture(1, "MERGE PROOF PACK\n**Discord approval request:** " + disclosure, "WD-1")
+            self.assertIn("approval-lane-down: WD-1=1h", self.approval_tick())
+        row = self.approval_fixture(1, "LANDING PROOF PACK", "WD-1")
+        row["comments"]["nodes"].append(comment("MERGE PROOF PACK\nlane unavailable", (NOW - timedelta(days=3)).isoformat()))
+        self.baseline()
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+
+    def test_approval_pack_beyond_newest_50(self):
+        row = self.approval_fixture()
+        pack = row["comments"]["nodes"][0]
+        row["comments"] = connection([comment("SWEPT: churn") for _ in range(50)], "older")
+        self.comment_pages[("WD-354", "older")] = connection([pack], "unused")
+        self.baseline()
+        original = copy.deepcopy(row)
+        out = self.approval_tick()
+        self.assertIn("approval-stale: WD-354=30h", out)
+        self.assertEqual(row, original)
+        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 1)
+        success_lines, success_spawns = out.split("; approval-")[0], self.spawn.call_count
+        for error in (urllib.error.URLError(LINEAR),
+                      urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)):
+            self.comment_pages[("WD-354", "older")] = error
+            self.baseline()
+            out = self.approval_tick()
+            self.assertIn("approval-wait: unknown (" + type(error).__name__ + ")", out)
+            self.assertEqual(out.split("; approval-")[0], success_lines)
+            self.assertEqual(self.spawn.call_count, success_spawns)
+            self.assertNotIn(LINEAR, out)
+        row["comments"] = connection([], "0")
+        self.comment_pages = {("WD-354", str(n)): connection([comment()], str(n + 1)) for n in range(10)}
+        self.baseline()
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 10)
+        self.comment_pages[("WD-354", "0")] = connection([], "0")
+        self.assertIn("approval-wait: unknown (Linear pagination did not advance)", self.approval_tick())
+        self.assertEqual(sum(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests), 1)
+        self.comment_pages[("WD-354", "0")] = connection([])
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+
+    def test_approval_unknown_when_integrate_not_probed(self):
+        self.approval_fixture()
+        state = json.loads(self.state.read_text())
+        state["lanes"]["integrate"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        self.write(self.state, state)
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.assertFalse(any(json.loads(r.data)["variables"].get("state") == "Approved" for r in self.requests))
+        self.assertFalse(any(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests))
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.linear_error = None
+        self.baseline()
+        self.env.unlink()
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.assertEqual(self.requests, [])
+
+    def test_approval_status_missing_invalid_and_sorted(self):
+        row = self.approval_fixture()
+        row["comments"]["nodes"][0]["createdAt"] = "not-a-date"
+        self.assertEqual(g.approval_status([row], NOW), ["approval-wait: ok (1 approved)"])
+        row["comments"] = {"nodes": []}
+        self.baseline()
+        self.assertIn("approval-wait: ok (1 approved)", self.approval_tick())
+        self.assertFalse(any(json.loads(r.data)["query"] == g.COMMENTS_QUERY for r in self.requests))
+        first = copy.deepcopy(self.approval_fixture(30, identifier="WD-2"))
+        second = copy.deepcopy(self.approval_fixture(72, identifier="WD-1"))
+        down = copy.deepcopy(self.approval_fixture(1, "LANDING PROOF PACK\nlane unavailable", "WD-3"))
+        rows = [down, first, second]
+        before = copy.deepcopy(rows)
+        self.assertEqual(g.approval_status(rows, NOW), ["approval-stale: WD-1=3d,WD-2=30h", "approval-lane-down: WD-3=1h"])
+        self.assertEqual(rows, before)
+        self.assertEqual(g.approval_status([], NOW), ["approval-wait: ok (0 approved)"])
+
+    def test_approval_dry_run_and_job_map_boundaries(self):
+        self.approval_fixture()
+        before = {p: p.read_bytes() for p in (self.env, self.jobs, self.state)}
+        self.assertIn("approval-stale: WD-354=30h", self.approval_tick("--dry-run"))
+        self.spawn.assert_not_called()
+        for path, contents in before.items():
+            self.assertEqual(path.read_bytes(), contents)
+        self.assertNotIn("approval-", self.approval_tick("--job-map", json.dumps({"build": ["Todo", "x"]})))
+        out = self.approval_tick("--job-map", json.dumps({"integrate": ["Approved", "x", "../bad"]}))
+        self.assertIn("approval-wait: unknown (integrate lane not probed)", out)
+        self.assertEqual(self.requests, [])
+        self.baseline()
+        with patch.object(g, "lane_issues", side_effect=OSError(LINEAR)):
+            self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+        self.write(self.state, {})
+        with patch.object(g, "dispatch", side_effect=RuntimeError(LINEAR)):
+            self.assertIn("approval-wait: unknown (integrate lane not probed)", self.approval_tick())
+
+    def test_approval_status_leaks_nothing(self):
+        self.approval_fixture(72, "MERGE PROOF PACK\nR3A-BODY-SENTINEL " + LINEAR + DISCORD + "\nlane unavailable")
+        self.approval_tick()
+        artifacts = "".join(self.output) + self.state.read_text()
+        for log in (self.root / "cron/gatekeeper-logs").glob("*.log"):
+            artifacts += log.read_text()
+        for value in ("R3A-BODY-SENTINEL", LINEAR, DISCORD):
+            self.assertNotIn(value, artifacts)
+
+    def test_approval_state_and_dispatch_equal_main(self):
+        # Execute actual remote-main code against the same synthetic inputs.
+        with patch.object(subprocess, "Popen", REAL_POPEN):
+            source = subprocess.check_output(["git", "show", "origin/main:deploy/factory-gatekeeper.py"],
+                                             cwd=Path(__file__).resolve().parents[2], encoding="utf-8", timeout=10)
+        path = self.root / "gk-main.py"
+        path.write_text(source, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("gk_main_581", path)
+        base = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(base)
+        for mode in ("stale", "down", "paging", "paging-failure", "discord", "inflight", "401", "changed"):
+            with self.subTest(mode=mode):
+                row = self.approval_fixture()
+                self.linear_error = None
+                if mode == "down":
+                    row["comments"]["nodes"][0]["body"] += "\nlane unavailable"
+                if mode in ("paging", "paging-failure"):
+                    pack = row["comments"]["nodes"][0]
+                    row["comments"] = connection([comment("SWEPT: churn")], "older")
+                    self.comment_pages[("WD-354", "older")] = (connection([pack]) if mode == "paging"
+                                                               else urllib.error.URLError(LINEAR))
+                if mode == "discord":
+                    row["comments"]["nodes"] = [proof()]
+                self.baseline()
+                if mode == "inflight":
+                    state = json.loads(self.state.read_text())
+                    state["lanes"]["integrate"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+                    self.write(self.state, state)
+                if mode == "401":
+                    self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)
+                if mode == "changed":
+                    row["description"] = "new scope"
+                base_state = self.root / "main-state.json"
+                base_state.write_bytes(self.state.read_bytes())
+                current_out = self.tick()
+                current_argv = [c.args for c in self.spawn.call_args_list]
+                current_reader = copy.deepcopy(self.reader_calls)
+                current_data = json.loads(self.state.read_text())
+                args = [str(base_state) if a == str(self.state) else a for a in self.args]
+                stdout = io.StringIO()
+                self.requests.clear()
+                self.reader_calls.clear()
+                self.spawn.reset_mock()
+                with patch.object(base, "hermes_home", return_value=str(self.root)), \
+                        patch.object(base, "now_utc", return_value=NOW), \
+                        patch.object(base, "run_reader", side_effect=self.reader), \
+                        patch.object(base.sys, "argv", args), contextlib.redirect_stdout(stdout):
+                    self.assertEqual(base.main(), 0)
+                self.assertEqual(current_data, json.loads(base_state.read_text()))
+                self.assertEqual(current_out.split("; approval-")[0], stdout.getvalue().strip())
+                self.assertEqual(current_argv, [c.args for c in self.spawn.call_args_list])
+                self.assertEqual(current_reader, self.reader_calls)
+
     def test_bad_profile_in_job_map_is_a_lane_error(self):
         out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
         self.assertIn("build: LANE-ERROR (", out)
         self.spawn.assert_not_called()
+
+    # WD-620: additions only; existing tests and harness above stay unchanged.
+    def ready(self, crm=True, identifier="WD-615"):
+        row = GatekeeperTests.crm_issue(identifier) if crm else issue(identifier)
+        row["updatedAt"] = (NOW - timedelta(hours=2)).isoformat()
+        row["inverseRelations"]["nodes"][0]["issue"]["state"]["type"] = "completed"
+        return row
+
+    def prepare(self, minutes=16, two=False):
+        self.write(self.jobs, {"jobs": [{"id": pair[1], "last_run_at": "2026-09-19T10:00:00Z"}
+                                       for pair in g.DEFAULT_JOB_MAP.values()]})
+        self.issues["Todo"] = [self.ready()]
+        if two:
+            self.issues["Todo"].append(self.ready(False, "WD-620"))
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        state["last_dispatch_at"] = {lane: (NOW - timedelta(minutes=minutes)).isoformat()
+                                     for lane in ("build", "build-crm")}
+        self.write(self.state, state)
+
+    def status(self, value):
+        jobs = json.loads(self.jobs.read_text())
+        jobs["jobs"][0]["last_status"] = value
+        self.write(self.jobs, jobs)
+
+    def test_stale_boundary_and_repeat_guard(self):
+        for minutes, expected in ((14, False), (15, True), (16, True)):
+            with self.subTest(minutes=minutes):
+                self.prepare(minutes)
+                out = self.tick()
+                self.assertEqual("stale-eligible" in out, expected)
+                self.assertEqual(self.spawn.call_count, int(expected))
+                if expected:
+                    self.assertIn("build-crm: stale-eligible (1 ready, oldest WD-615 waiting 120m) -> dispatched(pid=1234)", out)
+                    state = json.loads(self.state.read_text())
+                    self.assertEqual(state["last_dispatch_at"]["build-crm"], NOW.isoformat())
+                    self.assertIn("build-crm: in-flight (skip)", self.tick())
+                    self.spawn.assert_not_called()
+                    self.confirm()
+                    with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=14)):
+                        self.assertIn("build-crm: unchanged (skip)", self.tick())
+                        self.spawn.assert_not_called()
+                    with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=15)):
+                        self.assertIn("build-crm: stale-eligible", self.tick())
+                        self.spawn.assert_called_once()
+
+    def test_budget_skips_two_hours_only_stale_eligible_dispatches(self):
+        # Confirm fake worker completion; no worker or live Linear is invoked.
+        # Probe between 15-minute ticks too, so a comment-triggered launch
+        # cannot hide behind a coincident stale-eligible deadline.
+        self.prepare(minutes=0)
+        row = self.issues["Todo"][0]
+        baseline = g.lane_fingerprint([row])
+        launches = []
+        for minutes in range(0, 121):
+            at = NOW + timedelta(minutes=minutes)
+            if minutes % 15 == 1:
+                row["comments"]["nodes"].append(comment(
+                    f"BUILD SKIPPED: completion budget (files={29 + minutes}, checks=6, reserve=20%)",
+                    at.isoformat()))
+                row["updatedAt"] = at.isoformat()
+            jobs = json.loads(self.jobs.read_text())
+            for job in jobs["jobs"]:
+                job["last_run_at"] = at.isoformat()
+            self.write(self.jobs, jobs)
+            with patch.object(g, "now_utc", return_value=at):
+                output = self.tick()
+            self.assertEqual(baseline, g.lane_fingerprint([row]))
+            self.assertNotIn("changed ->", output)
+            expected = minutes > 0 and minutes % 15 == 0
+            self.assertEqual(self.spawn.call_count, int(expected), output)
+            if expected:
+                self.assertIn("build-crm: stale-eligible", output)
+                launches.append(minutes)
+        self.assertEqual(launches, list(range(15, 121, 15)))
+
+    def test_legacy_state_uses_oldest_update_and_not_priority(self):
+        self.prepare()
+        newer = self.ready(identifier="WD-999")
+        newer.update(updatedAt=(NOW - timedelta(minutes=14)).isoformat(), priority=1)
+        self.issues["Todo"].append(newer)
+        self.baseline()
+        self.assertIn("2 ready, oldest WD-615 waiting 120m", self.tick())
+        self.issues["Todo"] = [newer]
+        self.baseline()
+        self.assertIn("build-crm: unchanged (skip)", self.tick())
+        self.spawn.assert_not_called()
+        newer["updatedAt"] = "invalid"
+        self.assertIn("unchanged (skip)", self.tick())
+
+    def test_blocker_state_types_and_park_decisions(self):
+        self.prepare()
+        row = self.issues["Todo"][0]
+        for state_type, eligible in (("completed", True), ("canceled", True),
+                                     ("started", False), ("unstarted", False), (None, False)):
+            row["inverseRelations"]["nodes"][0]["issue"]["state"].update(name="custom", type=state_type)
+            self.assertEqual(g.build_eligible(row), eligible)
+        row["inverseRelations"]["nodes"] = []
+        review = comment("**REVIEW REPORT — NEEDS HUMAN**")
+        row["comments"]["nodes"] = [review]
+        row["assignee"] = None
+        self.assertFalse(g.build_eligible(row))
+        decision: dict = comment("decision", "2026-09-19T13:00:00Z")
+        decision["user"] = {"id": "bot"}
+        row["comments"]["nodes"].append(decision)
+        self.assertFalse(g.build_eligible(row))
+        decision["user"]["id"] = g.PARK_OWNER_ID
+        self.assertTrue(g.build_eligible(row))
+        row["assignee"] = {"id": g.PARK_OWNER_ID}
+        self.assertFalse(g.build_eligible(row))
+        row["comments"]["nodes"].append(comment("REVIEW REPORT — FAIL", "2026-09-19T14:00:00Z"))
+        self.assertTrue(g.build_eligible(row))
+        row["comments"]["nodes"].append(comment("BLOCKED: decision needed", "2026-09-19T15:00:00Z"))
+        self.assertFalse(g.build_eligible(row))
+
+    def test_decision_record_clears_park_only_with_link_own_issue_and_unassignment(self):
+        # WD-638. Synthetic ids and links only; the record's shape is checked, not its truth.
+        link = "https://discord.com/channels/111111111111111111/222222222222222222/333333333333333333"
+        recorder = "synthetic-recorder"
+        self.assertNotEqual(recorder, g.PARK_OWNER_ID)
+
+        def record(identifier="WD-615", evidence=link, created="2026-09-19T13:00:00Z",
+                   header="**DECISION RECORD — {}**"):
+            row = comment("**Agent:** Synthetic / fixture (Logan)\n\n"
+                          + header.format(identifier) + "\n"
+                          "- **Decision asked:** [SCOPE-CONFLICT] Decide synthetic option A or B\n"
+                          "- **Jonathan's answer:** synthetic option A\n"
+                          f"- **Discord message:** {evidence}\n"
+                          "- **Recorded by:** Logan. This is an agent's record.", created)
+            row["user"] = {"id": recorder}
+            return row
+
+        def parked(*later, assignee=None):
+            row = self.ready()
+            self.assertEqual(row["identifier"], "WD-615")
+            row["assignee"] = assignee
+            row["comments"]["nodes"] = [comment("**REVIEW REPORT — NEEDS HUMAN**"), *later]
+            return row
+
+        # AC-1: a valid newer record by someone other than the park owner clears the park.
+        self.assertFalse(g.build_eligible(parked()))
+        self.assertTrue(g.build_eligible(parked(record())))
+        for header in ("DECISION RECORD - {}", "## DECISION RECORD — {}", "- **DECISION RECORD — {}**",
+                       "  ### - **DECISION RECORD - {}"):
+            with self.subTest(header=header):
+                self.assertTrue(g.build_eligible(parked(record(header=header))))
+        # AC-2: no Discord message link, another issue's identifier, or older than the report.
+        for label, kwargs in (
+            ("no link", {"evidence": "answered in the exec thread"}),
+            ("other issue", {"identifier": "WD-616"}),
+            ("identifier prefix", {"identifier": "WD-61"}),
+            ("identifier extension", {"identifier": "WD-6150"}),
+            ("older than report", {"created": "2026-09-19T11:00:00Z"}),
+            ("same instant as report", {"created": "2026-09-19T12:00:00Z"}),
+        ):
+            with self.subTest(case=label):
+                self.assertFalse(g.build_eligible(parked(record(**kwargs))))
+        # Malformed links and loose mentions are not records; doubtful cases stay parked.
+        for evidence in (
+            "https://discord.com/channels/1111111111111111/222222222222222222/333333333333333333",
+            "https://discord.com/channels/111111111111111111/222222222222222222/333333333333333333333",
+            "https://discord.com/channels/111111111111111111/222222222222222222",
+            "http://discord.com/channels/111111111111111111/222222222222222222/333333333333333333",
+            "https://discordapp.com/channels/111111111111111111/222222222222222222/333333333333333333",
+            "https://discord.com/channels/@me/222222222222222222/333333333333333333",
+        ):
+            with self.subTest(evidence=evidence):
+                self.assertFalse(g.build_eligible(parked(record(evidence=evidence))))
+        mention = comment(f"I will post DECISION RECORD — WD-615 later, see {link}", "2026-09-19T13:00:00Z")
+        mention["user"] = {"id": recorder}
+        self.assertFalse(g.build_eligible(parked(mention)))
+        for body in (None, "", link):
+            empty = comment(body, "2026-09-19T13:00:00Z")
+            empty["user"] = {"id": recorder}
+            with self.subTest(body=body):
+                self.assertFalse(g.build_eligible(parked(empty)))
+        self.assertFalse(g.is_decision_record(record()["body"], None))
+        # AC-3: a valid newer record does not clear the park while Jonathan is still assigned.
+        self.assertFalse(g.build_eligible(parked(record(), assignee={"id": g.PARK_OWNER_ID})))
+        # AC-4: the older form still clears it: no record, unassigned, newer park-owner comment.
+        owner = comment("decision", "2026-09-19T13:00:00Z")
+        owner["user"] = {"id": g.PARK_OWNER_ID}
+        self.assertTrue(g.build_eligible(parked(owner)))
+        # A newer NEEDS HUMAN report parks the issue again until a newer record arrives.
+        again = comment("REVIEW REPORT — NEEDS HUMAN", "2026-09-19T14:00:00Z")
+        self.assertFalse(g.build_eligible(parked(record(), again)))
+        self.assertTrue(g.build_eligible(parked(record(), again, record(created="2026-09-19T15:00:00Z"))))
+        # The helper is pure and order-independent, and is true when nothing is parked.
+        row = parked(record())
+        before = copy.deepcopy(row)
+        self.assertTrue(g.park_cleared(row, list(reversed(row["comments"]["nodes"]))))
+        self.assertEqual(row, before)
+        self.assertFalse(g.park_cleared(row, row["comments"]["nodes"][:1]))
+        self.assertTrue(g.park_cleared(row, []))
+        self.assertTrue(g.park_cleared(row, [comment("REVIEW REPORT — NEEDS HUMAN", "2026-09-19T11:00:00Z"),
+                                              comment("REVIEW REPORT — FAIL")]))
+        del row["identifier"]
+        self.assertFalse(g.park_cleared(row, row["comments"]["nodes"]))
+
+    def test_review_mentions_are_not_verdicts_and_paging_errors_are_safe(self):
+        row = self.ready()
+        row["comments"]["nodes"] = [comment("REVIEW REPORT — NEEDS HUMAN")]
+        row["comments"]["nodes"].append(comment("I mentioned REVIEW REPORT — FAIL, not a new verdict", "2026-09-19T13:00:00Z"))
+        self.assertFalse(g.build_eligible(row))
+        row["comments"] = connection([comment("recent")], "repeat")
+        pages = [{"issues": connection([row])}, {"issue": {"comments": connection([], "repeat")}}]
+        with patch.object(g, "linear_query", side_effect=pages):
+            with self.assertRaises(g.ProbeError):
+                g.lane_issues(LINEAR, "Todo")
+
+    def test_pending_recovery_never_overrides_401(self):
+        self.prepare(16, two=True)
+        state = json.loads(self.state.read_text())
+        state["degraded_since"] = NOW.isoformat()
+        state["recovery_pending"] = ["build", "build-crm"]
+        self.write(self.state, state)
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, Message(), None)
+        out = self.tick()
+        self.assertNotIn("stale-eligible", out)
+        self.assertNotIn("recovered after", out)
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched", out)
+        self.spawn.assert_called_once()
+        after = json.loads(self.state.read_text())
+        self.assertEqual(after["degraded_since"], state["degraded_since"])
+        self.assertEqual(after["recovery_pending"], state["recovery_pending"])
+
+    def test_recovery_after_fail_open_and_worker_errors(self):
+        for failure in ("fail-open", "error", "interrupted"):
+            with self.subTest(failure=failure):
+                self.prepare(1, two=True)
+                if failure == "fail-open":
+                    self.linear_error = TimeoutError("synthetic")
+                else:
+                    self.status(failure)
+                self.tick()
+                self.assertEqual(json.loads(self.state.read_text())["degraded_since"], NOW.isoformat())
+                self.linear_error = None
+                self.status("ok")
+                self.confirm()
+                out = self.tick()
+                self.assertEqual(out.count("recovered after degraded period -> dispatched(pid=1234)"), 2)
+                self.assertEqual(self.spawn.call_count, 2)
+                state = json.loads(self.state.read_text())
+                self.assertNotIn("degraded_since", state)
+                self.assertEqual(state["recovery_pending"], [])
+                # Complete these launches and prove normal rules resume.
+                with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=1)):
+                    jobs = json.loads(self.jobs.read_text())
+                    for job in jobs["jobs"]:
+                        job["last_run_at"] = (NOW + timedelta(seconds=30)).isoformat()
+                    self.write(self.jobs, jobs)
+                    out = self.tick()
+                    self.assertNotIn("recovered after", out)
+                    self.spawn.assert_not_called()
+
+    def test_recovery_keeps_guard_and_retries_failed_launch(self):
+        self.prepare(1, two=True)
+        state = json.loads(self.state.read_text())
+        state["degraded_since"] = (NOW - timedelta(hours=1)).isoformat()
+        state["lanes"]["build"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        self.write(self.state, state)
+        self.spawn.side_effect = OSError("synthetic")
+        out = self.tick()
+        self.assertIn("build: in-flight (skip)", out)
+        self.assertIn("recovered after degraded period -> dispatch-failed", out)
+        self.assertEqual(json.loads(self.state.read_text())["recovery_pending"], ["build", "build-crm"])
+        self.spawn.side_effect = None
+        self.confirm()
+        self.assertEqual(self.tick().count("recovered after degraded period -> dispatched"), 2)
+
+    def test_no_ready_work_for_two_hours(self):
+        for mode in ("empty", "blocked", "parked"):
+            with self.subTest(mode=mode):
+                self.prepare()
+                if mode == "empty":
+                    self.issues["Todo"] = []
+                elif mode == "blocked":
+                    self.issues["Todo"][0]["inverseRelations"]["nodes"][0]["issue"]["state"]["type"] = "started"
+                else:
+                    self.issues["Todo"][0]["comments"]["nodes"] = [comment("REVIEW REPORT — NEEDS HUMAN")]
+                self.baseline()
+                state = json.loads(self.state.read_text())
+                state["degraded_since"] = NOW.isoformat()
+                self.write(self.state, state)
+                for minutes in range(0, 121, 15):
+                    with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=minutes)):
+                        out = self.tick()
+                        self.assertNotIn("stale-eligible", out)
+                        self.assertNotIn("recovered after", out)
+                        self.spawn.assert_not_called()
+
+    def test_new_rules_dry_run_and_failed_dispatch_are_non_consuming(self):
+        self.prepare()
+        for recovery in (False, True):
+            state = json.loads(self.state.read_text())
+            if recovery:
+                state["degraded_since"] = NOW.isoformat()
+                self.write(self.state, state)
+            before = self.state.read_bytes()
+            out = self.tick("--dry-run")
+            self.assertIn("dispatched(dry-run)", out)
+            self.assertEqual(self.state.read_bytes(), before)
+            self.spawn.assert_not_called()
+        self.prepare()
+        before = json.loads(self.state.read_text())["last_dispatch_at"]
+        self.spawn.side_effect = OSError("synthetic")
+        self.assertIn("stale-eligible", self.tick())
+        self.assertEqual(json.loads(self.state.read_text())["last_dispatch_at"], before)
+
+    def test_older_park_comments_paged_without_changing_fingerprint(self):
+        row = self.ready()
+        row["comments"] = connection([comment("recent")], "c1")
+        older = comment("REVIEW REPORT — NEEDS HUMAN", "2026-09-18T12:00:00Z")
+        before = g.lane_fingerprint([row])
+        pages = [{"issues": connection([row])}, {"issue": {"comments": connection([older])}}]
+        with patch.object(g, "linear_query", side_effect=pages) as query:
+            rows = g.lane_issues(LINEAR, "Todo")
+        self.assertEqual(query.call_count, 2)
+        self.assertFalse(g.build_eligible(rows[0]))
+        self.assertEqual(g.lane_fingerprint(rows), before)
+
+    def test_recovery_does_not_change_review_integrate_eligibility(self):
+        self.prepare(1)
+        self.issues["Todo"] = []
+        self.issues["In Review"] = [issue(state="In Review")]
+        self.issues["Approved"] = [issue(state="Approved")]
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        state["degraded_since"] = NOW.isoformat()
+        self.write(self.state, state)
+        out = self.tick()
+        for lane in ("review", "integrate"):
+            self.assertIn(f"{lane}: recovered after degraded period -> dispatched", out)
+        self.assertEqual(self.spawn.call_count, 2)
+        self.assertEqual(json.loads(self.state.read_text())["approval_dispatched"], {})
 
 
 if __name__ == "__main__":

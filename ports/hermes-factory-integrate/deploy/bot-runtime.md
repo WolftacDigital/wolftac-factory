@@ -33,8 +33,10 @@ nothing inherited from the human operator's profile). Root:
 
 All Linear I/O in this runtime goes through GraphQL with the bot token
 (`POST https://api.linear.app/graphql`, `Authorization: Bearer $LINEAR_FACTORY_BOT_TOKEN`).
-Writes are authored by "Wolftac Factory Bot" — the identity split that makes
-human approvals distinguishable. The expected bot id is PINNED inside the
+Writes are authored by "Wolftac Factory Bot". Merge approval is never a Linear
+comment: since WD-546 the only approval is Jonathan's own 🚀 on the Discord
+#approvals request, read by R1 (the read-only `wolftac-approval-read` Hermes
+plugin) and judged by `deploy/discord_approval.py`. The expected bot id is PINNED inside the
 preflight script and is not overridable by flag or environment; rotating the bot
 identity is a reviewed change to that constant.
 
@@ -105,7 +107,7 @@ hermes -p factory-integrate cron create --name "Wolftac Factory Integrate Worker
   --workdir D:\Wolftac\MissionControl \
   --deliver local \
   "every 10m" \
-  "Run one wolftac-integrate tick: FIRST run 'python C:/Users/logan_vwagmmf/AppData/Local/hermes/profiles/factory-integrate/deploy/integrate-preflight.py' and stop immediately on any non-zero exit; otherwise work at most one Approved Factory Queue issue per the skill; merge only on a valid APPROVE MERGE; if nothing is awaiting integration or any precondition fails, exit cleanly."
+  "Run one wolftac-integrate tick: FIRST run 'python C:/Users/logan_vwagmmf/AppData/Local/hermes/profiles/factory-integrate/deploy/integrate-preflight.py' and stop immediately on any non-zero exit; otherwise work at most one Approved Factory Queue issue per the skill; merge only on deploy/discord_approval.py's APPROVED for Jonathan's Discord rocket on the exact request (a typed APPROVE MERGE is never approval); if nothing is awaiting integration or any precondition fails, exit cleanly."
 ```
 
 The prompt's preflight path is the **profile-deployed copy** (shipped by

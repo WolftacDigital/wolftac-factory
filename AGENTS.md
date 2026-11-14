@@ -17,11 +17,10 @@ stages, each with a different agent/model: **spec** turns an idea into a detaile
 testable plan and files it as a Linear issue; **build** picks up specced issues,
 implements them on a branch, and *proves* they work by running the code; **review**
 re-verifies independently and marks passing work Approved; **integrate** rebases the
-approved branch onto the default branch, re-runs the gates, and — only after the
-human's explicit approval (a 🚀 reaction by the configured approver on the newest
-Slack approval message, or the case-insensitive typed `APPROVE MERGE` /
-`APPROVED MERGE` fallback) — merges it and
-marks it Done. Done means merged:
+approved branch onto the default branch, re-runs the gates, posts a proof pack and a
+Discord approval request, and — only after the human's own Discord 🚀 on that exact
+request, verified by `deploy/discord_approval.py` (WD-546) — merges it and marks it
+Done. Done means merged:
 the only stage allowed to set it is integrate, and only after ancestry is verified.
 Any agent on any platform can run any stage — the Linear issue itself carries all
 the context, so a Codex session can build what a Fable session specced, and a Hermes
@@ -36,16 +35,21 @@ session can review what Codex built.
 - **States, in order:** `Todo` (specced, ready to build) → `In Progress` (a build
   session has claimed it) → `In Review` (built, awaiting QA) → `Approved` (review
   passed, awaiting merge) → `Done` (merged to the remote default branch — **only the
-  integrate stage may set this, and only after the human's approval: Jonathan's
-  `:rocket:` reaction on the newest Slack approval message (reactor id must equal
-  `approver_slack_user_id` in `deploy/approval-policy.json`, verified by API read;
-  any other reactor is ignored) or his typed comment starting `APPROVE MERGE` or
-  `APPROVED MERGE`, case-insensitively, as the fallback**). Workers never add
-  reactions to factory notification messages. Every factory Slack post uses
-  `SLACK_FACTORY_BOT_TOKEN` with `chat.postMessage`, selecting `username` and
-  `icon_emoji` from `deploy/approval-policy.json`'s platform/hostname-keyed
-  `sender_identities`, or `fallback_identity` when unmapped; `reactions.get`
-  uses the same bot token, never a human Slack session. A
+  integrate stage may set this, and only after the human's approval**).
+  **DISCORD-APPROVAL-ONLY:** the only approval is Jonathan's own 🚀 on the newest
+  Discord #approvals request for the issue, judged `APPROVED` (exit 0) by
+  `deploy/discord_approval.py verify`, which reads it through R1, the read-only
+  `wolftac-approval-read` Hermes plugin. Any other verdict or a reader error fails
+  closed: nothing merges, and without R1 installed integrate stays request-only.
+  **APPROVAL-BOUND-TO-SHA:** an approval binds one repo, PR, full head SHA, issue and
+  proof pack. A new commit cancels it, and integrate posts a fresh pack and request.
+  **TYPED-APPROVAL-IS-NEVER-APPROVAL:** a typed comment (`APPROVE MERGE`, `APPROVED MERGE`, any wording) is never approval.
+  Slack is retired for the factory: a Slack reaction is never approval, and integrate
+  never posts approval requests to Slack. Integrate sends each request to Discord
+  #approvals as Harper with
+  `hermes -p integrator send --json --to discord:1562236246158221323 --file <body>`;
+  surfaces without that CLI report it as an operator step. Workers never add
+  reactions to factory notification messages. A
   failed review — or a failed rebase/gate at integration — sends the issue back to
   `Todo` with a numbered defect list, which becomes the next build's work order.
 - **Spec template:** every spec follows `canonical/wolftac-spec/spec-template.md`.
@@ -61,15 +65,13 @@ session can review what Codex built.
   through the platform's own Linear toolset (`assignee: me`, verified by
   read-back) and never use the factory bot credentials. Only Integrate acts as
   the dedicated factory bot, through `linear_bot.py` and `delegate`. Humans
-  comment and approve from their own accounts. The integrate stage refuses any
-  typed approval comment (`APPROVE MERGE` or `APPROVED MERGE`,
-  case-insensitively) authored by the same identity it writes with — until the
-  split exists in a workspace, integrate can prepare proof packs but will never
-  merge. Integrate performs ALL of its Linear I/O with the bot credentials
+  comment and approve from their own accounts. Integrate requires an approver id that
+  differs from the identity it writes with — until the split exists in a workspace,
+  integrate can prepare proof packs but will never merge. Integrate performs ALL of
+  its Linear I/O with the bot credentials
   (`LINEAR_FACTORY_BOT_TOKEN`), failing closed when they are missing; see the
-  claim identity split under Shared safeguards. Notification lanes (e.g.
-  Telegram) are notify-only: no relay ever posts an approval on the human's
-  behalf.
+  claim identity split under Shared safeguards. Notification lanes are
+  notify-only: no relay ever posts or adds an approval on the human's behalf.
 - **Every report opens with an identity line:** `**Agent:** <platform / model>`
   (e.g. `Codex / gpt-5.6-sol`, `Hermes / gpt-5.6-sol`, `Claude Code / Opus 4.8`). This is how
   the human (and other agents) can tell who did what. Reviewers should prefer
@@ -99,23 +101,56 @@ Every review finding carries exactly one tag: `[AC-N]`, `[DEFECT]`, `[SECURITY]`
 `[CI]`, or `[SCOPE-CONFLICT]`. `[CI]` means a GitHub check failed and the
 finding names the failing job. `NEEDS HUMAN` is forbidden for ordinary decidable defects:
 decidable defects are `FAIL`; only product decisions park an issue. A parked report
-must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and instruct
-Jonathan to comment his decision, then remove his assignment. Once unassigned, the
-issue re-enters the review queue with his decision comment as part of the work order.
+must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and say how the
+park clears: Logan asks Jonathan in Discord `#exec`, posts the `DECISION RECORD` and
+removes Jonathan's assignment. Once unassigned, the issue re-enters the review queue
+with that record as part of the work order.
 
 Review pickup silently skips an issue whose latest review report is `NEEDS HUMAN`
-while it remains assigned to Jonathan or lacks his later decision comment. Build
+while it remains assigned to Jonathan or no later comment clears the park. Build
 pickup applies the identical test to `Todo` issues. Neither stage comments or changes
 state while skipping parked work.
 
-**Clearing a park is a two-part action, and both parts are required:** Jonathan
-comments his decision *from his own Linear account*, and his assignment is removed.
-Only then does the issue become pickable again, with that comment as part of the work
-order. A decision relayed on Jonathan's behalf by an agent does **not** clear the park
-— the comment author must be Jonathan himself, for the same identity reason integrate
-refuses a bot-authored approval. Relaying a chat decision into Linear as an agent
-records the intent but leaves the issue parked; say so plainly rather than implying
-the issue is unblocked.
+**DECISION-RECORD-UNPARK — clearing a park is a two-part action, and both parts are
+required:** Jonathan's assignment is removed, AND a comment newer than the latest
+`NEEDS HUMAN` report is either a decision record for that issue or a comment Jonathan
+wrote himself in Linear. Jonathan is never asked to comment in Linear. The flow:
+
+1. Logan (or Sloane) opens a thread in Discord `#exec`, mentions Jonathan and asks
+   that one decision, with the options and a recommendation.
+2. Jonathan replies in that thread from his own Discord account. A reaction is not a
+   decision; only his text reply is recorded.
+3. Logan posts one `DECISION RECORD` comment on the Linear issue and removes
+   Jonathan's assignment. Logan is the only recorder.
+   Workers never write a DECISION RECORD.
+4. On the next pickup, review (`In Review`) or build (`Todo`) treats the issue as
+   un-parked and uses the record as part of the work order. The Gatekeeper's timed
+   retries apply the same test (`park_cleared` in `deploy/factory-gatekeeper.py`).
+
+The record format:
+
+```text
+**Agent:** <platform / model> (Logan)
+
+**DECISION RECORD — <ISSUE-ID>**
+- **Decision asked:** <the [SCOPE-CONFLICT] line, verbatim>
+- **Jonathan's answer:** <his Discord reply, verbatim>
+- **Discord message:** https://discord.com/channels/<guild>/<channel-or-thread>/<message>
+- **Recorded by:** Logan. This is an agent's record of Jonathan's Discord decision, not a comment Jonathan wrote.
+```
+
+A comment is a decision record for an issue only when one of its lines starts with
+`DECISION RECORD`, an em dash or hyphen and that issue's own identifier (heading
+marks, a list dash and bold may come first), and its body contains a Discord message
+link of the form
+`https://discord.com/channels/<17-20 digits>/<17-20 digits>/<17-20 digits>`.
+A relay without the Discord message link does NOT clear the park; say so plainly
+rather than implying the issue is unblocked. A record that names another issue, or is
+older than the latest `NEEDS HUMAN` report, does not clear it either. Only the
+record's shape is checked: nothing yet verifies that the linked message exists or who
+wrote it. A `DECISION RECORD` never approves a merge; the Discord 🚀 gate is
+unchanged. The earlier form stays valid and is never requested: a comment Jonathan
+writes himself in Linear, plus removal of his assignment, still clears a park.
 For buildable `Todo` work, issues whose latest review report is `FAIL` form the
 rework tier and are selected before fresh issues; priority
 (`Urgent` > `High` > `Medium` > `Low`) and oldest-first ordering apply within each
@@ -263,11 +298,12 @@ than pretending the model team ran.
   approval artifact.** Build ends at `In Review`; review's passing verdict is
   `Approved`. If you think something is finished, hand it forward — never mark it
   Done yourself from build or review.
-- **Integrate uses the issue PR when one exists.** After the unchanged human approval
-  gate and rebuilt-head gates, run `gh pr merge <n> --merge` for the branch's PR.
-  Never auto-merge. If no PR exists for a pre-PR-era in-flight issue, use the existing
-  direct fast-forward path. After either path, verify the reviewed SHA is an ancestor
-  of the remote default branch before setting `Done`.
+- **Integrate merges only the issue PR, pinned to the reviewed commit.** After the
+  human approval gate and rebuilt-head gates, check the PR (`isCrossRepository` false,
+  same repository, base = default branch, `headRefOid` = reviewed SHA), then run
+  `gh pr merge <n> --merge --match-head-commit <reviewed SHA>`. Never auto-merge. No PR
+  means stop and report; never fall back to a direct push or fast-forward. Then verify the
+  reviewed SHA is an ancestor of the remote default branch before setting `Done`.
 - **If a spec is genuinely wrong or ambiguous**, don't guess on load-bearing
   decisions — post `BLOCKED: <specific question>` and return the issue to `Todo`.
 
@@ -370,7 +406,8 @@ a suggestion.
 ### Claude Desktop
 
 No unattended mode. Desktop is an interactive surface; its build/review/integrate
-skills already refuse work they can't execute (see the reality check above).
+skills already refuse work they can't execute (see "Know your limits" under Claude
+Desktop above).
 
 ## Troubleshooting
 

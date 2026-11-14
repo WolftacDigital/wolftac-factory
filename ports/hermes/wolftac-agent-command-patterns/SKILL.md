@@ -159,6 +159,32 @@ Before declaring success, require:
 If blocked, state what was attempted, the observed failure, what remains safe, and the
 smallest operator decision or prerequisite needed. Do not synthesize plausible output.
 
+## Reviewing a plan or spec: the two failure classes to hunt first
+
+When reviewing someone else's plan, spec, or design (not code), check these before anything
+else. Both are cheap to fix on paper and expensive to fix in production.
+
+**1. Does it reintroduce a silent stall?** A rule whose "waiting" branch posts nothing, or posts
+once and then goes quiet, will stall forever if nobody is watching. For every wait/hold/skip
+branch, demand a named answer to: who notices, and after how long? Verify the claimed clearing
+path exists *today* rather than in principle — "another worker on a different vendor clears it" is
+not a path when only one such worker is configured. Repeated identical comments with no state
+change are this class's signature after the fact; no named alerting owner is its signature before
+it ships. Fixing a stall in one stage while designing an identical stall into the next stage is a
+real and easy mistake.
+
+**2. Are the fail-closed branches fully specified?** Fail-closed paths are where specs go vague.
+If the design dedupes a message to avoid spam, the dedupe key and the exact rendered string must be
+defined for EVERY branch that can emit it, including degenerate ones where a field the template
+interpolates does not exist. An undefined field means two runs render different text, dedupe
+misses, and "post once" becomes a flood. Require explicit literals for the missing-data and
+unknown-value cases.
+
+Also check the blast radius against the stated non-goals: a fail-closed branch often changes
+behavior for cases unrelated to the problem being solved. When a condition cannot prove the thing
+the rule exists to test, prefer proceeding with a visible "unverifiable" note over blocking, unless
+blocking is itself the point.
+
 ## Final reporting
 
 Lead with the outcome, then give only decision-relevant detail:

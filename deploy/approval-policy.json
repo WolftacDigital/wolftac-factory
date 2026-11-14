@@ -1,30 +1,8 @@
 {
-  "slack_channel_id": "C0BKL3LR8RJ",
-  "approver_slack_user_id": "U040Y6QPU49",
-  "sender_identities": {
-    "claude-code": {
-      "username": "Claude",
-      "icon_emoji": ":robot_face:"
-    },
-    "claude-desktop": {
-      "username": "Claude",
-      "icon_emoji": ":robot_face:"
-    },
-    "codex": {
-      "username": "Codex",
-      "icon_emoji": ":zap:"
-    },
-    "hermes@AI-MSI": {
-      "username": "Logan",
-      "icon_emoji": ":wolf:"
-    },
-    "hermes@jon-omen": {
-      "username": "Zeus",
-      "icon_emoji": ":trident:"
-    }
-  },
-  "fallback_identity": {
-    "username": "Wolftac Factory",
-    "icon_emoji": ":factory:"
-  }
+  "discord_guild_id": "923752167293222912",
+  "discord_channel_id": "1562236246158221323",
+  "approver_discord_user_id": "1022999767753691186",
+  "pack_author_discord_user_ids": ["1562178628211449966"],
+  "reader_bot_discord_user_id": "1562178628211449966",
+  "approval_emoji": "🚀"
 }

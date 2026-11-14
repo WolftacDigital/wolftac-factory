@@ -5,9 +5,9 @@
 #
 # Hermetic by construction: a scratch repo, a scratch detached "live" worktree with a
 # real directory junction into it, a scratch cron dir, a stand-in deploy.ps1 whose
-# $JunctionedRoots names that junction, a scratch snapshot root, and -SlackOutbox so
+# $JunctionedRoots names that junction, a scratch snapshot root, and -AlertOutbox so
 # every alert is written to a local file instead of posted. It never touches the real
-# D:\Wolftac\.factory-live, the live cron dir, the real backups root, or Slack.
+# D:\Wolftac\.factory-live, the live cron dir, the real backups root, or Discord.
 [CmdletBinding()]
 param(
     [string]$Repo = (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent),
@@ -25,7 +25,8 @@ function Ok($name, $cond, $detail = '') {
 
 if (Test-Path $Scratch) { Remove-Item -Recurse -Force $Scratch }
 New-Item -ItemType Directory -Force $Scratch | Out-Null
-$env:SLACK_FACTORY_BOT_TOKEN = 'xoxb-scratch-not-a-real-token'
+$expiryFile = Join-Path $Scratch 'expiry-fixture.txt'
+Set-Content -LiteralPath $expiryFile -Value 'LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT=2099-01-01T00:00:00Z'
 $Marker = 'LEARN-MARKER-7f3a'   # planted in edits; must never reach a payload (AC-10)
 
 # ── scratch repo + detached live worktree + junction (test-plan step 1) ──
@@ -94,7 +95,7 @@ function Run([string]$Deploy = $deployScript, [switch]$DryRun) {
   if (Test-Path $outbox) { Remove-Item -Recurse -Force $outbox }
   (Get-Item -LiteralPath $cron\ticker_heartbeat).LastWriteTime = Get-Date
   $a = @('-NoProfile', '-File', $Watchdog, '-CronDir', $cron, '-DeployScript', $Deploy,
-         '-LearnBackupRoot', $backups, '-SlackOutbox', $outbox)
+         '-LearnBackupRoot', $backups, '-AlertOutbox', $outbox, '-EnvFile', $expiryFile)
   if ($DryRun) { $a += '-DryRun' }
   $out = & pwsh @a 2>&1 | Out-String
   $posts = @(if (Test-Path $outbox) { Get-ChildItem $outbox -File | Sort-Object Name | ForEach-Object { Get-Content -Raw $_.FullName } })
@@ -118,7 +119,8 @@ $preBytes = [IO.File]::ReadAllBytes($skill)
 $r = Run
 $lp = LearnPosts $r
 Ok 'AC-2 exactly one /learn post' ($lp.Count -eq 1) "posts=$($r.posts.Count)"
-Ok 'AC-2 post names the file with +2/-0' ($lp.Count -eq 1 -and $lp[0] -match [regex]::Escape('skills/wolftac-review/SKILL.md (+2/-0, modified)')) ($lp -join '||')
+Ok 'AC-2 digest is short; latest file names the file with +2/-0' ($lp.Count -eq 1 -and $lp[0].Length -lt 600 -and
+   (Get-Content (Join-Path $cron 'watchdog-learn-latest.txt') -Raw) -match [regex]::Escape('skills/wolftac-review/SKILL.md (+2/-0, modified)')) ($lp -join '||')
 $snaps = Snapshots
 Ok 'AC-3 one snapshot directory' ($snaps.Count -eq 1) "count=$($snaps.Count)"
 $copy = if ($snaps.Count) { Join-Path $snaps[0].FullName 'skills\wolftac-review\SKILL.md' } else { '' }
@@ -143,11 +145,11 @@ Ok 'AC-5 immediate re-run posts nothing' ((LearnPosts $r).Count -eq 0) ($r.posts
 Ok 'AC-5 immediate re-run makes no new snapshot' ((Snapshots).Count -eq $before) "before=$before after=$((Snapshots).Count)"
 Ok 'AC-5 cooldown is announced' ($r.out -match 'LEARN COOLDOWN')
 $st = Get-Content $statePath -Raw | ConvertFrom-Json
-$st.learn_last_alert_at = (Get-Date).AddHours(-13).ToString('o')
+$st.learn_last_alert_at = (Get-Date).AddHours(-25).ToString('o')
 $st | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath
 $r = Run
 $lp = LearnPosts $r
-Ok 'AC-5 nag fires after 13h' ($lp.Count -eq 1 -and $lp[0] -match 'Still uncommitted after 13h') ($lp -join '||')
+Ok 'AC-5 daily digest fires after 25h' ($lp.Count -eq 1 -and $lp[0].Length -lt 600 -and $lp[0] -match '2 files across 1 worktrees') ($lp -join '||')
 Ok 'AC-5 nag makes no new snapshot (content unchanged)' ((Snapshots).Count -eq $before)
 
 Write-Host '=== AC-6: destruction is survivable ==='
@@ -227,11 +229,41 @@ Write-Host '=== -SkipLearn carries prior state forward ==='
 $st = Get-Content $statePath -Raw | ConvertFrom-Json
 $st.learn_status = 'pending'
 $st | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath
-$out = & pwsh -NoProfile -File $Watchdog -CronDir $cron -DeployScript $deployScript -LearnBackupRoot $backups -SlackOutbox $outbox -SkipLearn 2>&1 | Out-String
+$out = & pwsh -NoProfile -File $Watchdog -CronDir $cron -DeployScript $deployScript -LearnBackupRoot $backups -AlertOutbox $outbox -EnvFile $expiryFile -SkipLearn 2>&1 | Out-String
 Ok '-SkipLearn reports skipped' ($out -match 'LEARN: skipped')
 Ok '-SkipLearn does not assert clean' ((Get-Content $statePath -Raw | ConvertFrom-Json).learn_status -eq 'pending')
 
-Remove-Item Env:\SLACK_FACTORY_BOT_TOKEN -ErrorAction SilentlyContinue
+Write-Host '=== WD-624: bulk /learn daily digest and local list ==='
+Remove-Item $statePath -Force
+1..41 | ForEach-Object { Set-Content (Join-Path $live "bulk-$_.txt") "$Marker content" }
+$r = Run
+$lp = LearnPosts $r
+Ok 'WD-624 41 pending files produce one short message' ($lp.Count -eq 1 -and $lp[0].Length -lt 600 -and $lp[0] -match '41 files across 1 worktrees') ($lp -join '||')
+$latest = Join-Path $cron 'watchdog-learn-latest.txt'
+$full = Get-Content $latest -Raw
+Ok 'WD-624 full latest list, no content' (([regex]::Matches($full, '(?m)^PENDING').Count -eq 41) -and $full -match 'bulk-41.txt' -and $full -notmatch $Marker) $full
+$st = Get-Content $statePath -Raw | ConvertFrom-Json
+$st.learn_last_alert_at = (Get-Date).AddHours(-23).ToString('o')
+$st | ConvertTo-Json -Depth 8 | Set-Content $statePath
+$r = Run
+Ok 'WD-624 23h repeat posts nothing' ((LearnPosts $r).Count -eq 0) $r.out
+$st.learn_last_alert_at = (Get-Date).AddHours(-24).ToString('o')
+$st | ConvertTo-Json -Depth 8 | Set-Content $statePath
+$r = Run
+Ok 'WD-624 24h posts once' ((LearnPosts $r).Count -eq 1) $r.out
+1..41 | ForEach-Object { Remove-Item (Join-Path $live "bulk-$_.txt") }
+$r = Run
+Ok 'WD-624 bulk recovery posts once' ((LearnPosts $r).Count -eq 1 -and (LearnPosts $r)[0] -match 'resolved') $r.out
+$r = Run
+Ok 'WD-624 bulk recovery not repeated' ((LearnPosts $r).Count -eq 0) $r.out
+Remove-Item $latest
+New-Item -ItemType Directory $latest | Out-Null
+$r = Run
+Ok 'WD-624 unwritable learn latest is a read/write finding' ($r.code -eq 1 -and $r.out -match 'digest-learn: cannot write') $r.out
+Remove-Item $latest
+$r = Run
+Ok 'WD-624 learn latest writer recovers' ($r.code -eq 0) $r.out
+
 & git -C $origin worktree remove --force $live 2>$null
 if (Test-Path $Scratch) { Remove-Item -Recurse -Force $Scratch }
 Write-Host ''

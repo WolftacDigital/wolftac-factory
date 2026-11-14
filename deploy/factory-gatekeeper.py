@@ -2,9 +2,9 @@
 """Factory gatekeeper — zero-model-cost change detection for worker lanes.
 
 Runs as a Hermes ``no_agent`` cron script. Fetches each lane's Factory Queue
-issues and dispatches its worker only when the queue fingerprint changes.
-Worker eligibility rules remain in the skills; the two-hour safety net covers
-time-based eligibility and repositories becoming reachable.
+issues and dispatches on queue changes, stale eligible build work, or recovery.
+Workers still own claims and final eligibility; the two-hour safety net covers
+stale claims and repositories becoming reachable.
 
 Design constraints learned the hard way (WD-357, WD-380):
 
@@ -16,20 +16,24 @@ Design constraints learned the hard way (WD-357, WD-380):
   ``confirmed-ran`` or ``no-run-observed``.
 * Record the fingerprint AT DISPATCH, never at confirmation: changes during a
   worker run must remain visible. Keep it outside the popped in-flight marker.
-  Exclude ``updatedAt``, ``delegate`` and ``SWEPT:`` comment churn so silent
+  Exclude ``updatedAt``, ``delegate``, ``SWEPT:`` and ``BUILD SKIPPED:`` churn so silent
   integrate runs settle without duplicating worker skip rules here.
 * Linear/env/probe failures fail OPEN (subject to the in-flight guard), except
   a Linear HTTP 401 anywhere in the tick: skip build/review and dispatch only
   integrate for re-mint. Probe all ready lanes before dispatching any of them.
-  Slack is also an exception: on an otherwise unchanged integrate lane,
-  missing credentials/policy or API failures report ``slack-check-failed`` and
-  do NOT dispatch. The safety net and typed approval comments bound the delay.
+  Discord is also an exception: on an otherwise unchanged integrate lane, an
+  invalid policy or any R1 reader failure reports ``discord-check-failed`` and
+  does NOT dispatch. The two-hour safety net bounds the delay.
 * Tokens come from the .env FILE, never the process environment or argv. Never
   print remote error bodies or exception messages, which may echo credentials.
 * Report approval wait/outage status from the completed integrate probe, without
   changing dispatch or state; older proof-pack paging is bounded and read-only.
+* The gatekeeper never holds a Discord credential. It asks R1, the read-only
+  ``wolftac-approval-read`` Hermes plugin, run as Harper with every DISCORD_*
+  environment name removed (WD-546).
 
-Read-only against Linear and Slack; a rocket dispatches, never approves/merges.
+Read-only against Linear and Discord; a rocket dispatches, never approves/merges.
+Approval itself is decided by integrate through deploy/discord_approval.py.
 Canonical: deploy/factory-gatekeeper.py; installed: scripts/factory_gatekeeper.py
 Wiring and rollback: docs/factory-gatekeeper.md
 """
@@ -59,6 +63,51 @@ DEFAULT_JOB_MAP = {
 LANE_FILTERS = {"build": "agentic", "build-crm": "Wolftac CRM v2"}
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
+STALE_ELIGIBLE_MINUTES = 15
+# The human park owner in the WD workspace. A park clears on a DECISION RECORD
+# for the issue (shape only, WD-638) or on a later comment by this user.
+PARK_OWNER_ID = "40f35e70-06bb-49f5-9260-9b0f7de3124e"
+# Header shapes shared by stage artifacts: optional heading marks, list dash, bold.
+REPORT_HEADER = r"(?m)^\s*(?:#{1,6}\s*)?(?:-\s+)?(?:\*\*)?"
+REVIEW_REPORT = re.compile(
+    REPORT_HEADER + r"REVIEW REPORT\s*[—-]\s*(NEEDS HUMAN|FAIL|PASS)\b"
+)
+DECISION_RECORD = re.compile(REPORT_HEADER + r"DECISION RECORD\s*[—-]\s*([A-Z]+-\d+)\b")
+DISCORD_MESSAGE_LINK = re.compile(
+    r"https://discord\.com/channels/\d{17,20}/\d{17,20}/\d{17,20}(?!\d)"
+)
+AUDIT_INTERVAL_HOURS = 24
+AUDIT_FIRST_WINDOW_DAYS = 7
+AUDIT_GRACE_MINUTES = 60
+AUDIT_OVERDUE_HOURS = 48
+
+AUDIT_QUERY = """
+query($after: String, $from: DateTimeOrDuration!, $to: DateTimeOrDuration!) {
+  issues(first: 50, after: $after, filter: {
+    team: { key: { eq: "WD" } }
+    labels: { name: { eq: "Factory Queue" } }
+    state: { name: { eq: "Done" } }
+    completedAt: { gte: $from, lt: $to }
+  }) {
+    nodes { identifier completedAt comments(first: 100) {
+      nodes { body } pageInfo { hasNextPage endCursor }
+    } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+AUDIT_COMMENTS_QUERY = """
+query($id: String!, $after: String) {
+  issue(id: $id) {
+    comments(first: 100, after: $after) {
+      nodes { body } pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+INTEGRATION_REPORT = re.compile(
+    r"\A\s*(?:(?:- )?\*\*Agent:\*\*[^\n]*\n\s*)?(?:#{1,6}\s*)?\**\s*INTEGRATION REPORT\b"
+)
 
 # Live-verified direction: inverseRelations(type=blocks).issue is the blocker;
 # relations(type=blocks).relatedIssue is an issue WE block, not our blocker.
@@ -71,13 +120,14 @@ query($state: String!, $after: String) {
   }) {
     nodes {
       identifier state { name } assignee { id } project { name }
-      priority description
+      priority description updatedAt
       labels { nodes { name } pageInfo { hasNextPage endCursor } }
       comments(first: 50, orderBy: createdAt) {
-        nodes { id createdAt body } pageInfo { hasNextPage endCursor }
+        nodes { id createdAt body user { id } }
+        pageInfo { hasNextPage endCursor }
       }
       inverseRelations {
-        nodes { type issue { identifier state { name } } }
+        nodes { type issue { identifier state { name type } } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -89,7 +139,7 @@ RELATIONS_QUERY = """
 query($id: String!, $after: String) {
   issue(id: $id) {
     inverseRelations(after: $after) {
-      nodes { type issue { identifier state { name } } }
+      nodes { type issue { identifier state { name type } } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -104,7 +154,30 @@ query($id: String!, $after: String) {
   }
 }
 """
-PERMALINK = re.compile(r"https://[^/\s]+/archives/([A-Z0-9]+)/p(\d{10})(\d{6})")
+DISCORD_PERMALINK = re.compile(
+    r"https://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/([0-9]{17,20})/([0-9]{17,20})/([0-9]{17,20})(?![0-9])"
+)
+DISCORD_POLICY_KEYS = frozenset({
+    "discord_guild_id", "discord_channel_id", "approver_discord_user_id",
+    "pack_author_discord_user_ids", "reader_bot_discord_user_id", "approval_emoji",
+})
+DISCORD_ID = re.compile(r"[0-9]{17,20}")
+READER_PROFILE = "integrator"
+READER_SUBCOMMAND = "wolftac-approval-read"
+READER_TIMEOUT_SECONDS = 75
+READER_ERROR = re.compile(r"[a-z_]{1,40}")
+READY_COMMENTS_QUERY = """
+query($id: String!, $after: String) {
+  issue(id: $id) {
+    comments(first: 50, after: $after, orderBy: createdAt) {
+      nodes { id createdAt body user { id } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+
 COMMENTS_QUERY = """
 query($id: String!, $after: String) {
   issue(id: $id) {
@@ -164,7 +237,7 @@ def load_state(path: str) -> dict:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    for key in ("lanes", "fingerprints", "approval_dispatched"):
+    for key in ("lanes", "fingerprints", "approval_dispatched", "audit", "last_dispatch_at"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
     return data
@@ -223,6 +296,80 @@ def linear_query(token: str, query: str, variables: dict) -> dict:
     return payload["data"]
 
 
+def worker_degraded(jobs_path: str, job_id: str) -> bool:
+    """Read status only; missing legacy metadata is not a reported failure."""
+    try:
+        with open(jobs_path, encoding="utf-8") as fh:
+            jobs = json.load(fh).get("jobs", [])
+        return any(job.get("id") == job_id and job.get("last_status") in
+                   ("error", "interrupted") for job in jobs)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return False
+
+
+def is_decision_record(body, identifier) -> bool:
+    """Shape only: a header naming this issue plus a Discord message link.
+
+    Whether the linked message exists, or who wrote it, is not checked here.
+    """
+    if not isinstance(body, str) or not isinstance(identifier, str):
+        return False
+    return (any(m.group(1) == identifier for m in DECISION_RECORD.finditer(body))
+            and DISCORD_MESSAGE_LINK.search(body) is not None)
+
+
+def park_cleared(issue: dict, comments: list[dict]) -> bool:
+    """False only while a NEEDS HUMAN park stands. Pure: no I/O, any comment order.
+
+    When the latest review report is NEEDS HUMAN the issue is parked unless the
+    park owner's assignment is removed AND a comment newer than that report is
+    a decision record for this issue or a comment the park owner wrote.
+    Every doubtful case stays parked.
+    """
+    reviews = [c for c in comments if REVIEW_REPORT.search(c.get("body") or "")]
+    if not reviews:
+        return True
+    latest = max(reviews, key=lambda c: c["createdAt"])
+    if REVIEW_REPORT.search(latest["body"]).group(1) != "NEEDS HUMAN":
+        return True
+    if (issue.get("assignee") or {}).get("id") == PARK_OWNER_ID:
+        return False
+    return any(c["createdAt"] > latest["createdAt"] and
+               ((c.get("user") or {}).get("id") == PARK_OWNER_ID or
+                is_decision_record(c.get("body"), issue.get("identifier")))
+               for c in comments)
+
+
+def build_eligible(issue: dict) -> bool:
+    """Eligibility for timed retries only; fingerprint/claim rules stay intact."""
+    if issue["state"]["name"] != "Todo":
+        return False
+    if any(r["issue"]["state"].get("type") not in ("completed", "canceled")
+           for r in issue["inverseRelations"]["nodes"] if r["type"] == "blocks"):
+        return False  # unknown blocker state fails closed, never guessed by name
+    comments = sorted(issue.get("ready_comments", issue["comments"]["nodes"]),
+                      key=lambda c: c["createdAt"], reverse=True)
+    if comments and (comments[0].get("body") or "").startswith("BLOCKED:"):
+        return False
+    return park_cleared(issue, comments)
+
+
+def stale_eligible_reason(issues: list[dict], last_dispatch) -> str | None:
+    dated = [(parse_ts(i.get("updatedAt")), i["identifier"]) for i in issues]
+    dated = [(stamp, ident) for stamp, ident in dated if stamp is not None]
+    if not dated:
+        return None
+    oldest, identifier = min(dated)
+    since = parse_ts(last_dispatch) or oldest
+    if now_utc() - since < timedelta(minutes=STALE_ELIGIBLE_MINUTES):
+        return None
+    # Only identifiers/counts/ages may be printed, never arbitrary remote text.
+    if not re.fullmatch(r"[A-Z]+-\d+", identifier):
+        raise ProbeError("Invalid ready issue identifier")
+    minutes = max(0, int((now_utc() - oldest).total_seconds() // 60))
+    return f"stale-eligible ({len(issues)} ready, oldest {identifier} waiting {minutes}m)"
+
+
 def next_cursor(connection: dict, seen: set):
     page = connection["pageInfo"]
     if not page["hasNextPage"]:
@@ -252,6 +399,19 @@ def lane_issues(token: str, state: str) -> list[dict]:
                     })["issue"][field]
                     nodes.extend(connection["nodes"])
                 issue[field] = {"nodes": nodes}
+            if state == "Todo":
+                # Keep the fingerprint's newest-50 contract unchanged. Older
+                # comments are only for deciding whether a timed retry is safe.
+                connection = issue["comments"]
+                comments = list(connection["nodes"])
+                comment_seen = set()
+                while connection.get("pageInfo", {}).get("hasNextPage"):
+                    cursor = next_cursor(connection, comment_seen)
+                    connection = linear_query(token, READY_COMMENTS_QUERY, {
+                        "id": issue["identifier"], "after": cursor,
+                    })["issue"]["comments"]
+                    comments.extend(connection["nodes"])
+                issue["ready_comments"] = comments
             issues.append(issue)
         after = next_cursor(page, seen)
         if after is None:
@@ -267,10 +427,95 @@ def lane_matches(issue: dict, word: str) -> bool:
     )
 
 
+def audit_since(value: str) -> datetime:
+    """Reject ambiguous local dates without echoing arbitrary CLI input."""
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if stamp.tzinfo is not None:
+            return stamp.astimezone(timezone.utc)
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("audit-since requires ISO-8601 with timezone")
+
+
+def audit_issues(token: str, start: datetime, end: datetime) -> list[str]:
+    found = set()
+    after, seen = None, set()
+    while True:
+        page = linear_query(token, AUDIT_QUERY, {
+            "after": after, "from": start.isoformat(), "to": end.isoformat(),
+        })["issues"]
+        for issue in page["nodes"]:
+            identifier = issue["identifier"]
+            if not isinstance(identifier, str) or not re.fullmatch(r"WD-\d+", identifier):
+                raise ProbeError("Invalid audit issue identifier")
+            comments, nested_seen = issue["comments"], set()
+            has_report = False
+            while True:
+                has_report |= any(INTEGRATION_REPORT.match(c.get("body") or "")
+                                  is not None for c in comments["nodes"])
+                cursor = next_cursor(comments, nested_seen)
+                if cursor is None:
+                    break
+                comments = linear_query(token, AUDIT_COMMENTS_QUERY, {
+                    "id": identifier, "after": cursor,
+                })["issue"]["comments"]
+            if not has_report:
+                found.add(identifier)
+        after = next_cursor(page, seen)
+        if after is None:
+            return sorted(found, key=lambda value: int(value.split("-")[1]))
+
+
+def audit_result(found: list[str], detail: str) -> str:
+    result = "done-without-integration: " + ",".join(found) if found else "clean"
+    return f"audit: {result} ({detail})"
+
+
+def run_audit(audit: dict, token, since=None, auth_failed=False) -> list[str]:
+    """Own only audit state; a failure never changes lane decisions or exit status."""
+    if auth_failed:
+        return ["audit: skipped (linear-auth-failed)"]
+    now = now_utc()
+    last_ok = parse_ts(audit.get("last_ok_at"))
+    found = audit.get("found", [])
+    # Only validated IDs and parsed timestamps may reach output, even from state.
+    found = sorted({v for v in found if isinstance(v, str) and re.fullmatch(r"WD-\d+", v)},
+                   key=lambda value: int(value.split("-")[1])) if isinstance(found, list) else []
+    stored = audit_result(found, f"last audit {last_ok.isoformat() if last_ok else 'never'}")
+    if since is None and last_ok and now - last_ok < timedelta(hours=AUDIT_INTERVAL_HOURS):
+        return [stored]
+    try:
+        if token is None:
+            raise ProbeError("Linear token unavailable")
+        start = since or parse_ts(audit.get("covered_until")) or now - timedelta(days=AUDIT_FIRST_WINDOW_DAYS)
+        end = now - timedelta(minutes=AUDIT_GRACE_MINUTES)
+        if start > end:
+            raise ProbeError("Audit window starts after grace boundary")
+        result = audit_issues(token, start, end)
+    except Exception as exc:  # noqa: BLE001 — the audit must not starve workers
+        reason = error_reason(exc)
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
+        if not audit.get("last_ok_at") and not audit.get("pending_since"):
+            audit["pending_since"] = now.isoformat()
+        pending = last_ok or parse_ts(audit.get("pending_since"))
+        line = (f"audit: overdue (last ok {last_ok.isoformat() if last_ok else 'never'})"
+                if pending and now - pending >= timedelta(hours=AUDIT_OVERDUE_HOURS)
+                else f"audit: failed ({reason})")
+        return [line, stored] if found else [line]
+    audit.update(covered_until=end.isoformat(), last_ok_at=now.isoformat(), found=result)
+    audit.pop("pending_since", None)
+    return [audit_result(result, f"window {start.isoformat()}..{end.isoformat()}")]
+
+
 def lane_fingerprint(issues: list[dict]) -> str:
     records = []
     for issue in issues:
-        comments = issue["comments"]["nodes"]
+        # Skip diagnostics must also be invisible when they are the first comment.
+        # Retain the existing swept-only sentinel for actual SWEPT comments.
+        comments = [c for c in issue["comments"]["nodes"]
+                    if not (c["body"] or "").startswith("BUILD SKIPPED:")]
         meaningful = [c["createdAt"] for c in comments if not (c["body"] or "").startswith("SWEPT:")]
         newest = max(meaningful, default="swept-only" if comments else None)
         blockers = [
@@ -291,37 +536,102 @@ def lane_fingerprint(issues: list[dict]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def slack_approval(issues: list[dict], dispatched: dict, env_path: str, policy_path: str):
-    """Return one unconsumed (issue, ts) rocket; never approve or write to Slack."""
-    token = read_token(env_path, "SLACK_FACTORY_BOT_TOKEN")
-    with open(policy_path, encoding="utf-8") as fh:
-        policy = json.load(fh)
-    channel = policy.get("slack_channel_id")
-    approver = policy.get("approver_slack_user_id")
-    if not isinstance(channel, str) or not channel or not isinstance(approver, str) or not approver:
-        raise ProbeError("approval policy missing channel or approver")
+def load_discord_policy(policy_path: str) -> dict:
+    """The six-key Discord policy (WD-546); anything else fails closed."""
+    try:
+        with open(policy_path, encoding="utf-8") as fh:
+            policy = json.load(fh)
+    except (OSError, ValueError):
+        raise ProbeError("approval policy unreadable") from None
+    if not isinstance(policy, dict) or set(policy) != DISCORD_POLICY_KEYS:
+        raise ProbeError("approval policy invalid")
+    ids = [policy["discord_guild_id"], policy["discord_channel_id"],
+           policy["approver_discord_user_id"], policy["reader_bot_discord_user_id"]]
+    authors = policy["pack_author_discord_user_ids"]
+    if (not all(isinstance(v, str) and DISCORD_ID.fullmatch(v) for v in ids)
+            or not isinstance(authors, list) or not authors
+            or not all(isinstance(v, str) and DISCORD_ID.fullmatch(v) for v in authors)
+            or policy["approval_emoji"] != "\U0001F680"):
+        raise ProbeError("approval policy invalid")
+    return policy
+
+
+def run_reader(argv: list[str], env: dict, timeout: int = READER_TIMEOUT_SECONDS):
+    """Run R1 and wait for it. Returns (exit code, stdout); (None, reason) if it never finished."""
+    try:
+        proc = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,  # noqa: S603
+                              stderr=subprocess.DEVNULL, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+    except OSError:
+        return None, "launch-failed"
+    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+
+
+def read_reactors(channel: str, message: str, emoji: str) -> dict:
+    """R1's success document for one message; ProbeError(<fixed code>) otherwise."""
+    argv = hermes_cli() + ["-p", READER_PROFILE, READER_SUBCOMMAND, "--channel", channel,
+                           "--message", message, "--emoji", emoji, "--json"]
+    # Names only: a parent DISCORD_* value (another profile's token) never reaches R1.
+    env = {name: value for name, value in os.environ.items() if not name.upper().startswith("DISCORD_")}
+    code, text = run_reader(argv, env)
+    if code is None:
+        raise ProbeError(text)
+    documents = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            document = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(document, dict) and document.get("contract") == 1 and "ok" in document:
+            documents.append(document)
+    if len(documents) != 1:
+        raise ProbeError("malformed-output" if code == 0 else f"exit-{code}")
+    document = documents[0]
+    if document.get("ok") is not True:
+        error = document.get("error")
+        raise ProbeError(error if isinstance(error, str) and READER_ERROR.fullmatch(error) else "reader-error")
+    if code != 0:
+        raise ProbeError(f"exit-{code}")
+    if not isinstance(document.get("reactors"), list):
+        raise ProbeError("malformed-output")
+    return document
+
+
+def discord_approval(issues: list[dict], dispatched: dict, policy_path: str):
+    """Return one unconsumed (issue, message id) rocket; never approve or write to Discord.
+
+    The request permalink is in the newest proof pack or a later comment (the
+    pack thread's reply). Only #approvals counts here. A match only wakes
+    integrate, which re-verifies everything with deploy/discord_approval.py.
+    """
+    policy = load_discord_policy(policy_path)
+    approver = policy["approver_discord_user_id"]
     for issue in sorted(issues, key=lambda x: x["identifier"]):
-        packs = [c for c in issue["comments"]["nodes"]
+        comments = issue["comments"]["nodes"]
+        packs = [c for c in comments
                  if any(marker in (c["body"] or "") for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"))]
         if not packs:
             continue
         pack = max(packs, key=lambda c: c["createdAt"])
-        match = PERMALINK.search(pack["body"])
-        if not match or match[1] != channel:
+        links = []
+        for c in sorted((c for c in comments if c["createdAt"] >= pack["createdAt"]),
+                        key=lambda c: c["createdAt"]):
+            links.extend(DISCORD_PERMALINK.findall(c["body"] or ""))
+        if not links:
             continue
-        ts = match[2] + "." + match[3]
-        if dispatched.get(issue["identifier"]) == ts:
+        guild, channel, message = links[-1]
+        if guild != policy["discord_guild_id"] or channel != policy["discord_channel_id"]:
             continue
-        params = urllib.parse.urlencode({"channel": channel, "timestamp": ts, "full": "true"})
-        req = urllib.request.Request("https://slack.com/api/reactions.get?" + params,
-                                     headers={"Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            payload = json.load(resp)
-        if payload.get("ok") is not True:
-            raise ProbeError("Slack API ok:false")
-        for reaction in payload["message"].get("reactions", []):
-            if reaction.get("name") == "rocket" and approver in reaction.get("users", []):
-                return issue["identifier"], ts
+        if dispatched.get(issue["identifier"]) == message:
+            continue
+        document = read_reactors(channel, message, policy["approval_emoji"])
+        for row in document["reactors"]:
+            if isinstance(row, dict) and row.get("id") == approver and row.get("bot") is False:
+                return issue["identifier"], message
     return None
 
 
@@ -368,7 +678,7 @@ def approval_status(issues: list[dict], now: datetime) -> list[str]:
         age = now - created
         hours = max(0, int(age.total_seconds() // 3600))
         age_text = f"{hours}h" if hours < 48 else f"{hours // 24}d"
-        if re.search(r"\blane\s+unavailable\b", pack["body"], re.IGNORECASE):
+        if re.search(r"\blane\s+unavailable\b|not\s+delivered:\s+operator\s+step\s+pending", pack["body"], re.IGNORECASE):
             down.append(f"{identifier}={age_text}")
         elif age > timedelta(hours=24):
             stale.append(f"{identifier}={age_text}")
@@ -430,9 +740,14 @@ def main() -> int:
     parser.add_argument("--exec-override", default=None,
                         help="TEST ONLY: JSON argv list to launch instead of the hermes CLI")
     parser.add_argument("--approval-policy", default=os.path.join(os.path.dirname(__file__), "approval-policy.json"))
-    parser.add_argument("--no-slack", action="store_true", help="skip Slack checks")
+    parser.add_argument("--no-discord", action="store_true", help="skip Discord approval checks")
+    parser.add_argument("--no-audit", action="store_true", help="skip audit queries and output")
+    parser.add_argument("--audit-only", action="store_true", help="audit without probing or dispatching lanes")
+    parser.add_argument("--audit-since", type=audit_since, help="force audit from a timezone-qualified ISO-8601 timestamp")
     args = parser.parse_args()
     job_map = json.loads(args.job_map) if args.job_map else DEFAULT_JOB_MAP
+    if args.audit_only:
+        job_map = {}
     exec_override = json.loads(args.exec_override) if args.exec_override else None
     home = hermes_home()
     env_path = args.env_path or os.path.join(home, ".env")
@@ -441,6 +756,7 @@ def main() -> int:
     lanes_state = state["lanes"]
     fingerprints = state["fingerprints"]
     approvals = state["approval_dispatched"]
+    last_dispatch = state["last_dispatch_at"]
     token = None
     fail_open_reason = None
     try:
@@ -451,16 +767,17 @@ def main() -> int:
     lines: list[str] = []
     ready_lanes = {}
     probes = {}
-    lane_errors = set()
-
     state_probes = {}
+    lane_errors = set()
     linear_auth_failed = False
+    degraded_worker = False
     # The token is shared. Finish all non-in-flight probes before launching
     # anything, so a later lane's 401 can veto earlier build/review decisions.
     for lane, entry in job_map.items():
         try:
             linear_state, job_id, profile = lane_entry(entry)
             jobs_path = args.jobs_path or profile_jobs_path(home, profile)
+            degraded_worker |= worker_degraded(jobs_path, job_id)
             observed_last_run = job_last_run(jobs_path, job_id)
             marker = lanes_state.get(lane)
             if marker:
@@ -507,6 +824,17 @@ def main() -> int:
             lane_errors.add(lane)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
+    # A 401 is the existing re-mint path, not a fail-open tick (WD-548).
+    degraded = degraded_worker or fail_open_reason is not None or (
+        not linear_auth_failed and any(error is not None for _, _, error in probes.values()))
+    pending = state.get("recovery_pending", [])
+    pending = {lane for lane in pending if isinstance(lane, str) and lane in job_map} if isinstance(pending, list) else set()
+    if job_map and degraded:
+        state.setdefault("degraded_since", now_utc().isoformat())
+    elif not linear_auth_failed and job_map and state.get("degraded_since"):
+        pending.update(job_map)
+        state.pop("degraded_since", None)
+
     for lane, (job_id, observed_last_run, profile) in ready_lanes.items():
         try:
             fingerprint = None
@@ -524,31 +852,44 @@ def main() -> int:
                 if probe_error is not None:
                     reason = f"probe failed ({probe_error}) -> FAIL-OPEN"
                 else:
+                    eligible = [i for i in issues if build_eligible(i)] if lane in LANE_FILTERS else issues
                     if not issues:
+                        pending.discard(lane)
                         fingerprints.pop(lane, None)
                         lines.append(f"{lane}: idle")
                         continue
                     baseline = fingerprints.get(lane)
-                    if not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{64}", baseline):
+                    recovery = not degraded and lane in pending and bool(eligible)
+                    stale = stale_eligible_reason(eligible, last_dispatch.get(lane)) if lane in LANE_FILTERS else None
+                    if not eligible:
+                        pending.discard(lane)
+                    if recovery:
+                        reason = "recovered after degraded period"
+                    elif not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{64}", baseline):
                         reason = "no-baseline"
                     elif fingerprint != baseline:
                         reason = "changed"
+                    elif stale is not None:
+                        reason = stale
                     else:
-                        if lane == "integrate" and not args.no_slack:
+                        if lane == "integrate" and not args.no_discord:
                             try:
-                                approval = slack_approval(issues, approvals, env_path, args.approval_policy)
-                            except Exception as exc:  # noqa: BLE001 — Slack never fails open
-                                lines.append(f"{lane}: slack-check-failed ({error_reason(exc)})")
+                                approval = discord_approval(issues, approvals, args.approval_policy)
+                            except Exception as exc:  # noqa: BLE001 — Discord never fails open
+                                lines.append(f"{lane}: discord-check-failed ({error_reason(exc)})")
                                 continue
                         if approval is None:
                             lines.append(f"{lane}: unchanged (skip)")
                             continue
-                        reason = f"slack-approval {approval[0]}"
+                        reason = f"discord-approval {approval[0]}"
 
             result = dispatch(job_id, lane, args.dry_run, exec_override, profile)
             suffix = " for re-mint" if linear_auth_failed and result.startswith("dispatched(") else ""
             lines.append(f"{lane}: {reason} -> {result}{suffix}")
             if not args.dry_run and result.startswith("dispatched(pid="):
+                last_dispatch[lane] = now_utc().isoformat()
+                if not degraded and not linear_auth_failed:
+                    pending.discard(lane)
                 lanes_state[lane] = {
                     "dispatched_at": now_utc().isoformat(),
                     "job_last_run_at": observed_last_run,
@@ -577,6 +918,14 @@ def main() -> int:
                 if isinstance(exc, urllib.error.HTTPError):
                     exc.close()
 
+    if job_map:
+        state["recovery_pending"] = sorted(pending)
+    if not args.no_audit:
+        try:
+            audit_lines = run_audit(state["audit"], token, args.audit_since, linear_auth_failed)
+        except Exception as exc:  # noqa: BLE001 — even malformed audit state is isolated
+            audit_lines = [f"audit: failed ({error_reason(exc)})"]
+        lines.extend(line + (" (dry-run)" if args.dry_run else "") for line in audit_lines)
     if not args.dry_run:
         save_state(state_path, state)
     print("gatekeeper: " + "; ".join(lines))

@@ -25,3 +25,7 @@ Repair pattern if the wrong issue was touched:
 ```
 
 This is especially important when queue output is truncated, when issue IDs are copied manually, or when a mutation mixes UUIDs and short identifiers.
+
+## Protected-file deviations
+
+If an unattended file-edit tool denies a required protected instruction-file change (such as CLAUDE.md), do not retry that file through terminal, scripts, or another path. Verify whether the rejected multi-file edit applied any unprotected changes before continuing separately with permitted scope. Name the unchanged stale requirement and exact approval blocker in the build report and final result; an updated ordinary README does not satisfy a spec requirement to update CLAUDE.md. Do not claim all acceptance criteria are complete while that gap remains.

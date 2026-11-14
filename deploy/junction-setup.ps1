@@ -76,7 +76,7 @@ if ($isPrimaryCheckout -and -not $AllowActiveCheckout) {
 $manifest = Get-JunctionManifest -ManifestPath $ManifestPath -RepoRoot $RepoRoot -SkillsRoot $SkillsRoot
 
 Write-Output "repo root  : $RepoRoot"
-Write-Output "skills root: $($manifest.SkillsRoot)"
+foreach ($root in $manifest.SkillsRoots) { Write-Output "skills root: $root" }
 Write-Output ""
 
 # ── Phase 1: validate every pair. Decide nothing destructive yet. ──────────
@@ -86,13 +86,13 @@ $refuseCount = 0
 
 foreach ($pair in $manifest.Pairs) {
     if (-not (Test-Path -LiteralPath $pair.RepoPath -PathType Container)) {
-        $refusals += "REFUSE $($pair.Name): repo tree missing - $($pair.RepoPath)"
+        $refusals += "REFUSE $($pair.LinkPath): repo tree missing - $($pair.RepoPath)"
         $refuseCount++
         continue
     }
 
     foreach ($problem in (Test-JunctionTreeSafety $pair.RepoPath)) {
-        $refusals += "REFUSE $($pair.Name): $problem"
+        $refusals += "REFUSE $($pair.LinkPath): $problem"
         $refuseCount++
     }
 
@@ -105,13 +105,13 @@ foreach ($pair in $manifest.Pairs) {
     # declining to follow it.
     if ((Test-Path -LiteralPath $pair.LinkPath -PathType Container) -and -not (Test-IsReparsePoint $pair.LinkPath)) {
         foreach ($problem in (Test-JunctionTreeSafety $pair.LinkPath)) {
-            $refusals += "REFUSE $($pair.Name): deployed side - $problem"
+            $refusals += "REFUSE $($pair.LinkPath): deployed side - $problem"
             $refuseCount++
         }
     }
 
     if (Test-Path -LiteralPath $pair.LinkPath -PathType Leaf) {
-        $refusals += "REFUSE $($pair.Name): deployed path is a file, not a directory - $($pair.LinkPath)"
+        $refusals += "REFUSE $($pair.LinkPath): deployed path is a file, not a directory - $($pair.LinkPath)"
         $refuseCount++
         continue
     }
@@ -121,7 +121,7 @@ foreach ($pair in $manifest.Pairs) {
         if (Test-SamePath $target $pair.RepoPath) {
             $plan += [pscustomobject]@{ Pair = $pair; Action = "NOOP"; Detail = "already junctioned -> $target" }
         } else {
-            $refusals += "REFUSE $($pair.Name): deployed path is a link to an unexpected target '$target' (expected '$($pair.RepoPath)')"
+            $refusals += "REFUSE $($pair.LinkPath): deployed path is a link to an unexpected target '$target' (expected '$($pair.RepoPath)')"
             $refuseCount++
         }
         continue
@@ -134,7 +134,7 @@ foreach ($pair in $manifest.Pairs) {
 
     $diff = @(Compare-Trees $pair.RepoPath $pair.LinkPath)
     if ($diff.Count -gt 0) {
-        $refusals += "REFUSE $($pair.Name): repo and deployed content differ in $($diff.Count) file(s) - reconcile first (see WD-346), junctioning now would discard one side"
+        $refusals += "REFUSE $($pair.LinkPath): repo and deployed content differ in $($diff.Count) file(s) - reconcile first (see WD-346), junctioning now would discard one side"
         $refuseCount++
         foreach ($line in ($diff | Select-Object -First 10)) { $refusals += "        $line" }
         if ($diff.Count -gt 10) { $refusals += "        ... and $($diff.Count - 10) more" }
@@ -145,7 +145,7 @@ foreach ($pair in $manifest.Pairs) {
 }
 
 foreach ($entry in $plan) {
-    Write-Output ("{0,-8} {1,-20} {2}" -f $entry.Action, $entry.Pair.Name, $entry.Detail)
+    Write-Output ("{0,-8} {1,-20} {2}" -f $entry.Action, $entry.Pair.LinkPath, $entry.Detail)
 }
 
 if ($refusals.Count -gt 0) {
@@ -168,7 +168,7 @@ $noop = 0
 foreach ($entry in $plan) {
     $pair = $entry.Pair
     if ($entry.Action -eq "NOOP") {
-        Write-Output "NOOP     $($pair.Name) -> $($pair.RepoPath)"
+        # The validated plan above already reports this unchanged link path.
         $noop++
         continue
     }

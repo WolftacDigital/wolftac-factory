@@ -1,0 +1,5 @@
+name: wolftac-approval-read
+version: 1.0.0
+description: "R1, the Wolftac Factory's read-only Discord approval reader. One CLI command reads a single #approvals message and its complete rocket-reactor list as Harper's bot and prints one JSON line. It never posts, reacts or approves."
+author: Wolftac Digital
+kind: standalone

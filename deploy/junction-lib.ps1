@@ -57,18 +57,28 @@ function Get-JunctionManifest {
         throw "junction manifest not found: $ManifestPath"
     }
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    $root = if ($SkillsRoot) { $SkillsRoot } else { [Environment]::ExpandEnvironmentVariables($manifest.skills_root) }
-    $root = [IO.Path]::GetFullPath($root)
+    $configuredRoots = if ($SkillsRoot) {
+        @($SkillsRoot)
+    } elseif ($manifest.PSObject.Properties.Name -contains 'skills_roots') {
+        @($manifest.skills_roots)
+    } else {
+        @($manifest.skills_root)
+    }
+    $roots = @($configuredRoots | ForEach-Object {
+        [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($_))
+    })
     $pairs = @()
-    foreach ($pair in @($manifest.pairs)) {
-        $pairs += [pscustomobject]@{
-            Name     = $pair.name
-            RepoRel  = $pair.repo
-            RepoPath = [IO.Path]::GetFullPath((Join-Path $RepoRoot ($pair.repo -replace '/', [IO.Path]::DirectorySeparatorChar)))
-            LinkPath = [IO.Path]::GetFullPath((Join-Path $root $pair.name))
+    foreach ($root in $roots) {
+        foreach ($pair in @($manifest.pairs)) {
+            $pairs += [pscustomobject]@{
+                Name     = $pair.name
+                RepoRel  = $pair.repo
+                RepoPath = [IO.Path]::GetFullPath((Join-Path $RepoRoot ($pair.repo -replace '/', [IO.Path]::DirectorySeparatorChar)))
+                LinkPath = [IO.Path]::GetFullPath((Join-Path $root $pair.name))
+            }
         }
     }
-    return [pscustomobject]@{ SkillsRoot = $root; Pairs = $pairs }
+    return [pscustomobject]@{ SkillsRoots = $roots; Pairs = $pairs }
 }
 
 # Read a file as text with LF line endings. Mirrors deploy.ps1's Get-LfText so the

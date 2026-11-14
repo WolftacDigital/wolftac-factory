@@ -2,8 +2,8 @@
 Out-of-band factory watchdog (WD-345).
 
 Watches the Hermes cron scheduler that runs the factory worker loops, from OUTSIDE
-Hermes: pure filesystem reads of `jobs.json` and `ticker_heartbeat`, no CLI, no
-gateway API. That is the whole point — on 2026-07-27 the Build and Review workers
+Hermes: filesystem health checks with no gateway API. Delivery alone uses the Hermes send
+CLI; checks do not need a live gateway. That is the whole point — on 2026-07-27 the Build and Review workers
 died, the 2026-08-02 Hermes update left them disabled, and nobody noticed for twelve
 days, because every health signal lived inside the thing that had failed. A watchdog
 scheduled through Hermes cron would have died with it.
@@ -19,8 +19,11 @@ Checks, per cron directory:
   2. job enabled       — every job matching -JobNamePattern is enabled and not paused
   3. job last_status   — not "error"
   4. job next_run_at   — not more than -StaleIntervals scheduling intervals in the past
-  5. gatekeeper auth  — newest Gatekeeper output does not contain linear-auth-failed
-  6. approval wait    — evaluated Gatekeeper status within the last 6h, ignoring unknown ticks
+  5. job last_failure  — no failure recorded in the last -RecentFailureHours (default 6)
+  6. gatekeeper auth  — newest Gatekeeper output does not contain linear-auth-failed
+  7. worker progress  — last 3 non-quiet outputs (within 6 files) did not all stop for help
+
+Approval wait: evaluated Gatekeeper status within the last 6h, ignoring unknown ticks.
 
 Once per run: the Linear bot expiry date in -EnvFile is valid and at least 3 days away.
 Only the expiry key is extracted; no Linear credentials are used or validated.
@@ -32,7 +35,7 @@ And once per run, independent of the cron directories:
      message: a drifted-but-running factory is not an outage, and conflating the two
      would either cry wolf about a healthy factory or bury a worker death under a
      docs-drift message. Alerts carry paths and line counts only, never file content
-     — a /learn edit can pick up anything, and this goes to a Slack channel.
+     — a /learn edit can pick up anything, and this goes to a Discord channel.
      Disable with -SkipDrift.
   6. pending /learn edits (WD-362) — `git status` of the junctioned live worktree.
      Junctioned skills are exempt from drift (the repo IS the deployed copy), so
@@ -48,26 +51,43 @@ Alert discipline: post on the healthy -> unhealthy transition, re-ping at most e
 unhealthy -> healthy transition. A dead factory must not decay into normalized
 silence, and a flapping check must not spam the channel.
 
-Exit codes: 0 healthy - 1 unhealthy - 3 Slack delivery failed - 4 watchdog could not
+Exit codes: 0 healthy - 1 unhealthy - 3 Discord delivery failed - 4 watchdog could not
 read what it needs. A watchdog that fails quiet has the disease it treats, so an
 unreadable jobs.json or .env is an UNHEALTHY finding that alerts, never a silent exit.
 
-The Slack bot token is read at runtime and never printed, logged, or persisted.
+Delivery uses the supported Hermes send CLI; the script never reads a messaging token.
 #>
 [CmdletBinding()]
 param(
     # Accepts several directories so one task can watch every profile's scheduler.
     # The factory's integrate worker runs under its own Hermes profile, so its cron
     # dir is NOT the default one — see docs\watchdog.md.
-    [string[]]$CronDir = @("$env:LOCALAPPDATA\hermes\cron"),
+    # Explicit home for Linux/scratch runs; unset keeps the Windows default.
+    [string]$HermesHome = $(if ($env:HERMES_HOME) { $env:HERMES_HOME }
+        elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'hermes' }
+        elseif ($HOME) { Join-Path $HOME 'hermes' }
+        else { Join-Path $env:HOME 'hermes' }),
+    [string[]]$CronDir = @((Join-Path $HermesHome 'cron')),
     [switch]$DryRun,
-    [string]$PolicyPath = (Join-Path $PSScriptRoot "approval-policy.json"),
-    [string]$EnvFile = "$env:LOCALAPPDATA\hermes\.env",
+    # Retained for older invocations; delivery no longer uses the approval policy.
+    [string]$PolicyPath = "",
+    [ValidatePattern('^discord:[0-9]+$')]
+    [string]$DiscordTarget = "discord:1562236246158221323",
+    [ValidateNotNullOrEmpty()]
+    [string]$HermesProfile = "integrator",
+    [string]$EnvFile = (Join-Path $HermesHome '.env'),
     [string]$JobNamePattern = "Wolftac Factory *",
     [int]$HeartbeatMaxAgeMinutes = 5,
     [int]$StaleIntervals = 3,
+    [int]$WorkerMinIntervalMinutes = 120,
     [int]$NagHours = 12,
     [int]$ApprovalStatusMaxAgeHours = 6,
+    [int]$RecentFailureHours = 6,
+    # WD-566: bounded completed-output history; zero threshold disables the check.
+    [ValidateRange(0, 2147483647)]
+    [int]$StuckRunThreshold = 3,
+    [ValidateRange(1, 2147483647)]
+    [int]$StuckLookback = 6,
     # Prepended to alert text. Exists so fault-injection runs against the real channel
     # are unmistakably drills — an unmarked test alert that mentions Jonathan is
     # indistinguishable from the real outage this watchdog exists to announce.
@@ -77,6 +97,7 @@ param(
     # duplicated list would silently stop covering new targets, which is the same
     # class of failure this watchdog exists to catch.
     [string]$DeployScript = (Join-Path $PSScriptRoot "deploy.ps1"),
+    [string]$RepoRoot = "",
     [switch]$SkipDrift,
     # Profile whose deployed copies the drift check compares against. deploy.ps1
     # resolves targets through %USERPROFILE%/%LOCALAPPDATA%, which under the SYSTEM
@@ -91,13 +112,31 @@ param(
     [string]$LearnBackupRoot = "",
     [int]$LearnRetentionDays = 30,
     [switch]$SkipLearn,
+    # Done-without-integration is independent of worker liveness.
+    [switch]$SkipAudit,
     # Test seam: write each alert payload to a file here instead of posting it, so the
-    # regression suite can assert on exact message text without touching Slack.
-    [string]$SlackOutbox = ""
+    # regression suite can assert on exact message text without touching Discord.
+    [Alias("SlackOutbox")]
+    [string]$AlertOutbox = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# WD-566: build/review dirty-worktree stops and BUILD/REVIEW-NEVER-SILENT;
+# integrate's INTEGRATE-NEVER-HANG PRECONDITION and legacy Blocked reports.
+# Regexes are case-insensitive, as are PowerShell's -match operations below.
+$StuckStopMarkers = @(
+    'operator attention', 'BUILD INTERRUPTED', 'REVIEW INTERRUPTED',
+    'PRECONDITION:', '^\*\*Blocked', 'stopped without claiming', 'ended without claiming'
+)
+
+# Process-local command-line-precedence config covers every child git, including
+# deploy.ps1's identity probes. Never trust repo fsmonitor hooks or refresh indexes.
+$env:GIT_CONFIG_COUNT = '1'
+$env:GIT_CONFIG_KEY_0 = 'core.fsmonitor'
+$env:GIT_CONFIG_VALUE_0 = 'false'
+$env:GIT_OPTIONAL_LOCKS = '0'
 
 # `pwsh -File` passes list-like arguments as literal strings instead of binding them
 # to a [string[]] parameter; without normalization, the first Join-Path treats the
@@ -117,7 +156,16 @@ if ($CronDir.Count -eq 0) { throw "No cron directory given (-CronDir)." }
 $DriftProfile = $UserProfile
 if (-not $DriftProfile -and $EnvFile -match '^(.+)\\AppData\\Local\\hermes\\') { $DriftProfile = $Matches[1] }
 if (-not $DriftProfile) { $DriftProfile = $env:USERPROFILE }
-if (-not $LearnBackupRoot) { $LearnBackupRoot = Join-Path $DriftProfile "AppData\Local\hermes\backups\learn-edits" }
+# On Windows $HOME comes from USERPROFILE, so it is empty whenever USERPROFILE is;
+# the HOME variable is the last profile source before giving up on one.
+if (-not $DriftProfile) { $DriftProfile = $HOME }
+if (-not $DriftProfile) { $DriftProfile = $env:HOME }
+if (-not $LearnBackupRoot) {
+    # With no profile at all, fall back to the Hermes home on every OS instead of
+    # joining onto an empty path, so the result never depends on where scratch sits.
+    $LearnBackupRoot = if ($IsWindows -and $DriftProfile) { Join-Path $DriftProfile "AppData\Local\hermes\backups\learn-edits" }
+                      else { Join-Path $HermesHome 'backups/learn-edits' }
+}
 
 # Findings accumulate here; each is one failed check, already human-readable.
 $findings = New-Object System.Collections.Generic.List[string]
@@ -125,6 +173,8 @@ $findings = New-Object System.Collections.Generic.List[string]
 # "all clear" — an unexplained pass is how a mis-pointed watchdog looks healthy.
 $report = New-Object System.Collections.Generic.List[object]
 $readFailure = $false
+$auditStatuses = New-Object System.Collections.Generic.List[string]
+$auditIds = New-Object System.Collections.Generic.List[string]
 
 function Add-Finding([string]$Text) { $script:findings.Add($Text) }
 
@@ -158,15 +208,141 @@ function Add-Report([string]$Scope, [string]$Check, [string]$Result, [string]$Ob
     })
 }
 
-function Get-SlackToken {
-    # Runtime read only. The value is never echoed, written to the sidecar, or
-    # embedded in the scheduled-task definition.
-    if ($env:SLACK_FACTORY_BOT_TOKEN) { return $env:SLACK_FACTORY_BOT_TOKEN }
-    if (-not (Test-Path -LiteralPath $EnvFile)) { return $null }
-    foreach ($line in Get-Content -LiteralPath $EnvFile) {
-        if ($line -match '^\s*SLACK_FACTORY_BOT_TOKEN\s*=\s*(.+?)\s*$') { return $Matches[1] }
+function Get-WorkerResponseLine([string]$Path) {
+    # Stream only through the headline: prompt text, later lines and full logs never
+    # enter a finding. An absent/unfinished response is not a completed quiet run.
+    $reader = [IO.File]::OpenText($Path)
+    try {
+        $response = $false
+        $leading = $true
+        while ($null -ne ($line = $reader.ReadLine())) {
+            $line = $line.Trim()
+            if (-not $response) {
+                if ($line -eq '## Response') { $response = $true }
+                continue
+            }
+            if (-not $line) { continue }
+            if ($leading -and $line -match '^\*\*Agent:\*\*') {
+                $leading = $false
+                continue
+            }
+            return $line
+        }
+        return $null
+    } finally { $reader.Dispose() }
+}
+
+function Test-WorkerStuckRuns([string]$Dir) {
+    if ($StuckRunThreshold -eq 0) { return }
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return } # Existing cron checks own input failures.
+    foreach ($job in $jobs) {
+        $name = Get-Prop $job 'name'
+        if ($name -notlike $JobNamePattern -or $name -eq 'Wolftac Factory Gatekeeper' -or
+            (Get-Prop $job 'no_agent') -eq $true) { continue }
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') {
+            Add-Report $name 'worker-stuck' 'skipped' 'invalid output job id'
+            continue
+        }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) {
+            Add-Report $name 'worker-stuck' 'skipped' 'output directory absent'
+            continue
+        }
+        try {
+            # Completed cron outputs use timestamp names, not modification order.
+            $files = @(Get-ChildItem -LiteralPath $outputDir -File -ErrorAction Stop |
+                Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.md$' } |
+                Sort-Object Name -Descending | Select-Object -First $StuckLookback)
+        } catch {
+            Add-Report $name 'worker-stuck' 'skipped' 'output directory unreadable'
+            continue
+        }
+        $stopped = 0
+        $latest = $null
+        $latestPath = $null
+        $first = $null
+        foreach ($file in $files) {
+            try { $line = Get-WorkerResponseLine $file.FullName }
+            catch {
+                Add-Report $name 'worker-stuck' 'skipped' "unreadable output: $($file.FullName)"
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                Add-Report $name 'worker-stuck' 'skipped' "no completed response: $($file.FullName)"
+                continue
+            }
+            if ($line -eq '[SILENT]') { continue }
+            $isStopped = $false
+            foreach ($marker in $StuckStopMarkers) {
+                if ($line -match $marker) { $isStopped = $true; break }
+            }
+            if (-not $isStopped) { break } # Progress breaks the consecutive streak.
+            if ($stopped -eq 0) { $latest = $line; $latestPath = $file.FullName }
+            $stopped++
+            $first = $file.BaseName
+            if ($stopped -ge $StuckRunThreshold) { break }
+        }
+        if ($stopped -ge $StuckRunThreshold) {
+            $quote = $latest.Substring(0, [Math]::Min(160, $latest.Length))
+            $detail = "Factory watchdog: $name has stopped for operator attention $stopped runs in a row (since $first). Latest: `"$quote`" ($latestPath)"
+            Add-Finding $detail
+            Add-Report $name 'worker-stuck' 'FAIL' "$stopped stopped runs; since $first"
+        } else {
+            Add-Report $name 'worker-stuck' 'ok' "$stopped stopped runs before progress or end of lookback (threshold $StuckRunThreshold)"
+        }
     }
-    return $null
+}
+
+function Test-GatekeeperApprovalWait([string]$Dir, $Jobs) {
+    foreach ($job in @($Jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) { continue }
+        try {
+            $files = @(Get-ChildItem -LiteralPath $outputDir -File |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending)
+            if ($files.Count -eq 0) { continue }
+            $cutoff = [DateTime]::UtcNow.AddHours(-$ApprovalStatusMaxAgeHours)
+            $evaluated = $false
+            foreach ($file in $files) {
+                if ($file.LastWriteTimeUtc -lt $cutoff) { continue }
+                $output = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+                if ($output -cnotmatch 'approval-wait: ok|approval-stale: |approval-lane-down: ') { continue }
+                $evaluated = $true
+                $failed = $false
+                foreach ($kind in @('approval-stale', 'approval-lane-down')) {
+                    if ($output -cmatch ($kind + ': ([A-Z]+-\d+=\d+[hd](?:,[A-Z]+-\d+=\d+[hd])*)')) {
+                        # Only the constrained captures may reach alerts, never raw output.
+                        $list = (($Matches[1] -split ',' | ForEach-Object { $_ -replace '=', ' (' }) -join '), ') + ')'
+                        if ($kind -eq 'approval-stale') {
+                            Add-Finding "[$Dir] approval-wait: proof pack older than 24h with the issue still Approved: $list"
+                        } else {
+                            Add-Finding "[$Dir] approval-lane-down: newest proof pack says the approval request was not delivered; Jonathan has not been asked: $list"
+                        }
+                        $failed = $true
+                    }
+                }
+                if ($failed) {
+                    Add-Report $Dir 'approval-wait' 'FAIL' 'stale or lane-down proof pack'
+                } elseif ($output -cmatch 'approval-wait: ok') {
+                    Add-Report $Dir 'approval-wait' 'ok' 'evaluated approval status is ok'
+                } else {
+                    Add-Report $Dir 'approval-wait' 'skipped' 'approval status has no valid identifier/age list'
+                }
+                break
+            }
+            if (-not $evaluated) {
+                Add-Report $Dir 'approval-wait' 'skipped' "no evaluated approval status in Gatekeeper output from the last ${ApprovalStatusMaxAgeHours}h"
+            }
+        } catch {
+            Add-Finding "[$Dir] approval-wait: watchdog cannot read Gatekeeper output"
+            Add-Report $Dir 'approval-wait' 'FAIL' 'output unreadable'
+            $script:readFailure = $true
+        }
+    }
 }
 
 function Test-LinearTokenExpiry {
@@ -211,20 +387,6 @@ function Test-LinearTokenExpiry {
     }
 }
 
-function Get-Policy {
-    if (-not (Test-Path -LiteralPath $PolicyPath)) {
-        Add-Finding "watchdog cannot read approval policy at $PolicyPath"
-        $script:readFailure = $true
-        return $null
-    }
-    try { return Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json }
-    catch {
-        Add-Finding "watchdog cannot parse approval policy at ${PolicyPath}: $($_.Exception.Message)"
-        $script:readFailure = $true
-        return $null
-    }
-}
-
 function Get-Jobs([string]$Path) {
     # Returns $null on any read/parse failure — the caller turns that into a finding.
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
@@ -247,7 +409,9 @@ function Get-Jobs([string]$Path) {
 
 function Get-Prop($Object, [string]$Name) {
     if ($null -eq $Object) { return $null }
-    if ($Object.PSObject.Properties.Name -contains $Name) { return $Object.$Name }
+    if ($Object -is [System.Collections.IDictionary]) { return $Object[$Name] }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -ne $property) { return $property.Value }
     return $null
 }
 
@@ -278,52 +442,56 @@ function Test-GatekeeperAuth([string]$Dir, $Jobs) {
     }
 }
 
-function Test-GatekeeperApprovalWait([string]$Dir, $Jobs) {
+function Test-WorkerSafetyNet([string]$Dir) {
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return } # Existing cron check reports unreadable input.
+    foreach ($job in $jobs) {
+        $name = Get-Prop $job 'name'
+        if ($name -notlike $JobNamePattern -or $name -eq 'Wolftac Factory Gatekeeper' -or
+            (Get-Prop $job 'enabled') -ne $true -or (Get-Prop $job 'paused') -eq $true -or
+            (Get-Prop $job 'no_agent') -eq $true) { continue }
+        $schedule = Get-Prop $job 'schedule'
+        $kind = Get-Prop $schedule 'kind'
+        if (-not $kind) { continue } # Legacy fixtures have no kind; do not guess.
+        $minutes = Get-Prop $schedule 'minutes'
+        if ($kind -ne 'interval') {
+            Add-Finding "[$Dir] ${name}: worker-safety-net - schedule kind '$kind' is not an interval; the safety net is every ${WorkerMinIntervalMinutes}m"
+            Add-Report $name 'worker-safety-net' 'FAIL' "kind '$kind' is not an interval"
+        } elseif ($minutes -lt $WorkerMinIntervalMinutes) {
+            Add-Finding "[$Dir] ${name}: worker-safety-net - schedule every ${minutes}m is below the ${WorkerMinIntervalMinutes}m safety net; run deploy\worker-schedules.ps1"
+            Add-Report $name 'worker-safety-net' 'FAIL' "every ${minutes}m; minimum ${WorkerMinIntervalMinutes}m"
+        } else {
+            Add-Report $name 'worker-safety-net' 'ok' "every ${minutes}m; minimum ${WorkerMinIntervalMinutes}m"
+        }
+    }
+}
+
+function Test-GatekeeperAudit([string]$Dir, $Jobs) {
+    if ($SkipAudit) { return }
     foreach ($job in @($Jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
         $id = Get-Prop $job 'id'
         if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
         $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
         if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) { continue }
         try {
-            $files = @(Get-ChildItem -LiteralPath $outputDir -File |
-                Sort-Object -Property LastWriteTimeUtc, Name -Descending)
-            if ($files.Count -eq 0) { continue }
-            $cutoff = [DateTime]::UtcNow.AddHours(-$ApprovalStatusMaxAgeHours)
-            $evaluated = $false
-            foreach ($file in $files) {
-                if ($file.LastWriteTimeUtc -lt $cutoff) { continue }
-                $output = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
-                if ($output -cnotmatch 'approval-wait: ok|approval-stale: |approval-lane-down: ') { continue }
-                $evaluated = $true
-                $failed = $false
-                foreach ($kind in @('approval-stale', 'approval-lane-down')) {
-                    if ($output -cmatch ($kind + ': ([A-Z]+-\d+=\d+[hd](?:,[A-Z]+-\d+=\d+[hd])*)')) {
-                        # Only the constrained captures may reach alerts, never raw output.
-                        $list = (($Matches[1] -split ',' | ForEach-Object { $_ -replace '=', ' (' }) -join '), ') + ')'
-                        if ($kind -eq 'approval-stale') {
-                            Add-Finding "[$Dir] approval-wait: proof pack older than 24h with the issue still Approved: $list"
-                        } else {
-                            Add-Finding "[$Dir] approval-lane-down: newest proof pack disclosed the approval lane as unavailable; only a typed APPROVE MERGE can approve: $list"
-                        }
-                        $failed = $true
-                    }
+            $newest = Get-ChildItem -LiteralPath $outputDir -File |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending | Select-Object -First 1
+            if ($null -eq $newest) { continue }
+            $output = Get-Content -LiteralPath $newest.FullName -Raw -ErrorAction Stop
+            $hits = [regex]::Matches("$output", 'audit: done-without-integration: (WD-\d+(?:,WD-\d+)*)')
+            if ($hits.Count -gt 0) {
+                $script:auditStatuses.Add('found')
+                foreach ($hit in $hits) {
+                    foreach ($issue in ($hit.Groups[1].Value -split ',')) { $script:auditIds.Add($issue) }
                 }
-                if ($failed) {
-                    Add-Report $Dir 'approval-wait' 'FAIL' 'stale or lane-down proof pack'
-                } elseif ($output -cmatch 'approval-wait: ok') {
-                    Add-Report $Dir 'approval-wait' 'ok' 'evaluated approval status is ok'
-                } else {
-                    Add-Report $Dir 'approval-wait' 'skipped' 'approval status has no valid identifier/age list'
-                }
-                break
-            }
-            if (-not $evaluated) {
-                Add-Report $Dir 'approval-wait' 'skipped' "no evaluated approval status in Gatekeeper output from the last ${ApprovalStatusMaxAgeHours}h"
+            } elseif ("$output" -cmatch 'audit: overdue') {
+                $script:auditStatuses.Add('cannot-check')
+            } elseif ("$output" -cmatch 'audit: clean') {
+                $script:auditStatuses.Add('clean')
             }
         } catch {
-            Add-Finding "[$Dir] approval-wait: watchdog cannot read Gatekeeper output"
-            Add-Report $Dir 'approval-wait' 'FAIL' 'output unreadable'
-            $script:readFailure = $true
+            # The existing auth/liveness reader owns unreadable-output findings.
+            # Never copy untrusted output or error text into an audit alert.
         }
     }
 }
@@ -354,6 +522,7 @@ function Test-CronDirectory([string]$Dir) {
     }
 
     Test-GatekeeperAuth $Dir $jobs
+    Test-GatekeeperAudit $Dir $jobs
     Test-GatekeeperApprovalWait $Dir $jobs
     $matched = @($jobs | Where-Object { (Get-Prop $_ 'name') -like $JobNamePattern })
     if ($matched.Count -eq 0) {
@@ -381,6 +550,36 @@ function Test-CronDirectory([string]$Dir) {
             Add-Report $name "last-status" "FAIL" "last_status=$status$detail"
         } else {
             Add-Report $name "last-status" "ok" "last_status=$(if ($status) { $status } else { '(none)' })"
+        }
+
+        # Hermes records a failed run in last_failure but often still writes
+        # last_status=ok on the next tick, even when that tick failed the same way
+        # (2026-10-19: integrate hit a Linear 401 on every run for two days while
+        # last_status alternated, so this watchdog posted "recovered" twice). A failure
+        # inside the window keeps the job unhealthy, so the incident stays open until
+        # the job has actually gone -RecentFailureHours without failing.
+        $lf = Get-Prop $job 'last_failure'
+        $lfAt = Get-Prop $lf 'at'
+        if ($lfAt) {
+            try {
+                $lfDt = [datetimeoffset]::Parse("$lfAt")
+                $ageH = ((Get-Date) - $lfDt.LocalDateTime).TotalHours
+                if ($ageH -le $RecentFailureHours) {
+                    $lfDetail = "$(Get-Prop $lf 'detail')" -split "`n" |
+                        ForEach-Object { $_.Trim(' ', '-', '*', '#') } | Where-Object { $_ } | Select-Object -First 3
+                    $lfText = ($lfDetail -join ' / ')
+                    if ($lfText.Length -gt 300) { $lfText = $lfText.Substring(0, 300) + '...' }
+                    Add-Finding ("[$Dir] {0}: FAILED {1:N1}h ago (window {2}h) - {3}" -f $name, $ageH, $RecentFailureHours, $lfText)
+                    Add-Report $name "recent-failure" "FAIL" ("last_failure {0:N1}h ago (window {1}h)" -f $ageH, $RecentFailureHours)
+                } else {
+                    Add-Report $name "recent-failure" "ok" ("last_failure {0:N1}h ago (window {1}h)" -f $ageH, $RecentFailureHours)
+                }
+            } catch {
+                Add-Finding "[$Dir] ${name}: unparseable last_failure.at '$lfAt'"
+                Add-Report $name "recent-failure" "FAIL" "unparseable last_failure.at"
+            }
+        } else {
+            Add-Report $name "recent-failure" "ok" "no last_failure recorded"
         }
 
         # Overdue is measured in scheduling intervals, so a 5m job and a daily job are
@@ -413,45 +612,79 @@ function Test-CronDirectory([string]$Dir) {
 
 function Get-StatePath([string]$Dir) { Join-Path $Dir "watchdog-state.json" }
 
-function Send-SlackAlert([string]$Text, $Policy) {
-    if ($SlackOutbox) {
-        New-Item -ItemType Directory -Force -Path $SlackOutbox | Out-Null
-        $file = Join-Path $SlackOutbox ("{0:yyyyMMddTHHmmssfff}-{1}.txt" -f (Get-Date), [guid]::NewGuid().ToString('N').Substring(0, 6))
-        Set-Content -LiteralPath $file -Value $Text -Encoding utf8 -NoNewline
-        Write-Host "SLACK: intercepted to $file (-SlackOutbox)"
+function Send-DiscordAlert([string]$Text) {
+    if ($DryRun) { Write-Host "DRY RUN POST: $Text"; return $true }
+    # One Boolean on the success pipeline. Never echo CLI output/errors, which may
+    # include private diagnostics. The CLI owns credentials; this script does not.
+    $script:deliveryError = 'send-failed'
+    $file = $null
+    try {
+        $Text = $Text -replace '[^\x00-\x7F]', '?'
+        if ($AlertOutbox) {
+            New-Item -ItemType Directory -Force -Path $AlertOutbox | Out-Null
+            $file = Join-Path $AlertOutbox ([guid]::NewGuid().ToString('N') + '.txt')
+            [IO.File]::WriteAllText($file, $Text, [Text.UTF8Encoding]::new($false))
+            $file = $null # intercepted payload is retained for assertions
+            Write-Host "DISCORD: intercepted (-AlertOutbox)"
+            return $true
+        }
+        $hermes = 'hermes'
+        if ($env:LOCALAPPDATA) {
+            $installed = Join-Path $env:LOCALAPPDATA 'hermes/bin/hermes.exe'
+            if (Test-Path -LiteralPath $installed -PathType Leaf) { $hermes = $installed }
+        }
+        $tempRoot = if ($env:TMPDIR) { $env:TMPDIR } else { [IO.Path]::GetTempPath() }
+        $file = Join-Path $tempRoot ('watchdog-' + [guid]::NewGuid().ToString('N') + '.txt')
+        [IO.File]::WriteAllText($file, $Text, [Text.UTF8Encoding]::new($false))
+        $result = & $hermes -p $HermesProfile send --to $DiscordTarget --file $file --json 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $script:deliveryError = 'cli-nonzero'
+            Write-Host 'DISCORD: CLI returned non-zero; delivery pending.'
+            return $false
+        }
+        $response = ($result -join "`n") | ConvertFrom-Json -ErrorAction Stop
+        $id = Get-Prop $response 'message_id'
+        if ((Get-Prop $response 'success') -ne $true -or "$id" -notmatch '^[0-9]+$') {
+            $script:deliveryError = 'missing-message-id'
+            Write-Host 'DISCORD: no successful message id; delivery pending.'
+            return $false
+        }
+        Write-Host "DISCORD: accepted message $id via profile $HermesProfile to $DiscordTarget"
+        return $true
+    } catch {
+        Write-Host 'DISCORD: command or JSON response failed; delivery pending.'
+        return $false
+    } finally {
+        if ($file -and (Test-Path -LiteralPath $file)) { Remove-Item -LiteralPath $file -Force }
+    }
+}
+
+function Send-Concern([string]$Key, [bool]$ShouldPost, [string]$Message, [string]$Status, [string]$Identity = '') {
+    # Retain undelivered messages, including recoveries, in one optional sidecar
+    # field. Retry before the current transition even if checks have become healthy.
+    $pending = $script:deliveryFailures[$Key]
+    if ($pending) {
+        if (-not (Send-DiscordAlert $pending.message)) {
+            $script:deliveryFailures[$Key].error = $script:deliveryError
+            return $false
+        }
+        $script:lastDelivery[$Key] = (Get-Date).ToString('o')
+        $script:deliveryFailures.Remove($Key)
+        # Same state: replay is the alert, not replay plus a duplicate/new nag.
+        if ($Identity) {
+            if ((Get-Prop $pending 'identity') -eq $Identity) { return $true }
+        } elseif ($pending.status -eq $Status) { return $true }
+    }
+    if (-not $ShouldPost) { return $true }
+    if ($AlertPrefix) { $Message = "$AlertPrefix`n$Message" }
+    if (Send-DiscordAlert $Message) {
+        $script:lastDelivery[$Key] = (Get-Date).ToString('o')
         return $true
     }
-    $token = Get-SlackToken
-    if (-not $token) {
-        # Write-Host keeps diagnostics visible without adding them to the function's
-        # success-output pipeline. The caller must receive exactly one Boolean;
-        # otherwise PowerShell returns [diagnostic, Boolean], a truthy array that
-        # falsely records failed delivery as success and suppresses retries for 12h.
-        Write-Host "SLACK: no SLACK_FACTORY_BOT_TOKEN available (checked env and $EnvFile) - cannot deliver"
-        return $false
+    $script:deliveryFailures[$Key] = @{
+        message = $Message; status = $Status; identity = $Identity; error = $script:deliveryError
     }
-    $identity = $Policy.fallback_identity   # watchdog alerts are never a worker's face
-    $body = @{
-        channel    = $Policy.slack_channel_id
-        text       = $Text
-        username   = $identity.username
-        icon_emoji = $identity.icon_emoji
-    } | ConvertTo-Json -Depth 5
-    try {
-        $resp = Invoke-RestMethod -Uri "https://slack.com/api/chat.postMessage" -Method Post `
-            -Headers @{ Authorization = "Bearer $token"; "Content-Type" = "application/json; charset=utf-8" } `
-            -Body ([Text.Encoding]::UTF8.GetBytes($body))
-    } catch {
-        Write-Host "SLACK: delivery failed - $($_.Exception.Message)"
-        return $false
-    }
-    if (-not $resp.ok) {
-        # $resp.error is a Slack error code (e.g. channel_not_found), never a credential.
-        Write-Host "SLACK: API returned not-ok - $($resp.error)"
-        return $false
-    }
-    Write-Host "SLACK: posted as '$($identity.username)' to $($Policy.slack_channel_id) (ts $($resp.ts))"
-    return $true
+    return $false
 }
 
 function Measure-Drift {
@@ -470,7 +703,8 @@ function Measure-Drift {
     try {
         $env:USERPROFILE = $script:DriftProfile
         $env:LOCALAPPDATA = Join-Path $script:DriftProfile "AppData\Local"
-        . $DeployScript *> $null
+        if ($RepoRoot) { . $DeployScript -RepoRoot $RepoRoot *> $null }
+        else { . $DeployScript *> $null }
     } catch {
         # A watchdog that fails quiet has the disease it treats.
         Add-DriftUnreadable "cannot compare: unable to load pair definitions from ${DeployScript}: $($_.Exception.Message)"
@@ -489,6 +723,23 @@ function Measure-Drift {
     }
 
     $script:driftAvailable = $true
+    # WD-584 BEGIN: stale-copy
+    if ($RepoRoot -and [IO.Path]::GetFullPath($RepoRoot).TrimEnd('\', '/') -ine
+        [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent)).TrimEnd('\', '/')) {
+        foreach ($relative in @('deploy/factory-watchdog.ps1', 'deploy/deploy.ps1',
+                                'deploy/junctions.json', 'deploy/approval-policy.json',
+                                'deploy/junction-lib.ps1')) {
+            $installedHash = $null; $repoHash = $null
+            try { $installedHash = Get-LfHash (Join-Path (Split-Path $PSScriptRoot -Parent) $relative) } catch {}
+            try { $repoHash = Get-LfHash (Join-Path $RepoRoot $relative) } catch {}
+            if ($null -eq $installedHash -or $null -eq $repoHash) {
+                Add-DriftUnreadable "cannot compare $relative (installed or repo copy unreadable)"
+            } elseif ($installedHash -ne $repoHash) {
+                Add-Drift "WATCHDOG-STALE $relative (installed copy differs from repo; re-run deploy\install-watchdog-task.ps1 -Apply)"
+            }
+        }
+    }
+    # WD-584 END: stale-copy
     foreach ($p in $Pairs) {
         # A junctioned target IS the repo file; there is one set of bytes and drift
         # is not possible. Matches deploy.ps1 -Check exactly (AC-8).
@@ -518,7 +769,7 @@ function Measure-Drift {
         $script:driftChecked++
         if ($srcHash -ne $dstHash) {
             # Line counts only -- never file content. A /learn edit can pick up
-            # anything, and this message goes to a Slack channel.
+            # anything, and this message goes to a Discord channel.
             # Parenthesise the call: `Get-LfText $p -split "..."` binds -split as an
             # argument to the function instead of operating on its result, and every
             # count silently comes back 0 -- an alert that names a drifted target and
@@ -578,7 +829,8 @@ function Measure-Learn {
         try {
             $env:USERPROFILE = $script:DriftProfile
             $env:LOCALAPPDATA = Join-Path $script:DriftProfile "AppData\Local"
-            . $DeployScript *> $null
+            if ($RepoRoot) { . $DeployScript -RepoRoot $RepoRoot *> $null }
+            else { . $DeployScript *> $null }
         } catch {
             Add-LearnUnreadable "cannot check: unable to load junction definitions from ${DeployScript}: $($_.Exception.Message)"
             return
@@ -628,7 +880,7 @@ function Measure-Learn {
                 $kind = if ($code -match 'D') { 'deleted' } else { 'modified' }
                 $added = -1
                 $removed = -1
-                $ns = & git -C $wt diff --numstat HEAD -- $path 2>$null
+                $ns = & git -C $wt diff --no-ext-diff --no-textconv --numstat HEAD -- $path 2>$null
                 if ($LASTEXITCODE -eq 0 -and $ns) {
                     $parts = "$(@($ns)[0])" -split "`t"
                     # numstat prints "-" for binary files; report that as unknown.
@@ -646,7 +898,7 @@ function Measure-Learn {
 function Format-LearnLine($p) {
     $a = if ($p.Added -lt 0) { '?' } else { $p.Added }
     $r = if ($p.Removed -lt 0) { '?' } else { $p.Removed }
-    # Paths and counts only. A /learn edit can pick up anything; this goes to Slack.
+    # Paths and counts only. A /learn edit can pick up anything; this goes to Discord.
     "PENDING  {0} (+{1}/-{2}, {3})" -f $p.Path, $a, $r, $p.Kind
 }
 
@@ -698,18 +950,28 @@ function Invoke-LearnRetention {
 }
 
 # ── run the checks ───────────────────────────────────────────────────────────────
-foreach ($dir in $CronDir) { Test-CronDirectory $dir }
+foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir }
 Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
 if (-not $SkipLearn) { Measure-Learn }
 
-$policy = Get-Policy
-# Alert delivery is part of watchdog health, not a capability to discover only after
-# the factory is already down. If the token cannot be read, surface that loss now so
-# Task Scheduler never records a false healthy result while Slack alerting is dead.
-if (-not (Get-SlackToken)) {
-    Add-Finding "watchdog cannot read SLACK_FACTORY_BOT_TOKEN (checked environment and $EnvFile)"
-    $readFailure = $true
+# Configuration-only checks keep their detection/thresholds, but not liveness state.
+$configFindings = @($findings | Where-Object { $_ -match '^linear-token-expiry:|: worker-safety-net -' })
+foreach ($finding in $configFindings) { [void]$findings.Remove($finding) }
+
+# Keep complete path/count diagnostics local, never in the short daily messages.
+# DryRun must not write even these latest-file reports.
+$driftLatest = Join-Path $CronDir[0] 'watchdog-drift-latest.txt'
+$learnLatest = Join-Path $CronDir[0] 'watchdog-learn-latest.txt'
+if (-not $DryRun) {
+    foreach ($digest in @(
+        @{ skip = $SkipDrift; path = $driftLatest; name = 'drift'; lines = @($driftFindings) + @($driftUnreadable) },
+        @{ skip = $SkipLearn; path = $learnLatest; name = 'learn'; lines = @($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ }) }
+    )) {
+        if ($digest.skip) { continue }
+        try { [IO.File]::WriteAllLines($digest.path, [string[]]$digest.lines, [Text.UTF8Encoding]::new($false)) }
+        catch { Add-Finding "[$($CronDir[0])] digest-$($digest.name): cannot write latest diagnostic file" }
+    }
 }
 $healthy = ($findings.Count -eq 0)
 
@@ -718,11 +980,14 @@ foreach ($r in $report) {
     Write-Output ("  {0,-6} {1,-20} {2}  [{3}]" -f $r.Result, $r.Check, $r.Observed, $r.Scope)
 }
 if ($healthy) {
-    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, Linear expiry, Gatekeeper auth, approval wait)"
+    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Gatekeeper auth, approval wait)"
 } else {
     Write-Output "UNHEALTHY: $($findings.Count) finding(s)"
     foreach ($f in $findings) { Write-Output "  - $f" }
 }
+
+Write-Output "CONFIG: $(if ($configFindings.Count) { 'warning' } else { 'clean' })"
+foreach ($f in $configFindings) { Write-Output "  - $f" }
 
 # Drift is reported on its own line so a reader can tell at a glance which concern
 # is speaking. Silence here must mean "compared and clean", never "failed to compare".
@@ -754,17 +1019,24 @@ if ($SkipLearn) {
     foreach ($p in $learnPending) { Write-Output "  - $(Format-LearnLine $p)" }
 }
 
-if ($DryRun) {
-    Write-Output "DRY RUN: no Slack post, no snapshot, no state written."
-    exit ($healthy ? 0 : 1)
+# AUDIT BEGIN: output
+$auditObserved = 'not-reported'
+foreach ($status in @('found', 'cannot-check', 'clean')) {
+    if ($auditStatuses.Contains($status)) { $auditObserved = $status; break }
 }
-
-if ($null -eq $policy) {
-    # Without the policy we cannot address a message; say so on stdout so the task's
-    # Last Result and transcript still carry the signal.
-    Write-Output "Cannot alert: approval policy unreadable."
-    exit 4
+$auditCurrentIds = @($auditIds | Sort-Object -Unique | Sort-Object { [System.Numerics.BigInteger]::Parse(($_ -replace '^WD-', '')) })
+if ($SkipAudit) {
+    Write-Output 'AUDIT: skipped (-SkipAudit)'
+} elseif ($auditObserved -eq 'found') {
+    Write-Output "AUDIT: $($auditCurrentIds.Count) Done issue(s) without an INTEGRATION REPORT: $($auditCurrentIds -join ', ')"
+} elseif ($auditObserved -eq 'cannot-check') {
+    Write-Output 'AUDIT: CANNOT CHECK - Gatekeeper audit overdue'
+} elseif ($auditObserved -eq 'clean') {
+    Write-Output 'AUDIT CLEAN: latest Gatekeeper audit found none'
+} else {
+    Write-Output 'AUDIT: not reported by the Gatekeeper'
 }
+# AUDIT END: output
 
 # ── transition-based alerting ────────────────────────────────────────────────────
 # State lives per cron directory, so a scratch-dir fault-injection run can never
@@ -774,47 +1046,115 @@ $prev = $null
 if (Test-Path -LiteralPath $statePath) {
     try { $prev = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { $prev = $null }
 }
+$deliveryFailures = @{}
+$lastDelivery = @{}
+$oldFailures = Get-Prop $prev 'delivery_failure'
+if ($oldFailures) {
+    foreach ($key in @('liveness', 'config', 'drift', 'learn')) {
+        $entry = Get-Prop $oldFailures $key
+        if ($entry -and (Get-Prop $entry 'message') -and (Get-Prop $entry 'status')) {
+            $deliveryFailures[$key] = @{
+                message = $entry.message; status = $entry.status; identity = Get-Prop $entry 'identity'; error = 'pending'
+            }
+        }
+    }
+}
 $prevStatus = if ($prev) { Get-Prop $prev 'status' } else { 'healthy' }
+# Pending delivery defines the transition still owed to the recipient.
+if ($deliveryFailures['liveness']) { $prevStatus = $deliveryFailures['liveness'].status }
 $prevAlert = if ($prev) { Get-Prop $prev 'last_alert_at' } else { $null }
 # A sidecar written before WD-348 has no drift keys. Missing or old-format state is
 # "no prior state", never an error -- that is what makes rollback and roll-forward
 # both work with no migration step.
 $prevDriftStatus = if ($prev) { Get-Prop $prev 'drift_status' } else { $null }
 if (-not $prevDriftStatus) { $prevDriftStatus = 'clean' }
+if (-not $SkipDrift -and $deliveryFailures['drift']) { $prevDriftStatus = $deliveryFailures['drift'].status }
 $prevDriftAlert = if ($prev) { Get-Prop $prev 'drift_last_alert_at' } else { $null }
 
 $now = Get-Date
 $shouldPost = $false
 $message = $null
-$mention = "<@$($policy.approver_slack_user_id)>"
+$mention = "<@1022999767753691186>"
 
-if (-not $healthy) {
-    $detail = ($findings | ForEach-Object { "- $_" }) -join "`n"
-    if ($prevStatus -ne 'unhealthy') {
-        $shouldPost = $true
-        $message = ":warning: *Factory watchdog: the worker loops need attention* $mention`n$detail"
-    } else {
-        $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
-        if ($hoursSince -ge $NagHours) {
-            $shouldPost = $true
-            $message = (":warning: *Factory watchdog: still unhealthy after {0:N0}h* {1}`n{2}" -f $hoursSince, $mention, $detail)
-        } else {
-            Write-Output "COOLDOWN: still unhealthy, last alert $([math]::Round($hoursSince,1))h ago (nag every ${NagHours}h) - not posting."
+function Get-FindingKey([string]$Text) {
+    # Retain scope/job identity verbatim (including digits); discard only the
+    # observation after a known check marker. Ages/errors are not incident IDs.
+    if ($Text -match '^(\[.+?\] .+?): (DISABLED|PAUSED|last_status=error|FAILED|unparseable last_failure.at|OVERDUE|unparseable next_run_at|worker-safety-net)(?:\b| )') {
+        $check = switch ($Matches[2]) {
+            'unparseable last_failure.at' { 'FAILED' }
+            'unparseable next_run_at' { 'OVERDUE' }
+            default { $Matches[2] }
         }
+        return "$($Matches[1])|$check"
     }
-} elseif ($prevStatus -eq 'unhealthy') {
+    if ($Text -match '^(\[.+?\] (?:ticker|jobs|gatekeeper-linear-auth|digest-drift|digest-learn)):') {
+        return $Matches[1]
+    }
+    return $Text
+}
+function Get-FindingMap($Value) {
+    $map = @{}
+    if ($Value -is [System.Collections.IDictionary]) {
+        foreach ($key in $Value.Keys) { $map[$key] = $Value[$key] }
+    } elseif ($Value) {
+        foreach ($property in $Value.PSObject.Properties) { $map[$property.Name] = $property.Value }
+    }
+    return ,$map
+}
+$previousOpen = Get-FindingMap (Get-Prop $prev 'open_findings')
+$previousTexts = Get-FindingMap (Get-Prop $prev 'finding_texts')
+$openFindings = @{}
+$findingTexts = @{}
+foreach ($finding in $findings) {
+    $key = Get-FindingKey $finding
+    $openFindings[$key] = if ($previousOpen.ContainsKey($key)) { $previousOpen[$key] } else { $now.ToString('o') }
+    $findingTexts[$key] = $finding
+}
+$added = @($openFindings.Keys | Where-Object { -not $previousOpen.ContainsKey($_) } | Sort-Object)
+$removed = @($previousOpen.Keys | Where-Object { -not $openFindings.ContainsKey($_) } | Sort-Object)
+if ($added.Count -or $removed.Count) {
+    $lines = @($added | ForEach-Object { "new: $($findingTexts[$_])" }) +
+             @($removed | ForEach-Object { "recovered: $(if ($previousTexts[$_]) { $previousTexts[$_] } else { $_ })" })
     $shouldPost = $true
-    $message = ":white_check_mark: *Factory watchdog: recovered* - all checks passing again."
+    # A full recovery must read as a recovery, not as a new attention alert.
+    $message = if ($healthy) {
+        ":white_check_mark: *Factory watchdog: recovered* - all liveness checks passing again.`n$($lines -join "`n")"
+    } else {
+        ":warning: *Factory watchdog: the worker loops need attention* $mention`n$($lines -join "`n")`n$($openFindings.Count) liveness finding(s) still open."
+    }
+} elseif (-not $healthy) {
+    $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
+    if ($hoursSince -ge $NagHours) {
+        $shouldPost = $true
+        $detail = ($findings | ForEach-Object { "- $_" }) -join "`n"
+        $message = (":warning: *Factory watchdog: still unhealthy after {0:N0}h* {1}`n{2}" -f $hoursSince, $mention, $detail)
+    } else { Write-Output "COOLDOWN: unchanged liveness findings - not posting." }
+}
+# Identity distinguishes two different unhealthy sets while an earlier send is pending.
+$livenessIdentity = ConvertTo-Json -Compress -InputObject @($openFindings.Keys | Sort-Object)
+$pendingBefore = $deliveryFailures['liveness']
+$delivered = Send-Concern 'liveness' $shouldPost $message $(if ($healthy) { 'healthy' } else { 'unhealthy' }) $livenessIdentity
+# Keep the observation corresponding to the oldest pending message until it sends.
+# This preserves changes across repeated failures, even if status stays unhealthy.
+if (-not $delivered -and $pendingBefore -and $deliveryFailures['liveness'] -eq $pendingBefore) {
+    $openFindings = $previousOpen
+    $findingTexts = $previousTexts
 }
 
-$delivered = $true
-if ($shouldPost) {
-    if ($AlertPrefix) { $message = "$AlertPrefix`n$message" }
-    $delivered = Send-SlackAlert $message $policy
-}
+$configStatus = if ($configFindings.Count) { 'warning' } else { 'clean' }
+$prevConfigStatus = Get-Prop $prev 'config_status'
+if (-not $prevConfigStatus) { $prevConfigStatus = 'clean' }
+if ($deliveryFailures['config']) { $prevConfigStatus = $deliveryFailures['config'].status }
+$prevConfigAlert = Get-Prop $prev 'config_last_alert_at'
+$configHours = if ($prevConfigAlert) { ($now - [datetime]::Parse($prevConfigAlert)).TotalHours } else { [double]::MaxValue }
+$configShouldPost = ($configStatus -ne $prevConfigStatus) -or ($configStatus -eq 'warning' -and $configHours -ge 24)
+$configMessage = if ($configStatus -eq 'warning') {
+    ":wrench: *Factory configuration warning* (not a worker outage)`n$($configFindings -join "`n")"
+} else { ':white_check_mark: *Factory configuration recovered*' }
+$configDelivered = Send-Concern 'config' $configShouldPost $configMessage $configStatus
 
 # ── drift alerting, on its own transition ────────────────────────────────────────
-# Same discipline as liveness (post on transition, nag at most every -NagHours, one
+# Post on transition, daily digest while unresolved, one
 # recovery message) but a separate state machine and unmistakably different wording:
 # a drift alert must never read as "the factory is dead".
 $driftShouldPost = $false
@@ -824,7 +1164,10 @@ $driftStatus = $prevDriftStatus
 if (-not $SkipDrift) {
     $driftStatus = if ($driftClean -and $driftAvailable) { 'clean' } else { 'drifted' }
     if ($driftStatus -eq 'drifted') {
-        $detail = (@($driftFindings) + @($driftUnreadable) | ForEach-Object { "- $_" }) -join "`n"
+        $targets = @($driftFindings | ForEach-Object {
+            if ($_ -match '^DRIFT\s+(.+) \(deployed ') { Split-Path $Matches[1] -Parent }
+            else { 'watchdog' }
+        } | Sort-Object -Unique)
         # The liveness clause is CONDITIONAL. Asserting "the factory is running
         # normally" in the same tick that liveness reported unhealthy contradicts the
         # outage alert and can mask the very failure this watchdog exists to surface.
@@ -834,20 +1177,20 @@ if (-not $SkipDrift) {
             " - NOTE: liveness is UNHEALTHY this tick; see the separate worker alert"
         }
         $headline = if ($driftAvailable) {
-            "*Deploy drift: $($driftFindings.Count) target(s) out of sync*$livenessClause"
+            "*Deploy drift: $($driftFindings.Count) files differ across $($targets.Count) targets*$livenessClause"
         } else {
             "*Deploy drift check could not run*$livenessClause, and drift is currently unmonitored"
         }
         if ($prevDriftStatus -ne 'drifted') {
             $driftShouldPost = $true
-            $driftMessage = ":triangular_flag_on_post: $headline`n$detail`nRun ``deploy.ps1 -Check`` to inspect, ``deploy.ps1 -Reconcile`` to pull deployed edits into the repo."
+            $driftMessage = ":triangular_flag_on_post: $headline. $($driftUnreadable.Count) unreadable. Full list: ``$driftLatest``."
         } else {
             $hoursSinceDrift = if ($prevDriftAlert) { ($now - [datetime]::Parse($prevDriftAlert)).TotalHours } else { [double]::MaxValue }
-            if ($hoursSinceDrift -ge $NagHours) {
+            if ($hoursSinceDrift -ge 24) {
                 $driftShouldPost = $true
-                $driftMessage = (":triangular_flag_on_post: *Deploy drift still unresolved after {0:N0}h*{1}`n{2}" -f $hoursSinceDrift, $livenessClause, $detail)
+                $driftMessage = ":triangular_flag_on_post: $headline. $($driftUnreadable.Count) unreadable. Full list: ``$driftLatest``."
             } else {
-                Write-Output "DRIFT COOLDOWN: still drifted, last drift alert $([math]::Round($hoursSinceDrift,1))h ago (nag every ${NagHours}h) - not posting."
+                Write-Output "DRIFT COOLDOWN: still drifted, last drift alert $([math]::Round($hoursSinceDrift,1))h ago (digest every 24h) - not posting."
             }
         }
     } elseif ($prevDriftStatus -eq 'drifted') {
@@ -857,10 +1200,7 @@ if (-not $SkipDrift) {
 }
 
 $driftDelivered = $true
-if ($driftShouldPost) {
-    if ($AlertPrefix) { $driftMessage = "$AlertPrefix`n$driftMessage" }
-    $driftDelivered = Send-SlackAlert $driftMessage $policy
-}
+if (-not $SkipDrift) { $driftDelivered = Send-Concern 'drift' $driftShouldPost $driftMessage $driftStatus }
 
 # ── pending /learn edits, on their own transition (WD-362) ───────────────────────
 # Same post-on-transition / nag / one-recovery discipline, a third state machine and
@@ -868,6 +1208,7 @@ if ($driftShouldPost) {
 # keys; that is "no prior state", never an error.
 $prevLearnStatus = if ($prev) { Get-Prop $prev 'learn_status' } else { $null }
 if (-not $prevLearnStatus) { $prevLearnStatus = 'clean' }
+if (-not $SkipLearn -and $deliveryFailures['learn']) { $prevLearnStatus = $deliveryFailures['learn'].status }
 $prevLearnAlert = if ($prev) { Get-Prop $prev 'learn_last_alert_at' } else { $null }
 $prevLearnFingerprint = if ($prev) { Get-Prop $prev 'learn_fingerprint' } else { $null }
 $prevLearnSnapshot = if ($prev) { Get-Prop $prev 'learn_snapshot' } else { $null }
@@ -883,7 +1224,7 @@ if (-not $SkipLearn) {
     $learnStatus = if ($learnUnreadable.Count -gt 0) { 'cannot-check' }
                    elseif ($learnPending.Count -gt 0) { 'pending' }
                    else { 'clean' }
-    if ($learnPending.Count -gt 0) {
+    if ($learnPending.Count -gt 0 -and -not $DryRun) {
         # Snapshot whenever the pending content changes, alert or not: the snapshot is
         # the recovery path, and unchanged content needs no second copy.
         $fp = Get-LearnFingerprint
@@ -904,70 +1245,123 @@ if (-not $SkipLearn) {
     }
 
     if ($learnStatus -ne 'clean') {
-        $lines = @($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ })
-        if ($snapshotError) { $lines += "SNAPSHOT FAILED: $snapshotError" }
-        $detail = ($lines | ForEach-Object { "- $_" }) -join "`n"
-        $where = $learnWorktrees -join ', '
         $headline = if ($learnStatus -eq 'pending') {
-            "*Uncommitted /learn edits in the live skill worktree* ($($learnPending.Count) file(s), committed nowhere yet)"
+            "*Uncommitted /learn edits: $($learnPending.Count) files across $($learnWorktrees.Count) worktrees*"
         } else {
             "*Pending /learn edits: cannot check the live skill worktree* - uncommitted /learn work is currently unmonitored"
         }
-        $footer = if ($learnStatus -eq 'pending') {
-            "Snapshot: ``$learnSnapshot```nReview with ``git -C $where diff``, commit what belongs, push. (Not a worker outage; not a copy-deploy mismatch.)"
-        } else { "(Not a worker outage; not a copy-deploy mismatch.)" }
-        if ($prevLearnStatus -ne $learnStatus) {
+        $footer = "$($learnUnreadable.Count) unreadable. Full list: ``$learnLatest``. (Not a worker outage.)"
+        if ($snapshotError) { $footer += ' SNAPSHOT FAILED.' }
+        if ($prevLearnStatus -eq 'clean') {
             $learnShouldPost = $true
-            $learnMessage = ":pencil2: $headline`n$detail`n$footer"
+            $learnMessage = ":pencil2: $headline. $footer"
         } else {
             $hoursSinceLearn = if ($prevLearnAlert) { ($now - [datetime]::Parse($prevLearnAlert)).TotalHours } else { [double]::MaxValue }
-            if ($hoursSinceLearn -ge $NagHours) {
+            if ($hoursSinceLearn -ge 24) {
                 $learnShouldPost = $true
-                $learnMessage = (":pencil2: *Still uncommitted after {0:N0}h:* {1}`n{2}`n{3}" -f $hoursSinceLearn, $headline, $detail, $footer)
+                $learnMessage = ":pencil2: $headline. $footer"
             } else {
-                Write-Output "LEARN COOLDOWN: last /learn alert $([math]::Round($hoursSinceLearn,1))h ago (nag every ${NagHours}h) - not posting."
+                Write-Output "LEARN COOLDOWN: last /learn alert $([math]::Round($hoursSinceLearn,1))h ago (digest every 24h) - not posting."
             }
         }
     } elseif ($prevLearnStatus -ne 'clean') {
         $learnShouldPost = $true
         $learnMessage = ":white_check_mark: */learn edits resolved* - the live skill worktree is clean again."
     }
-    Invoke-LearnRetention
+    if (-not $DryRun) { Invoke-LearnRetention }
 }
 
 $learnDelivered = $true
-if ($learnShouldPost) {
-    if ($AlertPrefix) { $learnMessage = "$AlertPrefix`n$learnMessage" }
-    $learnDelivered = Send-SlackAlert $learnMessage $policy
+if (-not $SkipLearn) { $learnDelivered = Send-Concern 'learn' $learnShouldPost $learnMessage $learnStatus }
+
+# AUDIT BEGIN: transition
+# Only successful delivery advances audit status/IDs, preserving failed transitions
+# (including recovery) for retry. Skipped/absent reports carry all state forward.
+$prevAuditStatus = if ($prev) { Get-Prop $prev 'audit_status' } else { $null }
+if (-not $prevAuditStatus) { $prevAuditStatus = 'clean' }
+$prevAuditIds = @(if ($prev) { Get-Prop $prev 'audit_ids' })
+$prevAuditAlert = if ($prev) { Get-Prop $prev 'audit_last_alert_at' } else { $null }
+$auditStatus = $prevAuditStatus
+$auditSavedIds = $prevAuditIds
+$auditShouldPost = $false
+$auditDelivered = $true
+$auditMessage = $null
+if (-not $SkipAudit -and $auditObserved -ne 'not-reported') {
+    $auditStatus = $auditObserved
+    $auditSavedIds = $auditCurrentIds
+    $hoursSinceAudit = if ($prevAuditAlert) { ($now - [datetime]::Parse($prevAuditAlert)).TotalHours } else { [double]::MaxValue }
+    if ($auditStatus -eq 'found') {
+        if ($prevAuditStatus -ne 'found' -or ($prevAuditIds -join ',') -ne ($auditCurrentIds -join ',')) {
+            $auditShouldPost = $true
+            $auditMessage = ":mag: *Done without integration: $($auditCurrentIds.Count) Factory Queue issue(s) reached Done with no INTEGRATION REPORT* - $($auditCurrentIds -join ', ')`nOnly /wolftac-integrate may set Done; check each issue's history. (Not a worker outage.)"
+        } elseif ($hoursSinceAudit -ge $NagHours) {
+            $auditShouldPost = $true
+            $auditMessage = (":mag: *Done without integration, still unresolved after {0:N0}h:* {1}" -f $hoursSinceAudit, ($auditCurrentIds -join ', '))
+        }
+    } elseif ($auditStatus -eq 'cannot-check') {
+        if ($prevAuditStatus -ne 'cannot-check' -or $hoursSinceAudit -ge $NagHours) {
+            $auditShouldPost = $true
+            $auditMessage = ':mag: *Done-without-integration audit has not completed for 48h* - the Gatekeeper audit is overdue. (Not a worker outage.)'
+        }
+    } elseif ($prevAuditStatus -in @('found', 'cannot-check')) {
+        $auditShouldPost = $true
+        $auditMessage = ':white_check_mark: *Done-without-integration audit clean* - the latest daily audit found no new Done issue without an INTEGRATION REPORT.'
+    }
 }
+if ($auditShouldPost) {
+    if ($AlertPrefix) { $auditMessage = "$AlertPrefix`n$auditMessage" }
+    try { $auditDelivered = Send-DiscordAlert $auditMessage }
+    catch { $auditDelivered = $false; Write-Output 'AUDIT: alert delivery failed' }
+    if (-not $auditDelivered) {
+        $auditStatus = $prevAuditStatus
+        $auditSavedIds = $prevAuditIds
+    }
+}
+# AUDIT END: transition
 
 # Persist AFTER the attempt. A failed delivery leaves last_alert_at untouched so the
 # next tick retries rather than silently swallowing the alert.
+if ($DryRun) {
+    Write-Output "DRY RUN: no Discord post, no snapshot, no state written."
+    exit ($healthy ? 0 : 1)
+}
 $newState = [ordered]@{
     status              = if ($healthy) { 'healthy' } else { 'unhealthy' }
     checked_at          = $now.ToString('o')
     findings            = @($findings)
-    last_alert_at       = if ($shouldPost -and $delivered) { $now.ToString('o') } else { $prevAlert }
+    open_findings       = $openFindings
+    finding_texts       = $findingTexts
+    config_status       = $configStatus
+    config_findings     = @($configFindings)
+    config_last_alert_at = if ($lastDelivery.ContainsKey('config')) { $lastDelivery['config'] } else { $prevConfigAlert }
+    last_alert_at       = if ($lastDelivery.ContainsKey('liveness')) { $lastDelivery['liveness'] } else { $prevAlert }
     # Drift state rides alongside liveness state in the same disposable sidecar.
     # -SkipDrift carries the previous drift state forward untouched rather than
     # asserting "clean" for a check that never ran.
     drift_status        = $driftStatus
     drift_findings      = @(@($driftFindings) + @($driftUnreadable))
-    drift_last_alert_at = if ($driftShouldPost -and $driftDelivered) { $now.ToString('o') } else { $prevDriftAlert }
+    drift_last_alert_at = if ($lastDelivery.ContainsKey('drift')) { $lastDelivery['drift'] } else { $prevDriftAlert }
     learn_status        = $learnStatus
     learn_findings      = @(@($learnUnreadable) + @($learnPending | ForEach-Object { Format-LearnLine $_ }))
-    learn_last_alert_at = if ($learnShouldPost -and $learnDelivered) { $now.ToString('o') } else { $prevLearnAlert }
+    learn_last_alert_at = if ($lastDelivery.ContainsKey('learn')) { $lastDelivery['learn'] } else { $prevLearnAlert }
     learn_fingerprint   = $learnFingerprint
     learn_snapshot      = $learnSnapshot
+    # AUDIT BEGIN: state
+    audit_status        = $auditStatus
+    audit_ids           = @($auditSavedIds)
+    audit_last_alert_at = if ($auditShouldPost -and $auditDelivered) { $now.ToString('o') } else { $prevAuditAlert }
+    # AUDIT END: state
+    delivery_failure    = $deliveryFailures
 }
 try {
     $newState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath -Encoding utf8
     Write-Output "STATE: $statePath -> $($newState.status)"
 } catch {
-    Write-Output "STATE: could not write $statePath - $($_.Exception.Message)"
+    Write-Output "STATE: could not write $statePath"
+    exit 4
 }
 
-if (-not $delivered -or -not $driftDelivered -or -not $learnDelivered) { exit 3 }
+if (-not $delivered -or -not $configDelivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered) { exit 3 }
 # Drift and pending /learn edits deliberately do NOT change the exit code: a drifted-but-running factory is
 # not an outage, and Task Scheduler's Last Result is the liveness signal (AC-3).
 exit ($healthy ? 0 : 1)
