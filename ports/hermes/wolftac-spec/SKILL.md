@@ -238,6 +238,14 @@ When a build bounced an issue back to Todo on spec conflicts, follow `references
 - Keep new factory-checks tests stdlib-only. CI runs the runner's system `python3`, so
   assert policy YAML with string and regex checks on the real file plus a negative case,
   not a third-party parser.
+- For configured-route independence checks, account for endpoint overrides on jobs,
+  inherited model settings and fallback entries before certifying a vendor from its
+  provider label. Unknown applicable endpoints must remain UNVERIFIABLE; never print
+  endpoint values or read credentials. Test both mapping and list fallback forms,
+  legacy fallback keys and their merge/dedup semantics against the installed resolver.
+- For worker-monitor selection, mirror the runtime's singular `skill` and plural
+  `skills` normalization and precedence, not only the current fleet's array shape.
+  Prove renamed legacy-field jobs reach the checker before testing route verdicts.
 - A stale Todo spec on the same file is a filing decision, not something to ignore. List
   it as D1 (recommend cancel-and-supersede or amend) in the draft, so two issues never
   edit the same file blind.
