@@ -1247,5 +1247,254 @@ class GatekeeperTests(unittest.TestCase):
         self.assertEqual(json.loads(self.state.read_text())["approval_dispatched"], {})
 
 
+    # WD-578: synthetic inputs and fake HTTP/Popen/R1 from setUp only.
+    def assert_fail_open_backoff_sequence(self, reason):
+        self.assertEqual(g.FAIL_OPEN_BACKOFF_MINUTES, 120)
+        out = self.tick()
+        for lane in g.DEFAULT_JOB_MAP:
+            self.assertIn(f"{lane}: {reason} -> dispatched(pid=1234)", out)
+        self.assertEqual(self.spawn.call_count, len(g.DEFAULT_JOB_MAP))
+        expected = {lane: NOW.isoformat() for lane in g.DEFAULT_JOB_MAP}
+        self.assertEqual(json.loads(self.state.read_text())["fail_open_dispatched"], expected)
+        self.confirm()
+        until = (NOW + timedelta(minutes=120)).isoformat()
+        for minutes in (30, 60, 90, 119):
+            with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=minutes)):
+                out = self.tick()
+            for lane in g.DEFAULT_JOB_MAP:
+                self.assertIn(f"{lane}: {reason} -> backoff until {until}", out)
+            self.spawn.assert_not_called()
+            state = json.loads(self.state.read_text())
+            self.assertEqual(state["fail_open_dispatched"], expected)
+            self.assertEqual(state["last_dispatch_at"], expected)
+            self.assertEqual(state["lanes"], {})
+            self.assertEqual(state["degraded_since"], NOW.isoformat())
+        later = NOW + timedelta(minutes=121)
+        with patch.object(g, "now_utc", return_value=later):
+            out = self.tick()
+        for lane in g.DEFAULT_JOB_MAP:
+            self.assertIn(f"{lane}: {reason} -> dispatched(pid=1234)", out)
+        self.assertEqual(self.spawn.call_count, len(g.DEFAULT_JOB_MAP))
+        self.assertEqual(json.loads(self.state.read_text())["fail_open_dispatched"],
+                         {lane: later.isoformat() for lane in g.DEFAULT_JOB_MAP})
+
+    def test_fail_open_network_backoff_ac1(self):
+        self.http.side_effect = urllib.error.URLError(LINEAR)
+        self.assert_fail_open_backoff_sequence("probe failed (URLError) -> FAIL-OPEN")
+        self.assertNotIn(LINEAR, "".join(self.output))
+
+    def test_fail_open_missing_env_backoff_ac2(self):
+        self.env.unlink()
+        self.assert_fail_open_backoff_sequence("FAIL-OPEN (env unreadable: FileNotFoundError)")
+        self.http.assert_not_called()
+
+    def test_fail_open_healthy_tick_clears_backoff_ac3(self):
+        self.http.side_effect = urllib.error.URLError("synthetic")
+        self.tick()
+        self.confirm()
+        self.http.side_effect = self.open
+        # Empty healthy queues clear the records even without a launch.
+        self.issues = {state: [] for state in self.issues}
+        with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=30)):
+            out = self.tick()
+        for lane in g.DEFAULT_JOB_MAP:
+            self.assertIn(f"{lane}: idle", out)
+        self.spawn.assert_not_called()
+        self.assertEqual(json.loads(self.state.read_text())["fail_open_dispatched"], {})
+        self.http.side_effect = urllib.error.URLError("synthetic")
+        with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=31)):
+            out = self.tick()
+        self.assertEqual(out.count("FAIL-OPEN -> dispatched(pid=1234)"), len(g.DEFAULT_JOB_MAP))
+        self.assertEqual(self.spawn.call_count, len(g.DEFAULT_JOB_MAP))
+
+    def test_fail_open_backoff_is_per_lane_and_exact_boundary(self):
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        state["fail_open_dispatched"] = {
+            "build": NOW.isoformat(),
+            "build-crm": (NOW - timedelta(minutes=120)).isoformat(),
+            "review": "invalid",
+        }
+        self.write(self.state, state)
+        self.http.side_effect = urllib.error.URLError("synthetic")
+        out = self.tick()
+        self.assertIn("build: probe failed (URLError) -> FAIL-OPEN -> backoff until", out)
+        for lane in ("build-crm", "review", "integrate"):
+            self.assertIn(f"{lane}: probe failed (URLError) -> FAIL-OPEN -> dispatched(pid=1234)", out)
+        self.assertEqual(self.spawn.call_count, 3)
+
+    def test_fail_open_backoff_normalizes_legacy_state(self):
+        for value in (None, [], False, "invalid"):
+            with self.subTest(value=value):
+                self.write(self.state, {"fail_open_dispatched": value})
+                self.assertEqual(g.load_state(str(self.state))["fail_open_dispatched"], {})
+        self.write(self.state, {})
+        self.assertEqual(g.load_state(str(self.state))["fail_open_dispatched"], {})
+
+    def test_fail_open_failed_dispatch_and_dry_run_ac4(self):
+        self.http.side_effect = urllib.error.URLError("synthetic")
+        self.spawn.side_effect = OSError(LINEAR)
+        out = self.tick()
+        self.assertEqual(out.count("FAIL-OPEN -> dispatch-failed(OSError)"), len(g.DEFAULT_JOB_MAP))
+        self.assertEqual(json.loads(self.state.read_text())["fail_open_dispatched"], {})
+        self.assertNotIn(LINEAR, out)
+        self.spawn.side_effect = None
+        before = {p: p.read_bytes() for p in (self.state, self.jobs, self.env)}
+        out = self.tick("--dry-run")
+        self.assertEqual(out.count("FAIL-OPEN -> dispatched(dry-run)"), len(g.DEFAULT_JOB_MAP))
+        self.spawn.assert_not_called()
+        for path, contents in before.items():
+            self.assertEqual(path.read_bytes(), contents)
+        self.tick()
+        self.confirm()
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=30)), \
+                patch.object(g.tempfile, "mkstemp", wraps=g.tempfile.mkstemp) as mkstemp:
+            out = self.tick("--dry-run")
+        self.assertEqual(out.count("FAIL-OPEN -> backoff until"), len(g.DEFAULT_JOB_MAP))
+        self.spawn.assert_not_called()
+        mkstemp.assert_not_called()
+        self.assertEqual({p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}, before)
+
+    def test_linear_401_after_fail_open_bypasses_backoff_ac5(self):
+        self.http.side_effect = urllib.error.URLError("synthetic")
+        self.tick()
+        self.confirm()
+        before = json.loads(self.state.read_text())
+        self.http.side_effect = self.open
+        self.linear_error = urllib.error.HTTPError("https://api.linear.app/graphql", 401, LINEAR, Message(), None)
+        with patch.object(g, "now_utc", return_value=NOW + timedelta(minutes=30)):
+            out = self.tick()
+        for lane in ("build", "build-crm", "review"):
+            self.assertIn(f"{lane}: linear-auth-failed (401) -> skipped", out)
+        self.assertIn("integrate: linear-auth-failed (401) -> dispatched(pid=1234) for re-mint", out)
+        self.assertNotIn("backoff", out)
+        self.assertNotIn(LINEAR, out)
+        self.spawn.assert_called_once()
+        after = json.loads(self.state.read_text())
+        self.assertEqual(after["fail_open_dispatched"], before["fail_open_dispatched"])
+        self.assertEqual(after["degraded_since"], before["degraded_since"])
+
+    def test_healthy_probe_clears_backoff_before_skip_or_failed_launch(self):
+        for mode in ("unchanged", "discord-failure", "spawn-failure"):
+            with self.subTest(mode=mode):
+                self.with_pack()
+                self.reactors = []
+                self.reader_result = (None, "timeout") if mode == "discord-failure" else None
+                state = json.loads(self.state.read_text())
+                state["fail_open_dispatched"] = {"integrate": NOW.isoformat()}
+                self.write(self.state, state)
+                if mode == "spawn-failure":
+                    self.issues["Approved"][0]["description"] = "changed"
+                    self.spawn.side_effect = OSError("synthetic")
+                out = self.tick()
+                expected = {"unchanged": "unchanged (skip)", "discord-failure": "discord-check-failed (timeout)",
+                            "spawn-failure": "changed -> dispatch-failed(OSError)"}[mode]
+                self.assertIn("integrate: " + expected, out)
+                self.assertEqual(json.loads(self.state.read_text())["fail_open_dispatched"], {})
+
+    def test_atomic_replace_failure_retains_state_and_cleans_temp_ac6(self):
+        self.baseline()
+        before = self.state.read_bytes()
+        with patch.object(g.os, "replace", side_effect=PermissionError(LINEAR)):
+            out = self.tick()
+        self.assertEqual(self.state.read_bytes(), before)
+        self.assertEqual(list(self.root.glob("*.tmp")), [])
+        self.assertIn("state: save-failed (PermissionError)", out)
+        self.assertNotIn(LINEAR, out)
+
+    def test_atomic_normal_write_flushes_syncs_in_same_directory_ac6(self):
+        self.baseline()
+        old = self.state.read_bytes()
+        sync = g.os.fsync
+        replace = g.os.replace
+        events = []
+
+        def synced(fd):
+            temporary = list(self.root.glob(".gatekeeper-state.*.tmp"))
+            self.assertEqual(len(temporary), 1)
+            # Reading valid JSON through a separate handle proves flush preceded fsync.
+            self.assertIn("fail_open_dispatched", json.loads(temporary[0].read_text()))
+            self.assertEqual(self.state.read_bytes(), old)
+            events.append("fsync")
+            return sync(fd)
+
+        def replaced(source, destination):
+            self.assertEqual(events, ["fsync"])
+            self.assertEqual(Path(source).parent, self.state.parent)
+            self.assertEqual(Path(destination), self.state)
+            events.append("replace")
+            return replace(source, destination)
+
+        with patch.object(g.tempfile, "mkstemp", wraps=g.tempfile.mkstemp) as mkstemp, \
+                patch.object(g.os, "fsync", side_effect=synced), \
+                patch.object(g.os, "replace", side_effect=replaced):
+            out = self.tick()
+        mkstemp.assert_called_once_with(dir=str(self.root), prefix=".gatekeeper-state.", suffix=".tmp")
+        self.assertEqual(events, ["fsync", "replace"])
+        self.assertNotIn("save-failed", out)
+        self.assertEqual(list(self.root.glob("*.tmp")), [])
+
+    def test_atomic_interrupted_json_keeps_recovery_inflight_ac7(self):
+        self.prepare(1, two=True)
+        state = json.loads(self.state.read_text())
+        state["degraded_since"] = (NOW - timedelta(hours=1)).isoformat()
+        state["lanes"]["build"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
+        state["fail_open_dispatched"] = {"build": NOW.isoformat()}
+        self.write(self.state, state)
+        before = self.state.read_bytes()
+
+        def interrupted(data, fh, **kwargs):
+            fh.write('{"lanes":')
+            fh.flush()
+            raise OSError(LINEAR)
+
+        with patch.object(g.json, "dump", side_effect=interrupted):
+            out = self.tick()
+        self.assertIn("state: save-failed (OSError)", out)
+        self.assertNotIn(LINEAR, out)
+        self.assertEqual(self.state.read_bytes(), before)
+        self.assertEqual(list(self.root.glob("*.tmp")), [])
+        out = self.tick()
+        self.assertIn("build: in-flight (skip)", out)
+        self.assertIn("build-crm: recovered after degraded period -> dispatched(pid=1234)", out)
+        after = json.loads(self.state.read_text())
+        self.assertEqual(after["lanes"]["build"], state["lanes"]["build"])
+        self.assertEqual(after["fail_open_dispatched"], state["fail_open_dispatched"])
+        self.assertEqual(after["recovery_pending"], ["build"])
+        self.assertNotIn("degraded_since", after)
+
+    def test_atomic_creation_and_fsync_failures_are_safe(self):
+        self.baseline()
+        before = self.state.read_bytes()
+        for target, name in ((g.tempfile, "mkstemp"), (g.os, "fsync")):
+            with self.subTest(stage=name), patch.object(target, name, side_effect=OSError(LINEAR)):
+                out = self.tick()
+            self.assertIn("state: save-failed (OSError)", out)
+            self.assertNotIn(LINEAR, out)
+            self.assertEqual(self.state.read_bytes(), before)
+            self.assertEqual(list(self.root.glob("*.tmp")), [])
+
+    def test_quoted_linear_tokens_and_empty_value_ac8(self):
+        for value in (f'"{LINEAR}"', f"'{LINEAR}'", LINEAR):
+            with self.subTest(quoted=value != LINEAR):
+                self.env.write_text(f"  LINEAR_FACTORY_BOT_TOKEN={value}  \n", encoding="utf-8")
+                self.baseline()
+                out = self.tick()
+                self.assertTrue(self.requests)
+                for request in self.requests:
+                    self.assertEqual(request.get_header("Authorization"), "Bearer " + LINEAR)
+                self.assertNotIn("FAIL-OPEN", out)
+                self.assertNotIn(LINEAR, out + self.state.read_text())
+        self.env.write_text('LINEAR_FACTORY_BOT_TOKEN=""\n', encoding="utf-8")
+        with self.assertRaisesRegex(g.ProbeError, "LINEAR_FACTORY_BOT_TOKEN missing or empty"):
+            g.read_token(str(self.env))
+        self.baseline()
+        out = self.tick()
+        self.assertIn("FAIL-OPEN (env unreadable: LINEAR_FACTORY_BOT_TOKEN missing or empty)", out)
+        self.http.assert_not_called()
+        self.assertNotIn(LINEAR, out + self.state.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()
