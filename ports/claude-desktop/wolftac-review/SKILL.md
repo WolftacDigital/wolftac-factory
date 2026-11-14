@@ -65,9 +65,18 @@ every task" rule):
    no comment or state change — issues whose spec **Repo:** path this chat cannot
    reach.
    **PARKED-NEEDS-HUMAN-SKIP:** Silently skip an issue whose latest review report is
-   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or lacks a
-   later Jonathan decision comment. Do not comment or change state. Jonathan's later
-   decision comment plus removal of his assignment clears the park.
+   `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or no later
+   comment clears the park. Do not comment or change state.
+   **DECISION-RECORD-UNPARK:** A park clears only when Jonathan's assignment is
+   removed AND a comment newer than that report is either a
+   `DECISION RECORD — <ISSUE-ID>` comment naming this issue with a Discord message
+   link (`https://discord.com/channels/<guild>/<channel-or-thread>/<message>`), or a
+   comment Jonathan wrote himself in Linear. The issue then re-enters the review
+   queue and that record or comment is part of its work order.
+   Logan asks Jonathan in Discord `#exec` and posts the record.
+   Jonathan is never asked to comment in Linear.
+   A relay without the Discord message link does NOT clear the park.
+   Workers never write a DECISION RECORD.
    Before choosing an unclaimed review, perform a read-first stale-claim sweep:
    inspect assignee-held `In Review` issues with label `Factory Queue` (and the lane
    filter, if any). If the most recent comment, or `startedAt`/claim time when there
@@ -172,9 +181,11 @@ every task" rule):
    - **NEEDS HUMAN** — any `[SCOPE-CONFLICT]` finding or finding requiring a product
      decision. Post `REVIEW REPORT — NEEDS HUMAN`, name the exact decision in one
      tagged `[SCOPE-CONFLICT]` line, assign the issue to Jonathan, and keep state
-     `In Review`; do NOT move it. The report must instruct: Jonathan comments his
-     decision, then removes his assignment; the issue re-enters the review queue with
-     his decision as part of the work order.
+     `In Review`; do NOT move it. The report must instruct: Logan asks Jonathan in
+     Discord `#exec`, posts one `DECISION RECORD — <ISSUE-ID>` comment with the
+     Discord message link and removes Jonathan's assignment; the issue re-enters the
+     review queue with that record as part of the work order. Nobody asks Jonathan
+     to comment in Linear.
 
    **NEEDS HUMAN is FORBIDDEN for ordinary decidable defects — decidable defects
    require FAIL; only product decisions may park an issue.**
@@ -192,7 +203,7 @@ every task" rule):
    - **Reviewed head:** <remote branch> @ <exact verified SHA>
    - **Defects:** <none, or numbered list; each finding starts with exactly one of [AC-N], [DEFECT], [SECURITY], [CI], [SCOPE-CONFLICT]>
    - **Human decision:** <none, or [SCOPE-CONFLICT] Decide <the exact product decision needed>>
-   - **Park / un-park:** <not parked, or assign to Jonathan; keep In Review; Jonathan comments his decision, removes his assignment, and the issue re-enters the review queue with that decision as work order>
+   - **Park / un-park:** <not parked, or assign to Jonathan; keep In Review; Logan asks Jonathan in Discord #exec, posts the DECISION RECORD with the Discord message link and removes Jonathan's assignment; the issue re-enters the review queue with that record as work order; nobody asks Jonathan to comment in Linear>
    - **Suggestions (out of scope):** <ideas for a future /wolftac-spec>
    ```
 

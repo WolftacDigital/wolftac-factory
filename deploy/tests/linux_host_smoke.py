@@ -189,7 +189,8 @@ def watchdog_case(root, case, env, home_mode="explicit"):
     assert before == digest_tree(root), "DryRun wrote state, backup or outbox"
     findings = [line.strip().replace(str(cron), "<scratch>/cron") for line in text.splitlines()
                 if line.startswith("  - ")]
-    assert run.returncode == (0 if case == "healthy" else 1), text
+    # WD-624: expiry remains visible, but configuration is not a liveness failure.
+    assert run.returncode == (0 if case in ("healthy", "expiry") else 1), text
     assert len(findings) == (0 if case == "healthy" else 1), text
     return {"exit": run.returncode, "findings": findings}
 

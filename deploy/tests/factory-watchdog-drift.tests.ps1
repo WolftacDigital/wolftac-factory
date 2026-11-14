@@ -44,6 +44,7 @@ function New-ScratchDeploy {
   New-Item -ItemType Directory -Force $depDir | Out-Null
 
   $names = @('alpha.md', 'beta.md', 'gamma.md')
+  if ($PairCount -ne 3) { $names = @(1..$PairCount | ForEach-Object { "file-$_.md" }) }
   if ($ExtraPair) { $names += 'delta.md' }
   foreach ($n in $names) {
     $body = "# $n`nline one`nline two`nline three`n"
@@ -248,7 +249,7 @@ Ok 'AC-4 immediate re-run is silenced by cooldown' ($r2.out -match 'DRIFT COOLDO
 
 # Nag: age the last alert past the window.
 $state2 = Get-Content $statePath -Raw | ConvertFrom-Json
-$state2.drift_last_alert_at = (Get-Date).AddHours(-13).ToString('o')
+$state2.drift_last_alert_at = (Get-Date).AddHours(-25).ToString('o')
 $state2 | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath
 $r3 = Run-Watchdog $cron $d.Script
 Ok 'AC-4 nag fires after the window' ($r3.out -match 'DISCORD:' -and $r3.out -notmatch 'DRIFT COOLDOWN') $r3.out
@@ -303,6 +304,85 @@ try {
 } finally { $env:USERPROFILE = $savedUp; $env:LOCALAPPDATA = $savedLa }
 Ok 'SYSTEM: profile inferred from -EnvFile compares clean' ($o1 -match 'DRIFT CLEAN' -and $o1 -notmatch 'cannot compare') $o1
 Ok 'SYSTEM: explicit -UserProfile compares clean' ($o2 -match 'DRIFT CLEAN' -and $o2 -notmatch 'cannot compare') $o2
+
+Write-Host '=== WD-624: 41-file daily digest, latest list, recovery and write failure ==='
+$bulk = Join-Path $Scratch 'bulk'
+$bulkDeploy = New-ScratchDeploy -Root $bulk -PairCount 41
+$bulkCron = New-ScratchCron $bulk
+Get-ChildItem $bulkDeploy.Deployed -File | ForEach-Object { Add-Content $_.FullName 'SYNTHETIC-CONTENT-NEVER-IN-DIGEST' }
+Remove-Item -Recurse -Force $outbox
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+$posts = @(Get-ChildItem $outbox -File | ForEach-Object { Get-Content $_.FullName -Raw })
+Ok 'WD-624 41 files yield one short message' ($posts.Count -eq 1 -and $posts[0].Length -lt 600 -and $posts[0] -match '41 files differ across 1 targets') ($posts -join '||')
+$latest = Join-Path $bulkCron 'watchdog-drift-latest.txt'
+$full = Get-Content $latest -Raw
+Ok 'WD-624 full list has every path and counts, no content' (([regex]::Matches($full, '(?m)^DRIFT').Count -eq 41) -and $full -match 'file-41.md' -and $full -match 'deployed-only' -and $full -notmatch 'SYNTHETIC-CONTENT') $full
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 immediate repeat posts nothing' (@(Get-ChildItem $outbox -File).Count -eq 1) $r.out
+$bulkState = Join-Path $bulkCron 'watchdog-state.json'
+$st = Get-Content $bulkState -Raw | ConvertFrom-Json
+$st.drift_last_alert_at = (Get-Date).AddHours(-23).ToString('o')
+$st | ConvertTo-Json -Depth 8 | Set-Content $bulkState
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 23h repeat posts nothing' (@(Get-ChildItem $outbox -File).Count -eq 1) $r.out
+$st.drift_last_alert_at = (Get-Date).AddHours(-24).ToString('o')
+$st | ConvertTo-Json -Depth 8 | Set-Content $bulkState
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 24h posts one digest' (@(Get-ChildItem $outbox -File).Count -eq 2) $r.out
+Get-ChildItem (Join-Path $bulkDeploy.Repo 'canonical') -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $bulkDeploy.Deployed $_.Name) -Force }
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 clean transition posts one recovery' (@(Get-ChildItem $outbox -File).Count -eq 3 -and $r.code -eq 0) $r.out
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 recovery not repeated' (@(Get-ChildItem $outbox -File).Count -eq 3)
+Remove-Item $latest
+New-Item -ItemType Directory $latest | Out-Null
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 unwritable latest is a finding, not a crash' ($r.code -eq 1 -and $r.out -match 'digest-drift: cannot write' -and $r.out -match 'STATE:') $r.out
+Remove-Item $latest
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 latest writer recovers' ($r.code -eq 0) $r.out
+
+Write-Host '=== WD-624: persisted config and per-key delivery retries ==='
+Remove-Item $bulkState -Force
+Remove-Item -Recurse -Force $outbox
+Set-Content $expiryFile '# synthetic expiry absent'
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+$st = Get-Content $bulkState -Raw | ConvertFrom-Json
+Ok 'WD-624 config-only state is healthy with no liveness keys' ($r.code -eq 0 -and $st.status -eq 'healthy' -and $st.config_status -eq 'warning' -and @($st.open_findings.PSObject.Properties).Count -eq 0) $r.out
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 persisted config cooldown sends only once' (@(Get-ChildItem $outbox -File).Count -eq 1)
+Set-Content $expiryFile 'LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT=2099-01-01T00:00:00Z'
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 config recovery persisted' ((Get-Content $bulkState -Raw | ConvertFrom-Json).config_status -eq 'clean' -and @(Get-ChildItem $outbox -File).Count -eq 2)
+Remove-Item $bulkState -Force
+Remove-Item -Recurse -Force $outbox
+Set-Content $outbox 'synthetic blocked delivery path'
+$jp = Join-Path $bulkCron 'jobs.json'
+$j = Get-Content $jp -Raw | ConvertFrom-Json
+$j.jobs[0].enabled = $false
+$j | ConvertTo-Json -Depth 8 | Set-Content $jp
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+$st = Get-Content $bulkState -Raw | ConvertFrom-Json
+$firstSeen = @($st.open_findings.PSObject.Properties)[0].Value
+Ok 'WD-624 failed initial alert stays pending' ($r.code -eq 3 -and $null -eq $st.last_alert_at) $r.out
+$j.jobs[0].paused = $true
+$j | ConvertTo-Json -Depth 8 | Set-Content $jp
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 repeated failure preserves original key observation' ($r.code -eq 3 -and @((Get-Content $bulkState -Raw | ConvertFrom-Json).open_findings.PSObject.Properties).Count -eq 1) $r.out
+Remove-Item $outbox
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+$posts = @(Get-ChildItem $outbox -File | ForEach-Object { Get-Content $_.FullName -Raw })
+$st = Get-Content $bulkState -Raw | ConvertFrom-Json
+Ok 'WD-624 pending outage then new key both delivered' ($r.code -eq 1 -and $posts.Count -eq 2 -and @($posts | Where-Object { $_ -match 'new:.*PAUSED' }).Count -eq 1 -and @($st.open_findings.PSObject.Properties).Count -eq 2) ($posts -join '||')
+Ok 'WD-624 first_seen preserved across retries' ([datetime]@($st.open_findings.PSObject.Properties | Where-Object Name -match 'DISABLED')[0].Value -eq [datetime]$firstSeen)
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+Ok 'WD-624 successful replay is not duplicated' (@(Get-ChildItem $outbox -File).Count -eq 2)
+$j.jobs[0].enabled = $true
+$j | ConvertTo-Json -Depth 8 | Set-Content $jp
+$r = Run-Watchdog $bulkCron $bulkDeploy.Script
+$st = Get-Content $bulkState -Raw | ConvertFrom-Json
+Ok 'WD-624 persisted partial recovery stays unhealthy' ($r.code -eq 1 -and $st.status -eq 'unhealthy' -and @($st.open_findings.PSObject.Properties).Count -eq 1 -and @(Get-ChildItem $outbox -File).Count -eq 3) $r.out
 
 if (Test-Path $Scratch) { Remove-Item -Recurse -Force $Scratch }
 Write-Host ''

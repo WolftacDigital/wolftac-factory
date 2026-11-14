@@ -26,6 +26,26 @@ Git worktree, never live junctions or `deploy.ps1 -Deploy`.
 | `factory-watchdog-drift.tests.ps1` | `factory-watchdog.ps1` drift alerting: truthful magnitude on any kind of edit, no false "running normally" while liveness is failing, and `cannot compare` for a deployed copy that is absent. Plus the alert state machine — transition, cooldown, 12h nag, recovery — and agreement with `deploy.ps1 -Check` on which targets are drifted. |
 | `factory-watchdog-learn.tests.ps1` | `factory-watchdog.ps1` pending `/learn` edits (WD-362): clean is silent, a modified or untracked file in the junctioned live worktree alerts once by path and line count (never content), is snapshotted byte-exact, and survives `git restore .`; cooldown, 12h nag, single recovery, 30-day retention keeping the newest, and "cannot check" for an unresolvable worktree or failed `git status`. Hermetic: scratch repo, scratch junctioned worktree, `-SlackOutbox` interception. |
 
+## WD-641 installer regression additions
+
+Run `pwsh -NoProfile -File deploy/tests/watchdog-install.tests.ps1 -Repo <worktree> -Scratch <new-scratch-directory>`
+with scratch `TEMP`, `TMP`, `TMPDIR` and profile roots. The existing WD-584 cases
+remain; their stub task XML now uses a complete planned definition for read-back.
+New `-LibraryOnly` cases execute the real Apply core with synthetic profile facts
+and recording Io methods: absent/unreadable task, each of seven mismatched fields,
+equal read-back, sanitized registration exception, missing profile with zero I/O,
+caller-independent paths, overrides and five-file refresh with zero task calls.
+CLI plan/argument cases prove PT10M plus IgnoreNew and invalid FilesOnly rejection.
+
+Degraded verification uses the production Verify entry block obtained through the
+PowerShell AST, unchanged, in a child process. Only OS owner/ACL/write-probe facts
+and path-reader Io are stubbed. Actual XML checks, pinned-manifest reader, shared
+path assessor, output and exit calculation run: S4U exits 0; Interactive and the
+Windows XML spelling InteractiveToken exit 6 only when explicitly expected; the
+default and an unrelated failing ACL exit 1. Literal `-Verify -TaskXmlIn` cases
+also retain real scratch-owner failure checks. This is fixture proof, never a live
+Task Scheduler/ACL check. No runtime test option bypasses production security.
+
 ## Hermetic by construction
 
 WD-580 adds `test_factory_gatekeeper_audit.py` (fake `urlopen`, fixed clock,

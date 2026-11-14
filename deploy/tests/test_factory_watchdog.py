@@ -1,4 +1,5 @@
-"""WD-549 behavior checks. Every watchdog invocation is -DryRun with fake credentials.
+"""WD-549/576 dry-run checks and WD-566 worker-output regression fixtures.
+WD-566 transition tests use a scratch AlertOutbox, never the live CLI or channel.
 
 Run: python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v
 Optional TP4: set WD549_REAL_CRON to the real cron directory (read-only).
@@ -125,6 +126,8 @@ class WatchdogTests(unittest.TestCase):
 
     def run_watchdog(self, script=SCRIPT, cron=None, extra=(), deploy=None):
         before = self.envfile.read_bytes() if self.envfile.exists() else None
+        state = self.cron / 'watchdog-state.json'
+        before_state = state.read_bytes() if state.exists() else None
         result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(script),
                                  "-DryRun", "-CronDir", str(cron or self.cron),
                                  "-EnvFile", str(self.envfile), "-PolicyPath", str(self.policy),
@@ -138,7 +141,9 @@ class WatchdogTests(unittest.TestCase):
             self.assertNotIn(fake, text)
         self.assertRegex(text, r"DRY RUN: no (?:Slack|Discord) post, no snapshot, no state written\.")
         self.assertEqual(before, self.envfile.read_bytes() if self.envfile.exists() else None)
-        self.assertFalse((self.cron / "watchdog-state.json").exists())
+        self.assertEqual(before_state, state.read_bytes() if state.exists() else None)
+        self.assertFalse((self.cron / 'watchdog-drift-latest.txt').exists())
+        self.assertFalse((self.cron / 'watchdog-learn-latest.txt').exists())
         self.assertFalse(self.backups.exists(), "DryRun must not create snapshots")
         self.assertFalse(self.outbox.exists(), "DryRun must not attempt alert delivery")
         return result.returncode, text
@@ -156,7 +161,8 @@ class WatchdogTests(unittest.TestCase):
                 code, text = self.run_watchdog()
                 rows = findings(text)
                 self.assertEqual(len(rows), 1 if reason else 0)
-                self.assertEqual(code, 1 if reason else 0)
+                self.assertEqual(code, 0)  # WD-624: configuration, not liveness.
+                self.assertIn('CONFIG: warning' if reason else 'CONFIG: clean', text)
                 if reason:
                     self.assertIn("linear-token-expiry:", rows[0])
                     self.assertIn(reason, rows[0])
@@ -167,7 +173,7 @@ class WatchdogTests(unittest.TestCase):
         value = (datetime.now(timezone.utc) + timedelta(days=2)).astimezone(timezone(timedelta(hours=-5)))
         self.write_expiry(value.isoformat())
         code, text = self.run_watchdog()
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertIn(value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), findings(text)[0])
         self.assertIn("Z (expired", findings(text)[0])
 
@@ -212,10 +218,11 @@ class WatchdogTests(unittest.TestCase):
         _, text = self.run_watchdog(extra=("-JobNamePattern", "*Build Worker*"))
         self.assertEqual(sum("gatekeeper-linear-auth:" in row for row in findings(text)), 1)
 
-    def test_missing_env_is_unhealthy(self):
+    def test_missing_env_is_config_warning(self):
         self.envfile.unlink()
         code, text = self.run_watchdog()
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
+        self.assertIn('CONFIG: warning', text)
         self.assertIn("cannot read expiry date", text)
         self.assertNotIn("watchdog cannot read SLACK_FACTORY_BOT_TOKEN", text)
 
@@ -234,7 +241,7 @@ class WatchdogTests(unittest.TestCase):
                 code, text = self.run_watchdog()
                 rows = [r for r in findings(text) if "worker-safety-net" in r]
                 self.assertEqual(len(rows), int(minutes < 120))
-                self.assertEqual(code, int(minutes < 120))
+                self.assertEqual(code, 0)  # Schedule-only check is configuration.
                 if rows:
                     self.assertIn(job["name"], rows[0])
                     self.assertIn(f"every {minutes}m", rows[0])
@@ -262,7 +269,7 @@ class WatchdogTests(unittest.TestCase):
         self.safety_worker({"kind": "cron", "expr": "*/5 * * * *"})
         code, text = self.run_watchdog()
         rows = [r for r in findings(text) if "worker-safety-net" in r]
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertEqual(len(rows), 1)
         self.assertIn("kind 'cron' is not an interval", rows[0])
 
@@ -410,6 +417,111 @@ class WatchdogTests(unittest.TestCase):
                 self.assertIn("DRIFT CLEAN:", text)
                 self.assertIn("LEARN CLEAN:", text)
 
+    def seed_state(self, **fields):
+        (self.cron / 'watchdog-state.json').write_text(json.dumps(fields), encoding='utf-8')
+
+    def change_gatekeeper(self, **fields):
+        path = self.cron / 'jobs.json'
+        data = json.loads(path.read_text())
+        data['jobs'][0].update(fields)
+        path.write_text(json.dumps(data))
+
+    def test_new_outage_is_not_hidden_by_old_config_state(self):
+        self.write_expiry(None)
+        self.seed_state(status='unhealthy', findings=['linear-token-expiry: missing'],
+                        last_alert_at=timestamp(0))
+        self.change_gatekeeper(enabled=False)
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertEqual(text.count('DRY RUN POST: :warning:'), 1)
+        self.assertIn('new: [' + str(self.cron) + '] Wolftac Factory Gatekeeper: DISABLED', text)
+        self.assertNotIn('still unhealthy', text)
+        self.assertIn('1 liveness finding(s) still open', text)
+
+    def test_partial_recovery_and_new_key_during_existing_outage(self):
+        prefix = f'[{self.cron}] Wolftac Factory Gatekeeper'
+        keys = {prefix + '|DISABLED': timestamp(-1), prefix + '|PAUSED': timestamp(-1)}
+        self.seed_state(status='unhealthy', open_findings=keys, last_alert_at=timestamp(0))
+        self.change_gatekeeper(enabled=False, paused=False)
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertIn('recovered: ' + prefix + '|PAUSED', text)
+        self.assertNotIn('new:', text)
+        self.assertIn('1 liveness finding(s) still open', text)
+        self.change_gatekeeper(enabled=False, paused=True, last_status='error', last_error='synthetic')
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertIn('new: ' + prefix + ': last_status=error', text)
+        self.assertNotIn('new: ' + prefix + ': DISABLED', text)
+
+    def test_full_recovery_reads_as_recovery(self):
+        prefix = f'[{self.cron}] Wolftac Factory Gatekeeper'
+        self.seed_state(status='unhealthy', open_findings={prefix + '|DISABLED': timestamp(-1)},
+                        finding_texts={prefix + '|DISABLED': prefix + ': DISABLED (enabled: false)'},
+                        last_alert_at=timestamp(0))
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 0)
+        self.assertEqual(text.count('DRY RUN POST:'), 1)
+        self.assertIn('DRY RUN POST: :white_check_mark: *Factory watchdog: recovered*', text)
+        self.assertIn('recovered: ' + prefix + ': DISABLED (enabled: false)', text)
+        self.assertNotIn('need attention', text)
+
+    def test_number_only_changes_keep_key_and_nag_window(self):
+        prefix = f'[{self.cron}] Wolftac Factory Gatekeeper'
+        self.seed_state(status='unhealthy', open_findings={prefix + '|OVERDUE': timestamp(-1)},
+                        finding_texts={prefix + '|OVERDUE': prefix + ': OVERDUE - next_run_at was 338m ago'},
+                        last_alert_at=timestamp(0))
+        for minutes in (398, 4398):
+            self.change_gatekeeper(next_run_at=timestamp(0, -minutes * 60))
+            code, text = self.run_watchdog()
+            self.assertEqual(code, 1)
+            self.assertIn('OVERDUE', text)
+            self.assertNotIn('DRY RUN POST:', text)
+        self.seed_state(status='unhealthy', open_findings={prefix + '|OVERDUE': timestamp(-1)},
+                        last_alert_at=timestamp(0, -13 * 3600))
+        self.assertIn('still unhealthy after 13h', self.run_watchdog()[1])
+
+    def test_config_daily_nag_recovery_and_no_liveness_failure(self):
+        self.write_expiry(None)
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 0)
+        self.assertIn('HEALTHY:', text)
+        self.assertEqual(text.count('DRY RUN POST:'), 1)
+        self.assertIn(KEY, text)
+        for hours, posts in ((0, 0), (23, 0), (24, 1), (25, 1)):
+            self.seed_state(status='healthy', open_findings={}, config_status='warning',
+                            config_last_alert_at=timestamp(0, -hours * 3600))
+            code, text = self.run_watchdog()
+            self.assertEqual(code, 0)
+            self.assertEqual(text.count('DRY RUN POST:'), posts)
+        self.write_expiry(timestamp())
+        self.assertIn('Factory configuration recovered', self.run_watchdog()[1])
+
+    def test_old_and_malformed_state_has_no_prior_keys(self):
+        self.change_gatekeeper(paused=True)
+        for state in ({}, {'status': 'unhealthy', 'findings': ['old']}, 'broken'):
+            if isinstance(state, dict):
+                self.seed_state(**state)
+            else:
+                (self.cron / 'watchdog-state.json').write_text(state)
+            code, text = self.run_watchdog()
+            self.assertEqual(code, 1)
+            self.assertIn('new:', text)
+            self.assertNotIn('recovered:', text)
+
+    def test_key_preserves_numbered_job_and_directory_identity(self):
+        second = self.make_cron('cron2')
+        a = json.loads((self.cron / 'jobs.json').read_text())
+        a['jobs'][0].update(name='Wolftac Factory Worker 1', paused=True)
+        b = json.loads(json.dumps(a))
+        b['jobs'][0]['name'] = 'Wolftac Factory Worker 2'
+        (self.cron / 'jobs.json').write_text(json.dumps({'jobs': a['jobs'] + b['jobs']}))
+        (second / 'jobs.json').write_text(json.dumps(a))
+        code, text = self.run_watchdog(cron=f'{self.cron};{second}')
+        self.assertEqual(code, 1)
+        self.assertEqual(sum(line.startswith('new:') for line in text.splitlines()), 3)
+        self.assertIn('3 liveness finding(s) still open', text)
+
     @unittest.skipUnless(os.getenv("WD549_REAL_CRON"), "TP4 opt-in real cron read-only comparison")
     def test_real_cron_findings_match_main(self):
         basepath, _ = self.baseline()
@@ -431,6 +543,176 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("LEARN", diagnostics(after[1]))
         self.assertEqual(before_state, state.read_bytes() if state.exists() else None)
         print(f"TP4 real-cron comparison: identical findings ({len(findings(after[1]))}); state unchanged")
+
+
+@unittest.skipUnless(PWSH, "PowerShell 7 required")
+class WorkerStuckTests(unittest.TestCase):
+    """WD-566: real script, scratch-only inputs and local delivery interception."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="wd566-", dir=os.getenv("TMPDIR"))
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.cron = self.root / "cron"
+        self.cron.mkdir()
+        self.output = self.cron / "output/worker566"
+        self.output.mkdir(parents=True)
+        self.expiry = self.root / "expiry-fixture.txt"
+        self.expiry.write_text("LINEAR_FACTORY_BOT_TOKEN_EXPIRES_AT=2099-01-01T00:00:00Z\n")
+        self.outbox = self.root / "outbox"
+        self.state = self.cron / "watchdog-state.json"
+        self.job = dict(id="worker566", name="Wolftac Factory Build Worker - fixture",
+                        enabled=True, paused=False, last_status="ok",
+                        schedule=dict(minutes=120), next_run_at=timestamp(1))
+        self.env = {k: v for k, v in os.environ.items() if k.upper() in {
+            "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "PROGRAMFILES",
+            "PROGRAMFILES(X86)", "SYSTEMDRIVE"}}
+        for key in ("HOME", "USERPROFILE", "LOCALAPPDATA", "HERMES_HOME", "TEMP", "TMP", "TMPDIR"):
+            self.env[key] = str(self.root)
+
+    def history(self, lines):
+        for path in self.output.glob("*.md"):
+            path.unlink()
+        # Input is newest first, independent of file creation / modification order.
+        paths = []
+        for index, line in enumerate(lines):
+            path = self.output / f"2026-10-23_{23-index:02d}-00-00.md"
+            path.write_text("## Prompt\noperator attention PROMPT-SENTINEL\n\n## Response\n\n"
+                            "**Agent:** Fixture / synthetic\n\n" + line +
+                            "\nBODY-SENTINEL must not be quoted\n", encoding="utf-8")
+            paths.append(path)
+        return paths
+
+    def run_watchdog(self, dry=True, extra=(), expected=0, lock=None):
+        (self.cron / "ticker_heartbeat").write_text("fixture")
+        (self.cron / "jobs.json").write_text(json.dumps({"jobs": [self.job]}))
+        args = ["-CronDir", str(self.cron), "-EnvFile", str(self.expiry),
+                "-SkipDrift", "-SkipLearn", "-SkipAudit", "-AlertOutbox", str(self.outbox),
+                "-AlertPrefix", "[DRILL]", *extra]
+        if dry:
+            args.append("-DryRun")
+        cmd = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT), *args]
+        if lock:
+            wrapper = self.root / "locked.ps1"
+            quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+            wrapper.write_text("$lock=[IO.File]::Open(" + quote(lock) +
+                ",[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)\n"
+                "try { & " + quote(SCRIPT) + " " + " ".join(
+                    arg if arg.startswith("-") else quote(arg) for arg in args) +
+                "\nexit $LASTEXITCODE } finally { $lock.Dispose() }\n", encoding="utf-8")
+            cmd = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(wrapper)]
+        before = self.state.read_bytes() if self.state.exists() else None
+        result = subprocess.run(cmd, env=self.env, capture_output=True, encoding="utf-8", timeout=30)
+        text = result.stdout + result.stderr
+        self.assertEqual(result.returncode, expected, text)
+        self.assertNotIn("BODY-SENTINEL", text)
+        self.assertNotIn("PROMPT-SENTINEL", text)
+        if dry:
+            self.assertIn("DRY RUN:", text)
+            self.assertEqual(before, self.state.read_bytes() if self.state.exists() else None)
+            self.assertFalse(self.outbox.exists())
+        return text
+
+    def messages(self):
+        return [p.read_text(encoding="utf-8") for p in self.outbox.glob("*.txt")]
+
+    def test_three_stops_name_timestamp_and_bounded_headline(self):
+        headline = "Operator attention " + "x" * 180 + "TRUNCATE-SENTINEL"
+        paths = self.history([headline, "BUILD INTERRUPTED", "REVIEW INTERRUPTED"])
+        # Oldest by filename is newest by mtime. Filename order must win.
+        os.utime(paths[-1], (time.time() + 60, time.time() + 60))
+        text = self.run_watchdog(expected=1)
+        rows = findings(text)
+        self.assertEqual(len(rows), 1, text)
+        self.assertIn(self.job["name"], rows[0])
+        self.assertIn("since 2026-10-23_21-00-00", rows[0])
+        self.assertIn('Latest: "' + headline[:160] + '"', rows[0])
+        self.assertIn(str(paths[0]), rows[0])
+        self.assertNotIn("TRUNCATE-SENTINEL", text)
+
+    def test_progress_quiet_and_short_history_matrix(self):
+        stopped = "BUILD INTERRUPTED"
+        for lines, unhealthy in [([stopped] * 3, True),
+                ([stopped, stopped, "BUILD REPORT"], False),
+                ([stopped, "BUILD REPORT", stopped, stopped], False),
+                (["BUILD REPORT", stopped, stopped, stopped], False),
+                ([stopped, "[SILENT]", stopped, stopped], True),
+                (["[SILENT]"] * 6, False), ([stopped] * 2, False), ([], False),
+                ([stopped, "[SILENT]", stopped, "[SILENT]", "[SILENT]", "[SILENT]", stopped], False)]:
+            with self.subTest(lines=lines):
+                self.history(lines)
+                text = self.run_watchdog(expected=int(unhealthy))
+                self.assertEqual(len(findings(text)), int(unhealthy))
+
+    def test_all_markers_case_insensitive_and_header_required(self):
+        for marker in ["OPERATOR ATTENTION", "build interrupted", "review interrupted",
+                       "precondition: unavailable", "**Blocked: missing fixture",
+                       "Stopped without claiming", "Ended without claiming"]:
+            with self.subTest(marker=marker):
+                self.history([marker] * 3)
+                self.assertEqual(len(findings(self.run_watchdog(expected=1))), 1)
+        paths = self.history(["BUILD REPORT"] * 3)
+        # Neither the prompt nor a later body line is the response headline.
+        for path in paths:
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write("BUILD INTERRUPTED\n")
+        self.run_watchdog()
+        for path in paths:
+            path.write_text("BUILD INTERRUPTED\n", encoding="utf-8")
+        self.assertIn("no completed response", self.run_watchdog())
+
+    def test_threshold_lookback_disable_and_invalid_id(self):
+        self.history(["PRECONDITION: fixture"] * 4)
+        self.run_watchdog(extra=("-StuckRunThreshold", "0"))
+        self.run_watchdog(extra=("-StuckRunThreshold", "4"), expected=1)
+        self.run_watchdog(extra=("-StuckLookback", "2"))
+        self.run_watchdog(extra=("-StuckRunThreshold", "2", "-StuckLookback", "2"), expected=1)
+        self.job["id"] = "../worker566"
+        self.assertIn("invalid output job id", self.run_watchdog())
+
+    def test_nonworkers_missing_folder_and_wrong_filename(self):
+        self.history(["BUILD INTERRUPTED"] * 3)
+        self.job["no_agent"] = True
+        self.assertNotIn("worker-stuck", self.run_watchdog())
+        self.job.pop("no_agent")
+        self.job["name"] = "Wolftac Factory Gatekeeper"
+        self.assertNotIn("worker-stuck", self.run_watchdog())
+        self.job["name"] = "Wolftac Factory Review Worker"
+        for path in self.output.glob("*.md"):
+            path.rename(path.with_suffix(".txt"))
+        self.run_watchdog()
+        shutil.rmtree(self.output)
+        self.assertIn("output directory absent", self.run_watchdog())
+
+    @unittest.skipUnless(os.name == "nt", "Windows file-sharing denial fixture")
+    def test_unreadable_file_is_skipped_and_reported(self):
+        paths = self.history(["BUILD REPORT", "BUILD INTERRUPTED", "BUILD INTERRUPTED", "BUILD INTERRUPTED"])
+        text = self.run_watchdog(lock=paths[0], expected=1)
+        self.assertIn("unreadable output:", text)
+        self.assertEqual(len(findings(text)), 1)
+
+    def test_drill_transition_cooldown_nag_and_single_recovery(self):
+        self.history(["BUILD INTERRUPTED"] * 3)
+        self.run_watchdog(dry=False, expected=1)
+        self.assertEqual(len(self.messages()), 1)
+        self.assertIn("[DRILL]", self.messages()[0])
+        self.assertIn("3 runs in a row", self.messages()[0])
+        self.run_watchdog(dry=False, expected=1)
+        self.assertEqual(len(self.messages()), 1)
+        state = json.loads(self.state.read_text(encoding="utf-8-sig"))
+        state["last_alert_at"] = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
+        self.state.write_text(json.dumps(state))
+        self.run_watchdog(dry=False, expected=1)
+        self.assertEqual(len(self.messages()), 2)
+        self.assertTrue(any("still unhealthy" in m for m in self.messages()))
+        self.history(["BUILD REPORT", "BUILD INTERRUPTED", "BUILD INTERRUPTED"])
+        self.run_watchdog(dry=False)
+        self.run_watchdog(dry=False)
+        self.assertEqual(len(self.messages()), 3)
+        self.assertEqual(sum("recovered" in m for m in self.messages()), 1)
+        state = json.loads(self.state.read_text(encoding="utf-8-sig"))
+        self.assertEqual(state["status"], "healthy")
+        self.assertEqual(state["findings"], [])
 
 
 if __name__ == "__main__":

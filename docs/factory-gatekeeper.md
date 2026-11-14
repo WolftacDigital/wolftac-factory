@@ -38,8 +38,20 @@ Fingerprints remain **superset** lane lists. Timed build retries additionally
 require Todo, no latest `BLOCKED:` comment, no unresolved NEEDS-HUMAN park, and
 every blocker state **type** `completed` or `canceled` (custom state names work).
 Unknown blocker types fail closed for timed retries. The park owner is the WD
-workspace's Jonathan ID (`PARK_OWNER_ID`); a later comment by that user plus removal
-of his assignment clears a park. Bot-relayed comments do not. Older Todo comments
+workspace's Jonathan ID (`PARK_OWNER_ID`). One pure helper, `park_cleared(issue,
+comments)`, holds the park test: when the latest review report is NEEDS HUMAN the
+issue stays parked unless the park owner's assignment is removed AND a comment newer
+than that report is either a `DECISION RECORD` for that issue or a comment by the
+park owner. A comment is a `DECISION RECORD` for an issue when one of its lines starts
+with `DECISION RECORD`, an em dash or hyphen and that issue's own identifier (the
+heading marks, list dash and bold that a `REVIEW REPORT` header accepts may come
+first), and its body contains a Discord message link of the form
+`https://discord.com/channels/<17-20 digits>/<17-20 digits>/<17-20 digits>`.
+A `DECISION RECORD` without a Discord message link does not clear a park. Neither
+does one that names another issue, one older than the latest NEEDS HUMAN report, or
+any other relayed comment; every doubtful case stays parked. The check is shape only:
+the Gatekeeper does not read Discord to confirm the linked message exists or who
+wrote it, and a `DECISION RECORD` is never a merge approval. Older Todo comments
 are paged for this check only; fingerprinting still uses the original newest 50.
 Repo reachability, final work selection and approval verification stay in skills.
 Review/integrate eligibility and all existing fingerprint triggers are unchanged.

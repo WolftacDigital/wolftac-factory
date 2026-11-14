@@ -391,8 +391,32 @@ every task" rule):
    Fetch and verify ancestry: BOTH
    `git merge-base --is-ancestor <reviewed-SHA> origin/<default>` AND
    `git merge-base --is-ancestor <branch-head> origin/<default>` must succeed —
-   otherwise do not set Done; report what you observed and stop. Post the
-   INTEGRATION REPORT (`linear_bot.py comment <ID> --body-file -`), then run
+   otherwise do not set Done; report what you observed and stop.
+   **FACTORY-SKILLS-POST-MERGE:** Only for a verified
+   `WolftacDigital/wolftac-factory` merge, after ancestry verification and before
+   posting the INTEGRATION REPORT, perform this narrow exception to "never deploy":
+   1. Confirm `D:/Wolftac/Factory` is the intended repository, on its default branch,
+      with a clean working tree; never reset, switch or discard local changes.
+   2. Run `git -C D:/Wolftac/Factory pull --ff-only`.
+   3. Run `pwsh -NoProfile -File D:/Wolftac/Factory/deploy/deploy.ps1 -Deploy -SkillsOnly`.
+   4. Run `pwsh -NoProfile -File D:/Wolftac/Factory/deploy/deploy.ps1 -Check`.
+   Run in that order, with bounded commands. Any missing capability, failed pull,
+   failed deploy or failed check stops this sequence; report the failed step, exit
+   code, skipped/remaining files and reasons. Mark later steps "not run". The merge
+   stays in place; never repeat/revert it or claim it is unmerged because deploy failed.
+   Complete the integration report/state read-back with the post-merge failure noted.
+   Never pass `-Force`. Only skill/Markdown reference targets may be copied: stale
+   means the deployed LF-normalized content matches an earlier reachable commit at
+   that same source path. Back up before every stale overwrite; unknown history or
+   live-only edits stay `DRIFT-SKIPPED`. Scripts, schedules, credentials and other
+   non-skill targets remain listed operator steps; no service/session restart.
+   Never write through junctions or fast-forward the live worktree here. If the merge
+   changed `ports/hermes/`, list `fast-forward D:\Wolftac\.factory-live` as a remaining
+   operator step (clean tree and no worker in flight required), and explicitly say
+   `-Check` does not cover junctioned targets. A clean copy check is not proof that
+   junctioned workers received the merge. Other repositories and branchless landings
+   skip this entire sequence and report "not applicable".
+   Post the INTEGRATION REPORT (`linear_bot.py comment <ID> --body-file -`), then run
    `linear_bot.py state <ID> Done` — it verifies the transition by read-back and
    exits non-zero if the state did not stick — and re-read with
    `linear_bot.py issue <ID>` confirming the report exists and the state is
@@ -410,6 +434,8 @@ every task" rule):
    - **Ancestry verified:** merge-base --is-ancestor ✓
    - **Approved by:** Jonathan, <verified Discord approval: message link and timestamp>
    - **Gates at merge:** <reference the proof pack, plus anything re-run>
+   - **Skill deployment:** <pull, SkillsOnly deploy, Check: exit/result or not run/not applicable; files/reasons>
+   - **Remaining operator steps:** <scripts/schedules/credentials; ports/hermes changes require live-worktree fast-forward; Check excludes junctioned targets>
    ```
 
 7. **Stop.** One issue per invocation. Unblocking follow-ups (an UNBLOCKED note on

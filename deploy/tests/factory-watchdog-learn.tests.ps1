@@ -119,7 +119,8 @@ $preBytes = [IO.File]::ReadAllBytes($skill)
 $r = Run
 $lp = LearnPosts $r
 Ok 'AC-2 exactly one /learn post' ($lp.Count -eq 1) "posts=$($r.posts.Count)"
-Ok 'AC-2 post names the file with +2/-0' ($lp.Count -eq 1 -and $lp[0] -match [regex]::Escape('skills/wolftac-review/SKILL.md (+2/-0, modified)')) ($lp -join '||')
+Ok 'AC-2 digest is short; latest file names the file with +2/-0' ($lp.Count -eq 1 -and $lp[0].Length -lt 600 -and
+   (Get-Content (Join-Path $cron 'watchdog-learn-latest.txt') -Raw) -match [regex]::Escape('skills/wolftac-review/SKILL.md (+2/-0, modified)')) ($lp -join '||')
 $snaps = Snapshots
 Ok 'AC-3 one snapshot directory' ($snaps.Count -eq 1) "count=$($snaps.Count)"
 $copy = if ($snaps.Count) { Join-Path $snaps[0].FullName 'skills\wolftac-review\SKILL.md' } else { '' }
@@ -144,11 +145,11 @@ Ok 'AC-5 immediate re-run posts nothing' ((LearnPosts $r).Count -eq 0) ($r.posts
 Ok 'AC-5 immediate re-run makes no new snapshot' ((Snapshots).Count -eq $before) "before=$before after=$((Snapshots).Count)"
 Ok 'AC-5 cooldown is announced' ($r.out -match 'LEARN COOLDOWN')
 $st = Get-Content $statePath -Raw | ConvertFrom-Json
-$st.learn_last_alert_at = (Get-Date).AddHours(-13).ToString('o')
+$st.learn_last_alert_at = (Get-Date).AddHours(-25).ToString('o')
 $st | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath
 $r = Run
 $lp = LearnPosts $r
-Ok 'AC-5 nag fires after 13h' ($lp.Count -eq 1 -and $lp[0] -match 'Still uncommitted after 13h') ($lp -join '||')
+Ok 'AC-5 daily digest fires after 25h' ($lp.Count -eq 1 -and $lp[0].Length -lt 600 -and $lp[0] -match '2 files across 1 worktrees') ($lp -join '||')
 Ok 'AC-5 nag makes no new snapshot (content unchanged)' ((Snapshots).Count -eq $before)
 
 Write-Host '=== AC-6: destruction is survivable ==='
@@ -231,6 +232,37 @@ $st | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statePath
 $out = & pwsh -NoProfile -File $Watchdog -CronDir $cron -DeployScript $deployScript -LearnBackupRoot $backups -AlertOutbox $outbox -EnvFile $expiryFile -SkipLearn 2>&1 | Out-String
 Ok '-SkipLearn reports skipped' ($out -match 'LEARN: skipped')
 Ok '-SkipLearn does not assert clean' ((Get-Content $statePath -Raw | ConvertFrom-Json).learn_status -eq 'pending')
+
+Write-Host '=== WD-624: bulk /learn daily digest and local list ==='
+Remove-Item $statePath -Force
+1..41 | ForEach-Object { Set-Content (Join-Path $live "bulk-$_.txt") "$Marker content" }
+$r = Run
+$lp = LearnPosts $r
+Ok 'WD-624 41 pending files produce one short message' ($lp.Count -eq 1 -and $lp[0].Length -lt 600 -and $lp[0] -match '41 files across 1 worktrees') ($lp -join '||')
+$latest = Join-Path $cron 'watchdog-learn-latest.txt'
+$full = Get-Content $latest -Raw
+Ok 'WD-624 full latest list, no content' (([regex]::Matches($full, '(?m)^PENDING').Count -eq 41) -and $full -match 'bulk-41.txt' -and $full -notmatch $Marker) $full
+$st = Get-Content $statePath -Raw | ConvertFrom-Json
+$st.learn_last_alert_at = (Get-Date).AddHours(-23).ToString('o')
+$st | ConvertTo-Json -Depth 8 | Set-Content $statePath
+$r = Run
+Ok 'WD-624 23h repeat posts nothing' ((LearnPosts $r).Count -eq 0) $r.out
+$st.learn_last_alert_at = (Get-Date).AddHours(-24).ToString('o')
+$st | ConvertTo-Json -Depth 8 | Set-Content $statePath
+$r = Run
+Ok 'WD-624 24h posts once' ((LearnPosts $r).Count -eq 1) $r.out
+1..41 | ForEach-Object { Remove-Item (Join-Path $live "bulk-$_.txt") }
+$r = Run
+Ok 'WD-624 bulk recovery posts once' ((LearnPosts $r).Count -eq 1 -and (LearnPosts $r)[0] -match 'resolved') $r.out
+$r = Run
+Ok 'WD-624 bulk recovery not repeated' ((LearnPosts $r).Count -eq 0) $r.out
+Remove-Item $latest
+New-Item -ItemType Directory $latest | Out-Null
+$r = Run
+Ok 'WD-624 unwritable learn latest is a read/write finding' ($r.code -eq 1 -and $r.out -match 'digest-learn: cannot write') $r.out
+Remove-Item $latest
+$r = Run
+Ok 'WD-624 learn latest writer recovers' ($r.code -eq 0) $r.out
 
 & git -C $origin worktree remove --force $live 2>$null
 if (Test-Path $Scratch) { Remove-Item -Recurse -Force $Scratch }

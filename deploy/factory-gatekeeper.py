@@ -62,10 +62,17 @@ LANE_FILTERS = {"build": "agentic", "build-crm": "Wolftac CRM v2"}
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
 STALE_ELIGIBLE_MINUTES = 15
-# The human park owner in the WD workspace; never a bot's relayed decision.
+# The human park owner in the WD workspace. A park clears on a DECISION RECORD
+# for the issue (shape only, WD-638) or on a later comment by this user.
 PARK_OWNER_ID = "40f35e70-06bb-49f5-9260-9b0f7de3124e"
+# Header shapes shared by stage artifacts: optional heading marks, list dash, bold.
+REPORT_HEADER = r"(?m)^\s*(?:#{1,6}\s*)?(?:-\s+)?(?:\*\*)?"
 REVIEW_REPORT = re.compile(
-    r"(?m)^\s*(?:#{1,6}\s*)?(?:-\s+)?(?:\*\*)?REVIEW REPORT\s*[—-]\s*(NEEDS HUMAN|FAIL|PASS)\b"
+    REPORT_HEADER + r"REVIEW REPORT\s*[—-]\s*(NEEDS HUMAN|FAIL|PASS)\b"
+)
+DECISION_RECORD = re.compile(REPORT_HEADER + r"DECISION RECORD\s*[—-]\s*([A-Z]+-\d+)\b")
+DISCORD_MESSAGE_LINK = re.compile(
+    r"https://discord\.com/channels/\d{17,20}/\d{17,20}/\d{17,20}(?!\d)"
 )
 AUDIT_INTERVAL_HOURS = 24
 AUDIT_FIRST_WINDOW_DAYS = 7
@@ -287,6 +294,39 @@ def worker_degraded(jobs_path: str, job_id: str) -> bool:
         return False
 
 
+def is_decision_record(body, identifier) -> bool:
+    """Shape only: a header naming this issue plus a Discord message link.
+
+    Whether the linked message exists, or who wrote it, is not checked here.
+    """
+    if not isinstance(body, str) or not isinstance(identifier, str):
+        return False
+    return (any(m.group(1) == identifier for m in DECISION_RECORD.finditer(body))
+            and DISCORD_MESSAGE_LINK.search(body) is not None)
+
+
+def park_cleared(issue: dict, comments: list[dict]) -> bool:
+    """False only while a NEEDS HUMAN park stands. Pure: no I/O, any comment order.
+
+    When the latest review report is NEEDS HUMAN the issue is parked unless the
+    park owner's assignment is removed AND a comment newer than that report is
+    a decision record for this issue or a comment the park owner wrote.
+    Every doubtful case stays parked.
+    """
+    reviews = [c for c in comments if REVIEW_REPORT.search(c.get("body") or "")]
+    if not reviews:
+        return True
+    latest = max(reviews, key=lambda c: c["createdAt"])
+    if REVIEW_REPORT.search(latest["body"]).group(1) != "NEEDS HUMAN":
+        return True
+    if (issue.get("assignee") or {}).get("id") == PARK_OWNER_ID:
+        return False
+    return any(c["createdAt"] > latest["createdAt"] and
+               ((c.get("user") or {}).get("id") == PARK_OWNER_ID or
+                is_decision_record(c.get("body"), issue.get("identifier")))
+               for c in comments)
+
+
 def build_eligible(issue: dict) -> bool:
     """Eligibility for timed retries only; fingerprint/claim rules stay intact."""
     if issue["state"]["name"] != "Todo":
@@ -298,15 +338,7 @@ def build_eligible(issue: dict) -> bool:
                       key=lambda c: c["createdAt"], reverse=True)
     if comments and (comments[0].get("body") or "").startswith("BLOCKED:"):
         return False
-    reviews = [(c, REVIEW_REPORT.search(c.get("body") or "")) for c in comments]
-    reviews = [(c, match) for c, match in reviews if match is not None]
-    if reviews and reviews[0][1].group(1) == "NEEDS HUMAN":
-        if (issue.get("assignee") or {}).get("id") == PARK_OWNER_ID:
-            return False
-        if not any(c["createdAt"] > reviews[0][0]["createdAt"] and
-                   (c.get("user") or {}).get("id") == PARK_OWNER_ID for c in comments):
-            return False
-    return True
+    return park_cleared(issue, comments)
 
 
 def stale_eligible_reason(issues: list[dict], last_dispatch) -> str | None:

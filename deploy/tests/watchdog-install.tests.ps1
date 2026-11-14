@@ -55,6 +55,11 @@ Ok 'AC-2 no password or SYSTEM' ($doc.OuterXml -notmatch 'Password|SYSTEM')
 Ok 'AC-2 command' ($doc.Task.Actions.Exec.Command -eq $pwsh)
 Ok 'AC-2 arguments' ($doc.Task.Actions.Exec.Arguments.Contains('-File "' + (Join-Path $inst 'deploy\factory-watchdog.ps1') + '"') -and $doc.Task.Actions.Exec.Arguments.Contains('-RepoRoot "' + $Repo + '"') -and $doc.Task.Actions.Exec.Arguments.Contains('-CronDir') -and $doc.Task.Actions.Exec.Arguments.Contains('-EnvFile'))
 Ok 'AC-2 interval/settings' ($doc.Task.Triggers.TimeTrigger.Repetition.Interval -eq 'PT15M' -and $doc.Task.Settings.MultipleInstancesPolicy -eq 'IgnoreNew' -and $doc.Task.Settings.DisallowStartIfOnBatteries -eq 'false' -and $doc.Task.Settings.StopIfGoingOnBatteries -eq 'false' -and $doc.Task.Settings.StartWhenAvailable -eq 'true')
+Ok 'WD-641 AC-7 ten-minute limit in XML and plan' ($doc.Task.Settings.ExecutionTimeLimit -ceq 'PT10M' -and $r.Out -match '(?m)^PLAN TASK .* limit=PT10M\r?$')
+foreach ($invalid in @(@('-FilesOnly'), @('-FilesOnly','-Verify'), @('-FilesOnly','-Apply','-Verify'))) {
+    $invalidResult = Run $installer ($common + @('-InstallDir',$inst) + $invalid)
+    Ok 'WD-641 AC-6 invalid FilesOnly combination refused' ($invalidResult.Code -eq 3 -and $invalidResult.Out.Contains('APPLY REFUSED: FilesOnly requires Apply without Verify')) $invalidResult.Out
+}
 $files = @('factory-watchdog.ps1','deploy.ps1','junctions.json','approval-policy.json','junction-lib.ps1')
 Ok 'AC-3 exactly five copy lines' ([regex]::Matches($r.Out,'(?m)^PLAN COPY ').Count -eq 5)
 foreach ($name in $files) {
@@ -188,7 +193,7 @@ Ok 'AC-10 explicit RepoRoot' ($r.Out.Contains('RESOLVED=' + $repoRootProbe)) $r.
 # before any plan, file or task work. Real-handle checks below only read scratch.
 $caseLog = Join-Path $Scratch 'tp12-tp13-cases.log'
 function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
-    $io = [pscustomobject]@{ State = $State; Hooks = $Hooks; Log = [Collections.Generic.List[string]]::new(); Next = 0 }
+    $io = [pscustomobject]@{ State = $State; Hooks = $Hooks; Log = [Collections.Generic.List[string]]::new(); Next = 0; TaskXml = '' }
     $io | Add-Member ScriptMethod Fire { param([string]$Key) if ($this.Hooks.ContainsKey($Key)) { & $this.Hooks[$Key] $this.State } }
     $io | Add-Member ScriptMethod Info {
         param([string]$Path)
@@ -222,12 +227,23 @@ function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
         $this.Fire("AfterWrite:$Path")
         $i = $this.Info($Path); $i.Token = $Path; $i
     }
-    $io | Add-Member ScriptMethod RegisterTask { param([string]$Xml) $this.Log.Add('register') }
+    $io | Add-Member ScriptMethod RegisterTask {
+        param([string]$Xml)
+        $this.Log.Add('register'); $this.Fire('RegisterTask'); $this.TaskXml = $Xml
+    }
+    $io | Add-Member ScriptMethod ReadTaskXml {
+        $this.Log.Add('read-task')
+        if ($this.Hooks.ContainsKey('ReadTaskXml')) { return & $this.Hooks.ReadTaskXml $this.TaskXml }
+        $this.TaskXml
+    }
     $io
 }
 & {
     . $installer -OperatorUser 'FIXTURE\operator' -LibraryOnly
     $op = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+    $profileIo = [pscustomobject]@{ Profile = 'C:\Users\op'; Exists = $true; SeenSid = '' }
+    $profileIo | Add-Member ScriptMethod ReadOperatorProfile { param($Sid) $this.SeenSid = $Sid; $this.Profile }
+    $profileIo | Add-Member ScriptMethod ProfileExists { param($Path) $this.Exists }
     $sidSet = New-WdOperatorSidSet -UserSid $op -LocalGroupSids @('S-1-5-32-544', 'S-1-5-32-545')
     Ok 'AC-15 operator SID set excludes deny-only Administrators' (-not $sidSet.Sids.Contains('S-1-5-32-544') -and $sidSet.ExcludedDenyOnly -contains 'S-1-5-32-544' -and $sidSet.Sids.Contains('S-1-5-3') -and $sidSet.Sids.Contains('S-1-5-4'))
     $vol = 'Q:\'; $pd = 'Q:\ProgramData'; $app = 'Q:\ProgramData\WolftacFactory'
@@ -256,9 +272,9 @@ function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
         }
         $s
     }
-    function Apply-Case([string]$Name, [hashtable]$State, [hashtable]$Hooks = @{}, $Sids = $sidSet) {
+    function Apply-Case([string]$Name, [hashtable]$State, [hashtable]$Hooks = @{}, $Sids = $sidSet, [switch]$FilesOnly) {
         $io = Stub-Io $State $Hooks
-        $r = Invoke-WdApplyCore -Io $io -Path $inst -Copies $copies -SidSet $Sids -OperatorSid $op -TaskXml '<Task/>'
+        $r = Invoke-WdApplyCore -Io $io -Path $inst -Copies $copies -SidSet $Sids -OperatorSid $op -TaskXml $doc.OuterXml -ProfileIo $profileIo -FilesOnly:$FilesOnly
         $out = $r.Lines -join "`n"
         $effects = @($io.Log | Where-Object { $_ -match '^(setsecurity|write|register)' })
         [IO.File]::AppendAllText($caseLog, "CASE $Name EXIT=$($r.Code) EFFECTS=$($effects.Count)`n$out`nLOG: $($io.Log -join ' | ')`n`n")
@@ -317,6 +333,47 @@ function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
         -not @($log | Where-Object { $_ -like 'setsecurity *' }).Count) ($log -join "`n")
     $c = Apply-Case 'positive-existing' (State)
     Ok 'AC-15 positive re-apply on trusted existing chain' ($c.Code -eq 0 -and @($c.Log | Where-Object { $_ -like 'setsecurity *' }).Count -eq 2 -and $c.Log -contains 'register' -and -not @($c.Log | Where-Object { $_ -like 'create *' }).Count) ($c.Log -join "`n")
+
+    # WD-641 uses the real Apply core, including path assessment and final hashes.
+    Ok 'WD-641 AC-2 equal readback required after registration' ($c.Out -ceq 'APPLIED: WolftacFactoryWatchdog' -and [Array]::IndexOf([string[]]$c.Log,'read-task') -gt [Array]::IndexOf([string[]]$c.Log,'register'))
+    $sidReader = { param($text) $x = [xml]$text; $x.Task.Principals.Principal.UserId = $op; $x.OuterXml }.GetNewClosure()
+    $c = Apply-Case 'principal-exported-as-sid' (State) @{ ReadTaskXml = $sidReader }
+    Ok 'WD-641 AC-2 resolved operator SID is the same principal' ($c.Code -eq 0 -and $c.Out -ceq 'APPLIED: WolftacFactoryWatchdog') $c.Out
+    foreach ($reader in @({ param($xml) 'not found' }, { param($xml) throw 'private read failure' }, { param($xml) '' })) {
+        $c = Apply-Case 'task-absent-or-unreadable' (State) @{ ReadTaskXml = $reader }
+        Ok 'WD-641 AC-1 missing/unreadable readback is exit 5 without APPLIED' ($c.Code -eq 5 -and $c.Out -ceq 'APPLY FAILED: task not found after registration' -and $c.Log[-1] -eq 'release') $c.Out
+    }
+    $changes = [ordered]@{
+        principal = { param($x) $x.Task.Principals.Principal.UserId = 'OTHER\account' }
+        logon = { param($x) $x.Task.Principals.Principal.LogonType = 'InteractiveToken' }
+        runlevel = { param($x) $x.Task.Principals.Principal.RunLevel = 'HighestAvailable' }
+        executable = { param($x) $x.Task.Actions.Exec.Command = 'other.exe' }
+        arguments = { param($x) $x.Task.Actions.Exec.Arguments = 'changed-private-argument' }
+        interval = { param($x) $x.Task.Triggers.TimeTrigger.Repetition.Interval = 'PT30M' }
+        limit = { param($x) $x.Task.Settings.ExecutionTimeLimit = 'PT72H' }
+    }
+    foreach ($field in $changes.Keys) {
+        $mutator = $changes[$field]
+        $reader = { param($text) $x = [xml]$text; & $mutator $x; $x.OuterXml }.GetNewClosure()
+        $c = Apply-Case "task-diff-$field" (State) @{ ReadTaskXml = $reader }
+        Ok "WD-641 AC-2 readback mismatch names only $field" ($c.Code -eq 5 -and $c.Out -ceq "APPLY FAILED: registered task differs: $field" -and $c.Log[-1] -eq 'release') $c.Out
+    }
+    $c = Apply-Case 'registration-refused' (State) @{ RegisterTask = { throw [UnauthorizedAccessException]::new('RAW-SECRET-DO-NOT-PRINT') } }
+    Ok 'WD-641 AC-3 registration exception sanitized, files retained' ($c.Code -eq 5 -and $c.Out -match '^APPLY FAILED: task registration refused \(UnauthorizedAccessException, HRESULT 0x[0-9A-F]{8}\)' -and $c.Out.EndsWith('FILES INSTALLED: 5 of 5 current; task NOT registered') -and -not $c.Out.Contains('RAW-SECRET') -and -not ($c.Log -contains 'read-task') -and $c.Log[-1] -eq 'release') $c.Out
+    $resolved = Resolve-WdOperatorProfile -Io $profileIo -Sid $op
+    $paths = Get-WdProfilePaths -Profile $resolved
+    Ok 'WD-641 AC-4 SID profile ignores caller USERPROFILE and LOCALAPPDATA' ($resolved -ceq 'C:\Users\op' -and $profileIo.SeenSid -ceq $op -and $paths.CronDir.Count -eq 4 -and @(@($paths.CronDir) + @($paths.EnvFile) | Where-Object { -not $_.StartsWith('C:\Users\op\AppData\Local\hermes\') }).Count -eq 0)
+    $overrides = Get-WdProfilePaths -Profile $resolved -Cron @('Q:\explicit\cron') -Env 'Q:\explicit\fixture.env'
+    Ok 'WD-641 AC-4 explicit paths retained' ($overrides.CronDir[0] -ceq 'Q:\explicit\cron' -and $overrides.EnvFile -ceq 'Q:\explicit\fixture.env')
+    foreach ($missing in @('missing-key','missing-directory')) {
+        $profileIo.Profile = if ($missing -eq 'missing-key') { '' } else { 'C:\Users\op' }
+        $profileIo.Exists = $false
+        $c = Apply-Case $missing (State) @{ RegisterTask = { throw 'must not register' } }
+        Ok 'WD-641 AC-5 absent profile refuses before any install I/O' ($c.Code -eq 3 -and $c.Out -ceq 'APPLY REFUSED: operator profile not found for FIXTURE\operator' -and $c.Log.Count -eq 0) $c.Out
+    }
+    $profileIo.Profile = 'C:\Users\op'; $profileIo.Exists = $true
+    $c = Apply-Case 'files-only' (State) @{ RegisterTask = { throw 'must not register' }; ReadTaskXml = { throw 'must not read task' } } -FilesOnly
+    Ok 'WD-641 AC-6 files-only revalidates five writes with zero task calls' ($c.Code -eq 0 -and $c.Out -ceq 'FILES APPLIED: WolftacFactoryWatchdog files only; task untouched' -and @($c.Log | Where-Object { $_ -like 'write *' }).Count -eq 5 -and @($c.Log | Where-Object { $_ -match '^(register|read-task)$' }).Count -eq 0 -and $c.Log -contains 'milestone revalidate ok=True hash-mismatch=0') $c.Out
 
     # Negative controls: each refused for its named security reason, zero effects.
     $s = State -Empty; $s[$app] = @{ Sddl = $sd.OperatorCreated; Reparse = $false; Identity = 'V1:app' }
@@ -417,6 +474,62 @@ function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
     $c = Verify-Case 'no-manifest' (State) @{} $null
     Ok 'AC-16 no expected input is a named FAIL' ($c.Out -match '(?m)^FAIL expected manifest: not supplied' -and $c.Out -match '(?m)^FAIL file factory-watchdog\.ps1 sha256: no-expected-hash') $c.Out
 
+    # WD-641 AC-8: execute the unchanged production Verify entry block in a child.
+    # Only OS facts are stubbed: the three owner/ACL/write-probe facts and the
+    # path reader. The real XML checks, manifest reader, assessor, output and exit
+    # reducer run. No alternate production CLI option can bypass those checks.
+    $verifyHarness = Join-Path $Scratch 'verify-entry-fixture.ps1'
+    $statePath = Join-Path $Scratch 'verify-state.json'
+    $manifestPath = Join-Path $Scratch 'verify-manifest.json'
+    Put $statePath ((State) | ConvertTo-Json -Depth 12)
+    Put $manifestPath (@{ approvedCommit = ('a' * 40); files = $hashes } | ConvertTo-Json)
+    $stubDefinition = 'function Stub-Io {' + (Get-Command Stub-Io).ScriptBlock.ToString() + "}`n"
+    $harness = @'
+param($Installer, $XmlInput, $Baseline, $StatePath, $ManifestPath, $InstallPath,
+      [string]$ExpectedLogon = 'S4U', [switch]$BadInstall)
+. $Installer -OperatorUser 'FIXTURE\operator' -LibraryOnly -ExpectedLogon $ExpectedLogon
+$OperatorUser = 'FIXTURE\operator'
+$InstallDir = $InstallPath; $ExpectedManifest = $ManifestPath; $TaskXmlIn = $XmlInput
+$baselineXml = [xml][IO.File]::ReadAllText($Baseline)
+$PwshPath = $baselineXml.Task.Actions.Exec.Command
+$arguments = $baselineXml.Task.Actions.Exec.Arguments
+$state = Get-Content -Raw -LiteralPath $StatePath | ConvertFrom-Json -AsHashtable
+function New-WdReadIo { Stub-Io $state }
+function Resolve-WdOperatorSidSet { New-WdOperatorSidSet -UserSid 'S-1-5-21-1111111111-2222222222-3333333333-1001' }
+function Get-WdInstallChecks {
+    foreach ($name in @('install-dir owner','install-dir ACL','operator cannot write')) {
+        [pscustomobject]@{ Name = $name; Ok = -not ($BadInstall -and $name -eq 'install-dir ACL'); Detail = '' }
+    }
+}
+function Export-ScheduledTask { throw 'NO LIVE TASK READ' }
+function Register-ScheduledTask { throw 'NO LIVE TASK WRITE' }
+function Get-Acl { throw 'NO LIVE ACL READ' }
+function Set-Acl { throw 'NO LIVE ACL WRITE' }
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'installer parse failed' }
+$blocks = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -ceq '$Verify' }, $false))
+if ($blocks.Count -ne 1) { throw 'expected one production Verify entry block' }
+$body = $blocks[0].Clauses[0].Item2.Extent.Text
+& ([scriptblock]::Create($body.Substring(1,$body.Length-2)))
+'@
+    # Put function after the param block, before the fixture body executes.
+    $harness = $harness.Replace(". `$Installer -OperatorUser", $stubDefinition + ". `$Installer -OperatorUser")
+    Put $verifyHarness $harness
+    $verifyArgs = @('-Installer',$installer,'-Baseline',$xmlPath,'-StatePath',$statePath,'-ManifestPath',$manifestPath,'-InstallPath',$inst)
+    $vr = Run $verifyHarness ($verifyArgs + @('-XmlInput',$xmlPath))
+    Ok 'WD-641 AC-8 S4U production Verify entry passes with trusted fixture' ($vr.Code -eq 0 -and $vr.Out.Contains('PASS logon type') -and $vr.Out -notmatch '(?m)^(FAIL|DEGRADED) ') $vr.Out
+    foreach ($mode in @('Interactive','InteractiveToken')) {
+        $interactive = [xml]$doc.OuterXml; $interactive.Task.Principals.Principal.LogonType = $mode
+        $interactivePath = Join-Path $Scratch "task-$mode.xml"; $interactive.Save($interactivePath)
+        $vr = Run $verifyHarness ($verifyArgs + @('-XmlInput',$interactivePath,'-ExpectedLogon','Interactive'))
+        Ok "WD-641 AC-8 $mode degraded-only exits 6 with no FAIL" ($vr.Code -eq 6 -and $vr.Out.Contains('DEGRADED task logon Interactive (signed-in only; does not run after a reboot until sign-in)') -and $vr.Out -notmatch '(?m)^FAIL ') $vr.Out
+        $vr = Run $verifyHarness ($verifyArgs + @('-XmlInput',$interactivePath))
+        Ok "WD-641 AC-8 $mode default remains FAIL" ($vr.Code -eq 1 -and $vr.Out.Contains('FAIL logon type') -and -not $vr.Out.Contains('DEGRADED')) $vr.Out
+        $vr = Run $verifyHarness ($verifyArgs + @('-XmlInput',$interactivePath,'-ExpectedLogon','Interactive','-BadInstall'))
+        Ok "WD-641 AC-8 $mode other failures dominate degradation" ($vr.Code -eq 1 -and $vr.Out.Contains('FAIL install-dir ACL') -and $vr.Out.Contains('DEGRADED')) $vr.Out
+    }
+
     # Real-handle reader on scratch only (read-only; no ACL change): reparse, identity
     # swap and the no-FILE_SHARE_DELETE hold that blocks rename during a write.
     $real = Join-Path $Scratch 'tp12-real'
@@ -457,6 +570,15 @@ $r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$xml3,'-ExpectedManifes
 Ok 'AC-16 real Verify: manifest and operator identity resolved' ($r.Out.Contains('PASS expected manifest: approvedCommit=' + $head) -and $r.Out.Contains('PASS operator identity')) $r.Out
 Ok 'AC-16 real Verify: all five hashes match the manifest' (@([regex]::Matches($r.Out, '(?m)^PASS file \S+ sha256')).Count -eq 5) $r.Out
 Ok 'AC-16 real Verify: user-owned scratch InstallDir is a named FAIL' ($r.Code -ne 0 -and $r.Out -match "(?m)^FAIL path InstallDir $([regex]::Escape($inst3)): UNSAFE .*operator-owns-component" -and $r.Out -match '(?m)^FAIL path File .*factory-watchdog\.ps1: UNSAFE .*operator-owns-component') $r.Out
+foreach ($mode in @('Interactive','InteractiveToken')) {
+    $interactive = [xml][IO.File]::ReadAllText($xml3)
+    $interactive.Task.Principals.Principal.LogonType = $mode
+    $interactivePath = Join-Path $Scratch "task3-$mode.xml"; $interactive.Save($interactivePath)
+    $r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$interactivePath,'-ExpectedManifest',$manifest3,'-ExpectedLogon','Interactive'))
+    Ok "WD-641 TP2 real CLI $mode emits DEGRADED but preserves scratch-security failure" ($r.Code -eq 1 -and $r.Out.Contains('DEGRADED task logon Interactive (signed-in only; does not run after a reboot until sign-in)') -and -not $r.Out.Contains('FAIL logon type') -and $r.Out.Contains('operator-owns-component')) $r.Out
+    $r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$interactivePath,'-ExpectedManifest',$manifest3))
+    Ok "WD-641 TP2 real CLI $mode defaults to FAIL" ($r.Code -eq 1 -and $r.Out.Contains('FAIL logon type') -and -not $r.Out.Contains('DEGRADED')) $r.Out
+}
 [IO.File]::AppendAllText((Join-Path $inst3 'deploy\deploy.ps1'), "`n# scratch modification`n")
 Remove-Item -LiteralPath (Join-Path $inst3 'deploy\junctions.json')
 $r = Run $installer ($common3 + @('-Verify','-TaskXmlIn',$xml3,'-ExpectedManifest',$manifest3))

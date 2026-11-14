@@ -101,23 +101,56 @@ Every review finding carries exactly one tag: `[AC-N]`, `[DEFECT]`, `[SECURITY]`
 `[CI]`, or `[SCOPE-CONFLICT]`. `[CI]` means a GitHub check failed and the
 finding names the failing job. `NEEDS HUMAN` is forbidden for ordinary decidable defects:
 decidable defects are `FAIL`; only product decisions park an issue. A parked report
-must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and instruct
-Jonathan to comment his decision, then remove his assignment. Once unassigned, the
-issue re-enters the review queue with his decision comment as part of the work order.
+must name the exact decision in one tagged `[SCOPE-CONFLICT]` line and say how the
+park clears: Logan asks Jonathan in Discord `#exec`, posts the `DECISION RECORD` and
+removes Jonathan's assignment. Once unassigned, the issue re-enters the review queue
+with that record as part of the work order.
 
 Review pickup silently skips an issue whose latest review report is `NEEDS HUMAN`
-while it remains assigned to Jonathan or lacks his later decision comment. Build
+while it remains assigned to Jonathan or no later comment clears the park. Build
 pickup applies the identical test to `Todo` issues. Neither stage comments or changes
 state while skipping parked work.
 
-**Clearing a park is a two-part action, and both parts are required:** Jonathan
-comments his decision *from his own Linear account*, and his assignment is removed.
-Only then does the issue become pickable again, with that comment as part of the work
-order. A decision relayed on Jonathan's behalf by an agent does **not** clear the park
-— the comment author must be Jonathan himself, for the same identity reason integrate
-refuses a bot-authored approval. Relaying a chat decision into Linear as an agent
-records the intent but leaves the issue parked; say so plainly rather than implying
-the issue is unblocked.
+**DECISION-RECORD-UNPARK — clearing a park is a two-part action, and both parts are
+required:** Jonathan's assignment is removed, AND a comment newer than the latest
+`NEEDS HUMAN` report is either a decision record for that issue or a comment Jonathan
+wrote himself in Linear. Jonathan is never asked to comment in Linear. The flow:
+
+1. Logan (or Sloane) opens a thread in Discord `#exec`, mentions Jonathan and asks
+   that one decision, with the options and a recommendation.
+2. Jonathan replies in that thread from his own Discord account. A reaction is not a
+   decision; only his text reply is recorded.
+3. Logan posts one `DECISION RECORD` comment on the Linear issue and removes
+   Jonathan's assignment. Logan is the only recorder.
+   Workers never write a DECISION RECORD.
+4. On the next pickup, review (`In Review`) or build (`Todo`) treats the issue as
+   un-parked and uses the record as part of the work order. The Gatekeeper's timed
+   retries apply the same test (`park_cleared` in `deploy/factory-gatekeeper.py`).
+
+The record format:
+
+```text
+**Agent:** <platform / model> (Logan)
+
+**DECISION RECORD — <ISSUE-ID>**
+- **Decision asked:** <the [SCOPE-CONFLICT] line, verbatim>
+- **Jonathan's answer:** <his Discord reply, verbatim>
+- **Discord message:** https://discord.com/channels/<guild>/<channel-or-thread>/<message>
+- **Recorded by:** Logan. This is an agent's record of Jonathan's Discord decision, not a comment Jonathan wrote.
+```
+
+A comment is a decision record for an issue only when one of its lines starts with
+`DECISION RECORD`, an em dash or hyphen and that issue's own identifier (heading
+marks, a list dash and bold may come first), and its body contains a Discord message
+link of the form
+`https://discord.com/channels/<17-20 digits>/<17-20 digits>/<17-20 digits>`.
+A relay without the Discord message link does NOT clear the park; say so plainly
+rather than implying the issue is unblocked. A record that names another issue, or is
+older than the latest `NEEDS HUMAN` report, does not clear it either. Only the
+record's shape is checked: nothing yet verifies that the linked message exists or who
+wrote it. A `DECISION RECORD` never approves a merge; the Discord 🚀 gate is
+unchanged. The earlier form stays valid and is never requested: a comment Jonathan
+writes himself in Linear, plus removal of his assignment, still clears a park.
 For buildable `Todo` work, issues whose latest review report is `FAIL` form the
 rework tier and are selected before fresh issues; priority
 (`Urgent` > `High` > `Medium` > `Low`) and oldest-first ordering apply within each
