@@ -1,9 +1,9 @@
 {
   "gatekeeper": {
-    "idle": "gatekeeper: build: idle; build-crm: idle; review: idle; integrate: idle; audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
-    "ready": "gatekeeper: build: no-baseline -> dispatched(dry-run); build-crm: no-baseline -> dispatched(dry-run); review: no-baseline -> dispatched(dry-run); integrate: no-baseline -> dispatched(dry-run); audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
-    "inflight": "gatekeeper: build: in-flight (skip); build-crm: no-baseline -> dispatched(dry-run); review: no-baseline -> dispatched(dry-run); integrate: no-baseline -> dispatched(dry-run); audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
-    "unauthorized": "gatekeeper: build: linear-auth-failed (401) -> skipped; build-crm: linear-auth-failed (401) -> skipped; review: linear-auth-failed (401) -> skipped; integrate: linear-auth-failed (401) -> dispatched(dry-run) for re-mint; audit: skipped (linear-auth-failed) (dry-run)"
+    "idle": "gatekeeper: build: idle; build-crm: idle; review: idle; integrate: idle; build-residual: no-job (skip); audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
+    "ready": "gatekeeper: build: no-baseline -> dispatched(dry-run); build-crm: no-baseline -> dispatched(dry-run); review: no-baseline -> dispatched(dry-run); integrate: no-baseline -> dispatched(dry-run); build-residual: no-job (skip); audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
+    "inflight": "gatekeeper: build: in-flight (skip); build-crm: no-baseline -> dispatched(dry-run); review: no-baseline -> dispatched(dry-run); integrate: no-baseline -> dispatched(dry-run); build-residual: no-job (skip); audit: clean (window 2029-12-25T00:00:00+00:00..2029-12-31T23:00:00+00:00) (dry-run)",
+    "unauthorized": "gatekeeper: build: linear-auth-failed (401) -> skipped; build-crm: linear-auth-failed (401) -> skipped; review: linear-auth-failed (401) -> skipped; integrate: linear-auth-failed (401) -> dispatched(dry-run) for re-mint; build-residual: no-job (skip); audit: skipped (linear-auth-failed) (dry-run)"
   },
   "watchdog": {
     "healthy": {"exit": 0, "findings": []},
