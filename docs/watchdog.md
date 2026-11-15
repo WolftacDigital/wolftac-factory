@@ -394,10 +394,42 @@ Until it is resolved, refresh the files only and leave that fallback task intact
 For that fallback, `-Verify -ExpectedLogon Interactive` recognizes both the
 `Interactive` label and Task Scheduler's `InteractiveToken` XML spelling, and prints
 `DEGRADED task logon Interactive (signed-in only; does not run after a reboot until sign-in)`.
-All other checks are unchanged. Exit 6 means degradation was the only non-pass;
+Exit 6 means degradation was the only non-pass;
 any real failure still exits 1. Without the parameter, Interactive remains a FAIL.
 S4U is still the default and all-pass S4U still exits 0. This is truthful reporting
 of reduced availability, not permission to replace S4U or a full verification PASS.
+
+Verify compares the operator and task principal by resolved SID. It accepts the
+old case-insensitive name comparison only when neither identity resolves, and
+still rejects SYSTEM. An absent XML `RunLevel` means the Task Scheduler default,
+`LeastPrivilege`; an empty element or `HighestAvailable` fails.
+
+The exact bare PowerShell action remains valid in either mode. Only with
+`-ExpectedLogon Interactive`, Verify also accepts the full system path
+`%SystemRoot%\System32\conhost.exe` (case-insensitive) with arguments exactly
+`--headless "<PwshPath>" <planned arguments>` (case-sensitive, single spaces).
+Other wrapper paths, a different PowerShell path, extra/reordered switches or
+changed arguments fail. Default S4U verification never accepts the wrapper.
+This changes verification only: plan, Apply, FilesOnly and generated task XML
+are unchanged; it neither re-registers the fallback nor repairs S4U.
+
+The install-directory ACL comparison masks only the `Synchronize` bit on both
+actual and expected rights (`FullControl` includes it). Plain `ReadAndExecute`
+and `ReadAndExecute, Synchronize` therefore match. The protected, exactly
+three-entry, unique-SID, allow-only, non-inherited ACE requirements and exact
+inheritance/propagation flags are unchanged; `Modify` still fails.
+
+**Post-merge operator proof (WD-645 AC-10):** fast-forward both checkouts, prepare
+a manifest of the five installed files and run the non-elevated User-flow check:
+
+```powershell
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Verify -ExpectedLogon Interactive -ExpectedManifest <manifest>
+```
+
+Expect exit 6 and exactly one non-PASS line, `DEGRADED`. This live proof is not a
+build/review test. Workers use synthetic ACL rules, task XML, SID resolution and
+trusted-install fixtures only; they do not read the live task or `C:\ProgramData`,
+apply an installation, or change ACLs. Offline success does not prove the live install.
 
 The install directory is owned by `BUILTIN\Administrators`. Its protected DACL
 disables inherited permissions and contains exactly three inheritable ACEs:
