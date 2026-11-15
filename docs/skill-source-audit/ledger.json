@@ -1009,7 +1009,7 @@
       "stage": "spec",
       "section": "draft",
       "decision": "shared",
-      "reason": "Share the complete spec template, evidence map, stable AC/NG IDs, substantive quality gates and contradiction check; do not rely on shortened summaries.",
+      "reason": "Use canonical/wolftac-spec/spec-template.md at the pin as the proposed authoritative template, section by section in S-template-*; preserve all its safeguards, with only the Repo grammar pending Q1. D/X/H wrappers remain adapters, not abbreviated policy.",
       "sources": [
         {
           "copy": "C",
@@ -1029,6 +1029,13 @@
           "copy": "D",
           "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
           "start": 50,
+          "end": 53,
+          "quote": "2. **Draft the spec** using exactly this template (no placeholders, no TBD — if you"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 88,
           "end": 100,
           "quote": "2. **Draft the spec** using exactly this template (no placeholders, no TBD — if you"
         },
@@ -1036,6 +1043,13 @@
           "copy": "X",
           "path": "ports/codex/wolftac-spec.md",
           "start": 52,
+          "end": 55,
+          "quote": "2. **Draft the spec** using exactly this template (no placeholders, no TBD — if you"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 90,
           "end": 102,
           "quote": "2. **Draft the spec** using exactly this template (no placeholders, no TBD — if you"
         },
@@ -1043,6 +1057,13 @@
           "copy": "H",
           "path": "ports/hermes/wolftac-spec/SKILL.md",
           "start": 86,
+          "end": 88,
+          "quote": "2. **Draft the spec** using exactly this template (no placeholders, no TBD):"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 123,
           "end": 123,
           "quote": "2. **Draft the spec** using exactly this template (no placeholders, no TBD):"
         },
@@ -1088,7 +1109,7 @@
       "stage": "spec",
       "section": "entry",
       "decision": "platform-only",
-      "reason": "Keep each loader frontmatter, invocation syntax, argument placeholder and voice trigger as surface metadata; these are not factory policy.",
+      "reason": "Keep each loader frontmatter, invocation syntax, argument placeholder and voice trigger as surface metadata; these are not factory policy. Preserve plugin agents/openai.yaml separately in frontmatter/plugin/agents/openai.yaml, including its stage prompt and complete Linear MCP dependency; it is not SKILL.md frontmatter.",
       "sources": [
         {
           "copy": "C",
@@ -1124,10 +1145,17 @@
           "start": 1,
           "end": 18,
           "quote": "Factory stage 1 — turn a feature idea into a build-ready spec through structured"
+        },
+        {
+          "copy": "PM",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/agents/openai.yaml",
+          "start": 1,
+          "end": 12,
+          "quote": "display_name / short_description / default_prompt; Linear MCP streamable_http https://mcp.linear.app/mcp"
         }
       ],
       "conflicts": [],
-      "presence": "C P D X H",
+      "presence": "C P D X H PM",
       "security": false,
       "kind": "wording/adapter"
     },
@@ -1958,7 +1986,7 @@
       "stage": "build",
       "section": "entry",
       "decision": "platform-only",
-      "reason": "Keep each loader frontmatter, invocation syntax, argument placeholder and voice trigger as surface metadata; these are not factory policy.",
+      "reason": "Keep each loader frontmatter, invocation syntax, argument placeholder and voice trigger as surface metadata; these are not factory policy. Preserve plugin agents/openai.yaml separately in frontmatter/plugin/agents/openai.yaml, including its stage prompt and complete Linear MCP dependency; it is not SKILL.md frontmatter.",
       "sources": [
         {
           "copy": "C",
@@ -1994,10 +2022,17 @@
           "start": 1,
           "end": 17,
           "quote": "Factory stage 2 — pull the highest-priority Todo issue labeled Factory Queue from"
+        },
+        {
+          "copy": "PM",
+          "path": "plugins/wolftac-factory/skills/wolftac-build/agents/openai.yaml",
+          "start": 1,
+          "end": 12,
+          "quote": "display_name / short_description / default_prompt; Linear MCP streamable_http https://mcp.linear.app/mcp"
         }
       ],
       "conflicts": [],
-      "presence": "C P D X H",
+      "presence": "C P D X H PM",
       "security": false,
       "kind": "wording/adapter"
     },
@@ -3115,7 +3150,7 @@
       "stage": "review",
       "section": "entry",
       "decision": "platform-only",
-      "reason": "Keep each loader frontmatter, invocation syntax, argument placeholder and voice trigger as surface metadata; these are not factory policy.",
+      "reason": "Keep each loader frontmatter, invocation syntax, argument placeholder and voice trigger as surface metadata; these are not factory policy. Preserve plugin agents/openai.yaml separately in frontmatter/plugin/agents/openai.yaml, including its stage prompt and complete Linear MCP dependency; it is not SKILL.md frontmatter.",
       "sources": [
         {
           "copy": "C",
@@ -3151,10 +3186,17 @@
           "start": 1,
           "end": 20,
           "quote": "Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac"
+        },
+        {
+          "copy": "PM",
+          "path": "plugins/wolftac-factory/skills/wolftac-review/agents/openai.yaml",
+          "start": 1,
+          "end": 12,
+          "quote": "display_name / short_description / default_prompt; Linear MCP streamable_http https://mcp.linear.app/mcp"
         }
       ],
       "conflicts": [],
-      "presence": "C P D X H",
+      "presence": "C P D X H PM",
       "security": false,
       "kind": "wording/adapter"
     },
@@ -5428,6 +5470,536 @@
       "presence": "H F",
       "security": false,
       "kind": "missing/extra"
+    },
+    {
+      "id": "S-template-header",
+      "stage": "spec",
+      "section": "template header",
+      "decision": "shared",
+      "reason": "Preserve canonical title and Repo/priority/estimate fields; P matches, D/X/H omit the title and add indentation. Repo grammar remains Q1.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 1,
+          "end": 4,
+          "quote": "**Repo:** <absolute path or git URL> | **Priority:** <Urgent/High/Medium/Low> | **Estimate:** <points>"
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 1,
+          "end": 4,
+          "quote": "**Repo:** <absolute path or git URL> | **Priority:** <Urgent/High/Medium/Low> | **Estimate:** <points>"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 54,
+          "end": 55,
+          "quote": "**Repo:** <absolute path or git URL> | **Priority:** <Urgent/High/Medium/Low> | **Estimate:** <points>"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 56,
+          "end": 57,
+          "quote": "**Repo:** <absolute path or git URL> | **Priority:** <Urgent/High/Medium/Low> | **Estimate:** <points>"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 89,
+          "end": 90,
+          "quote": "**Repo:** <absolute path or git URL> | **Priority:** <Urgent/High/Medium/Low> | **Estimate:** <points>"
+        }
+      ],
+      "conflicts": [
+        "Q1"
+      ],
+      "presence": "CT PT D X H",
+      "security": false,
+      "kind": "conflict"
+    },
+    {
+      "id": "S-template-problem",
+      "stage": "spec",
+      "section": "template Problem",
+      "decision": "shared",
+      "reason": "Use canonical complete problem prompt; P omits the one-paragraph instruction, D/X/H have only the heading.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 5,
+          "end": 7,
+          "quote": "What's broken or missing, for whom, why it matters now, and what not doing it costs. One tight paragraph."
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 5,
+          "end": 8,
+          "quote": "What's broken or missing, for whom, why it matters now, and what not doing it costs."
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 56,
+          "end": 56,
+          "quote": "Problem"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 58,
+          "end": 58,
+          "quote": "Problem"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 91,
+          "end": 91,
+          "quote": "Problem"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": false,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-goals",
+      "stage": "spec",
+      "section": "template Goals",
+      "decision": "shared",
+      "reason": "Keep canonical observable-outcome guidance; P and D/X/H omit the guidance, not the requirement.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 8,
+          "end": 10,
+          "quote": "- Concrete outcomes that define success. Each one observable after shipping."
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 9,
+          "end": 10,
+          "quote": "Goals"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 57,
+          "end": 57,
+          "quote": "Goals"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 59,
+          "end": 59,
+          "quote": "Goals"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 92,
+          "end": 92,
+          "quote": "Goals"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": false,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-non-goals",
+      "stage": "spec",
+      "section": "template Non-goals",
+      "decision": "shared",
+      "reason": "Keep canonical scope-protection guidance and NG-1 placeholder; P omits both, D/X/H retain the ID and move scope guidance into S-draft.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 11,
+          "end": 14,
+          "quote": "This section protects /wolftac-build from scope creep — be generous here. / - NG-1: <Out-of-scope item>"
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 11,
+          "end": 12,
+          "quote": "Non-goals"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 58,
+          "end": 59,
+          "quote": "- NG-1: <out-of-scope item>"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 60,
+          "end": 61,
+          "quote": "- NG-1: <out-of-scope item>"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 93,
+          "end": 94,
+          "quote": "- NG-1: <out-of-scope item>"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": false,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-flow",
+      "stage": "spec",
+      "section": "template User flow",
+      "decision": "shared",
+      "reason": "Keep canonical numbered user-flow instruction; other templates contain only the heading.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 15,
+          "end": 17,
+          "quote": "Step-by-step of what the user sees and does once this ships. Number the steps."
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 13,
+          "end": 14,
+          "quote": "User flow"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 60,
+          "end": 60,
+          "quote": "User flow"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 62,
+          "end": 62,
+          "quote": "User flow"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 95,
+          "end": 95,
+          "quote": "User flow"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": false,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-technical",
+      "stage": "spec",
+      "section": "template Technical approach",
+      "decision": "shared",
+      "reason": "Keep all five canonical prompts including source-of-truth, migrations, rejected/simplified alternatives and DESIGN.md; P paraphrases them, D/X/H shorten to labels (X/H retain real-path guidance).",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 18,
+          "end": 24,
+          "quote": "- **Entry points / affected files:** real paths verified against the repo, not guesses / - **Data model:** tables/fields added or changed and the source of truth for each; migrations needed? Settle th"
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 15,
+          "end": 22,
+          "quote": "- **Entry points / affected files:** real paths verified against the repository / - **Data model:** tables/fields, source of truth for each, and migrations; settle before interfaces / - **APIs / inter"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 61,
+          "end": 66,
+          "quote": "- **Entry points / affected files:** / - **Data model:** / - **APIs / interfaces:** / - **Key decisions:** / - **Dependencies:**"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 63,
+          "end": 68,
+          "quote": "- **Entry points / affected files:** (real paths, verified) / - **Data model:** / - **APIs / interfaces:** / - **Key decisions:** / - **Dependencies:**"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 96,
+          "end": 101,
+          "quote": "- **Entry points / affected files:** (real paths, verified) / - **Data model:** / - **APIs / interfaces:** / - **Key decisions:** / - **Dependencies:**"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": false,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-criteria",
+      "stage": "spec",
+      "section": "template Acceptance criteria",
+      "decision": "shared",
+      "reason": "Keep canonical AC-1/AC-2, stable IDs and AC-versus-NG check; P lacks IDs and both safeguards, D/X/H retain IDs and place safeguards in S-draft. Absence must not weaken the shared template.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 25,
+          "end": 31,
+          "quote": "- [ ] AC-1: <Independently testable criterion; prefer \"user can X and sees Y\" over \"code does Z\"> / - [ ] AC-2: <Failure/edge case criterion> / IDs are stable once filed — never renumber; deletions le"
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 23,
+          "end": 27,
+          "quote": "- [ ] Independently testable observable result / - [ ] At least one failure or edge case"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 67,
+          "end": 69,
+          "quote": "- [ ] AC-1: <independently testable criterion; prefer \"user can X and sees Y\" over \"code does Z\"> / - [ ] AC-2: <failure/edge case criterion>"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 69,
+          "end": 71,
+          "quote": "- [ ] AC-1: <independently testable criterion; prefer \"user can X and sees Y\" over \"code does Z\"> / - [ ] AC-2: <failure/edge case criterion>"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 102,
+          "end": 104,
+          "quote": "- [ ] AC-1: <independently testable criterion; prefer \"user can X and sees Y\" over \"code does Z\"> / - [ ] AC-2: <failure/edge case criterion>"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": true,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-quality",
+      "stage": "spec",
+      "section": "template Quality gates",
+      "decision": "shared",
+      "reason": "Keep canonical substantive-or-reasoned-N/A rule, all security subgates and explicit migration/rollback guidance; P drops migration detail, D/X/H retain it but move the substantive-answer rule to S-draft.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 32,
+          "end": 43,
+          "quote": "Answer each gate substantively or with `N/A — <reason>`; bare `N/A` is non-compliant. / - Accessibility: / - Security / privacy: / - AI features: state the model fallback, the rate limit and how spend"
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 28,
+          "end": 40,
+          "quote": "Answer substantively or use `N/A — <feature-specific reason>`. / - Accessibility: / - Security / privacy: / - AI features: state the model fallback, the rate limit and how spend is monitored. / - Auth"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 70,
+          "end": 79,
+          "quote": "- Accessibility: / - Security / privacy: / - AI features: state the model fallback, the rate limit and how spend is monitored. / - Auth features: list each testing setting to restore before launch, su"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 72,
+          "end": 81,
+          "quote": "- Accessibility: / - Security / privacy: / - AI features: state the model fallback, the rate limit and how spend is monitored. / - Auth features: list each testing setting to restore before launch, su"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 105,
+          "end": 114,
+          "quote": "- Accessibility: / - Security / privacy: / - AI features: state the model fallback, the rate limit and how spend is monitored. / - Auth features: list each testing setting to restore before launch, su"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": true,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-evidence",
+      "stage": "spec",
+      "section": "template Evidence map",
+      "decision": "shared",
+      "reason": "Keep canonical full self-check, one-row-per-criterion rule and four-column table; P omits the one-row explanation, D/X/H put self-check in S-proof and row/contradiction guidance in S-draft. Render the shared rules once, never discard them.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 44,
+          "end": 61,
+          "quote": "**UNATTENDED-PROOF-SELF-CHECK:** For new specs written after this rule merges, every / acceptance criterion must name an exact worker command or test that can prove it unattended, / or carry `[operato"
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 41,
+          "end": 56,
+          "quote": "**UNATTENDED-PROOF-SELF-CHECK:** For new specs written after this rule merges, every / acceptance criterion must name an exact worker command or test that can prove it unattended, / or carry `[operato"
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 80,
+          "end": 83,
+          "quote": "| Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) | / |---|---|---|---| / | AC-1 | <matching test-plan step> | <observable pass result> | <exact unat"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 82,
+          "end": 85,
+          "quote": "| Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) | / |---|---|---|---| / | AC-1 | <matching test-plan step> | <observable pass result> | <exact unat"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 115,
+          "end": 118,
+          "quote": "| Criterion | Test-plan step | Expected observable result | Proven by (worker command or [operator]) | / |---|---|---|---| / | AC-1 | <matching test-plan step> | <observable pass result> | <exact unat"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": true,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-tests",
+      "stage": "spec",
+      "section": "template Test plan",
+      "decision": "shared",
+      "reason": "Keep canonical independent build/review proof, exact commands and happy/edge/failure/manual expected results; P summarizes, D/H only say exact commands/results, X also names independent re-proof.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 62,
+          "end": 65,
+          "quote": "How /wolftac-build proves it works and /wolftac-review re-proves it independently: exact commands to run, / cases to cover (happy path, edge, failure), and any manual checks with expected results."
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 57,
+          "end": 60,
+          "quote": "Include exact commands, happy/edge/failure cases, manual checks, and expected results."
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 84,
+          "end": 85,
+          "quote": "(exact commands + expected results)"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 86,
+          "end": 87,
+          "quote": "(exact commands + expected results; how build proves it and review re-proves it)"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 119,
+          "end": 120,
+          "quote": "(exact commands + expected results)"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": false,
+      "kind": "wording/adapter; missing/extra"
+    },
+    {
+      "id": "S-template-notes",
+      "stage": "spec",
+      "section": "template Build notes",
+      "decision": "shared",
+      "reason": "SECURITY: canonical is authoritative: never hardcode secrets and review checks this; P only says environment variables, D/X/H retain never-hardcoded but omit the explicit review check. Preserve canonical branch, repo-instruction and environment-prerequisite prompts; no weaker replacement.",
+      "sources": [
+        {
+          "copy": "CT",
+          "path": "canonical/wolftac-spec/spec-template.md",
+          "start": 66,
+          "end": 70,
+          "quote": "- Branch: use the Linear-generated branch name for this issue. / - Secrets go in .env / env vars — never hardcoded (this is checked at review). / - Match repo conventions: read the repo's CLAUDE.md be"
+        },
+        {
+          "copy": "PT",
+          "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+          "start": 61,
+          "end": 65,
+          "quote": "- Use the Linear-generated branch name. / - Keep secrets in environment variables. / - Follow repository instructions and document environment prerequisites."
+        },
+        {
+          "copy": "D",
+          "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+          "start": 86,
+          "end": 87,
+          "quote": "(branch = Linear's generated branch name; secrets in .env never hardcoded; match repo conventions)"
+        },
+        {
+          "copy": "X",
+          "path": "ports/codex/wolftac-spec.md",
+          "start": 88,
+          "end": 89,
+          "quote": "(branch = Linear's generated branch name; secrets in .env never hardcoded; match repo conventions)"
+        },
+        {
+          "copy": "H",
+          "path": "ports/hermes/wolftac-spec/SKILL.md",
+          "start": 121,
+          "end": 122,
+          "quote": "(branch = Linear's generated branch name; secrets in .env never hardcoded; match repo conventions)"
+        }
+      ],
+      "conflicts": [],
+      "presence": "CT PT D X H",
+      "security": true,
+      "kind": "wording/adapter; missing/extra"
     }
   ],
   "reference_rows": [
@@ -6323,7 +6895,8 @@
       "id": "Q1",
       "rows": [
         "S-repo-format",
-        "S-draft"
+        "S-draft",
+        "S-template-header"
       ],
       "question": "Should Repo have one local-path-only grammar, or allow owner/name plus path? Hermes forbids the remote on that line; other copies/templates accept broader forms. Recommend one parseable local-path field plus separate remote metadata."
     },
@@ -6413,5 +6986,167 @@
       "question": "Should reference examples using force removal, broad stop/kill wording or cleanup-before-Linear be narrowed to clean owned worktrees/processes after evidence preservation? Recommend the common stage cleanup order and no runtime/unowned-process termination."
     }
   ],
-  "example_policy": "Lossless baseline rendering. No semantic changes, stale removals or conflict decisions applied before Jonathan sign-off."
+  "example_policy": "Lossless baseline rendering. No semantic changes, stale removals or conflict decisions applied before Jonathan sign-off.",
+  "supplemental_inventory": [
+    {
+      "stage": "spec",
+      "copy": "CT",
+      "path": "canonical/wolftac-spec/spec-template.md",
+      "lines": 70,
+      "sha256": "11241cad804d0b54cf3f1b586642779f74f839aa579538c894d08a4ef0ce2199"
+    },
+    {
+      "stage": "build",
+      "copy": "PM",
+      "path": "plugins/wolftac-factory/skills/wolftac-build/agents/openai.yaml",
+      "lines": 12,
+      "sha256": "f85454cb096ea7d62cb49804bef938e366f730ff4478ed2418aac9b935dbcff5"
+    },
+    {
+      "stage": "review",
+      "copy": "PM",
+      "path": "plugins/wolftac-factory/skills/wolftac-review/agents/openai.yaml",
+      "lines": 12,
+      "sha256": "cac6a716484139b2088c0d69599509d85c0ea2a6cc2dcb9a5b9ca858016bfee6"
+    },
+    {
+      "stage": "spec",
+      "copy": "PM",
+      "path": "plugins/wolftac-factory/skills/wolftac-spec/agents/openai.yaml",
+      "lines": 12,
+      "sha256": "60bbe240c70eb48eeb999588b10df5b7200f04e78306de1ef669b1588fed4ea6"
+    },
+    {
+      "stage": "spec",
+      "copy": "PT",
+      "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+      "lines": 65,
+      "sha256": "70f71cc9307fa85f5deea091680fc4568b958621560229a7e619fb222852d172"
+    }
+  ],
+  "script_assets": [
+    {
+      "path": "canonical/wolftac-integrate/scripts/linear_bot.py",
+      "sha256": "a9b9d41abd2feda03dc6d396cf38b17dc2b4715babfe56428c2642084d08c852",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "canonical/wolftac-integrate/scripts/run_gate.py",
+      "sha256": "f8c76463ed6698810f2579d5101ee020ce8a6f4e03c9bd3c3f70b3df8d9298a5",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "canonical/wolftac-integrate/scripts/slack_bot.py",
+      "sha256": "ba8363121af2c80a600ad9309340f8ce226115828ce3ec6a04e195e9ce4c3502",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "plugins/wolftac-factory/skills/wolftac-integrate/scripts/linear_bot.py",
+      "sha256": "a9b9d41abd2feda03dc6d396cf38b17dc2b4715babfe56428c2642084d08c852",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "plugins/wolftac-factory/skills/wolftac-integrate/scripts/run_gate.py",
+      "sha256": "f8c76463ed6698810f2579d5101ee020ce8a6f4e03c9bd3c3f70b3df8d9298a5",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "plugins/wolftac-factory/skills/wolftac-integrate/scripts/slack_bot.py",
+      "sha256": "ba8363121af2c80a600ad9309340f8ce226115828ce3ec6a04e195e9ce4c3502",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/claude-desktop/wolftac-integrate/scripts/linear_bot.py",
+      "sha256": "a9b9d41abd2feda03dc6d396cf38b17dc2b4715babfe56428c2642084d08c852",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/claude-desktop/wolftac-integrate/scripts/run_gate.py",
+      "sha256": "f8c76463ed6698810f2579d5101ee020ce8a6f4e03c9bd3c3f70b3df8d9298a5",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/claude-desktop/wolftac-integrate/scripts/slack_bot.py",
+      "sha256": "ba8363121af2c80a600ad9309340f8ce226115828ce3ec6a04e195e9ce4c3502",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/linear_bot.py",
+      "sha256": "a9b9d41abd2feda03dc6d396cf38b17dc2b4715babfe56428c2642084d08c852",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/run_gate.py",
+      "sha256": "f8c76463ed6698810f2579d5101ee020ce8a6f4e03c9bd3c3f70b3df8d9298a5",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/hermes-factory-integrate/skills/wolftac-integrate/scripts/slack_bot.py",
+      "sha256": "ba8363121af2c80a600ad9309340f8ce226115828ce3ec6a04e195e9ce4c3502",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/hermes/wolftac-build/scripts/skip_report.py",
+      "sha256": "c5dbbcb185cea286c78fcb962be6cfbe3f3772caf188910256558328b07cead8",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/hermes/wolftac-integrate/scripts/linear_bot.py",
+      "sha256": "a9b9d41abd2feda03dc6d396cf38b17dc2b4715babfe56428c2642084d08c852",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/hermes/wolftac-integrate/scripts/run_gate.py",
+      "sha256": "f8c76463ed6698810f2579d5101ee020ce8a6f4e03c9bd3c3f70b3df8d9298a5",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    },
+    {
+      "path": "ports/hermes/wolftac-integrate/scripts/slack_bot.py",
+      "sha256": "ba8363121af2c80a600ad9309340f8ce226115828ce3ec6a04e195e9ce4c3502",
+      "decision": "shared",
+      "reason": "Preserve unchanged executable helper as a packaged asset; implementation semantics are outside this prose audit."
+    }
+  ],
+  "template_variants": {
+    "CT": {
+      "path": "canonical/wolftac-spec/spec-template.md",
+      "start": 1,
+      "end": 70
+    },
+    "PT": {
+      "path": "plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md",
+      "start": 1,
+      "end": 65
+    },
+    "D": {
+      "path": "ports/claude-desktop/wolftac-spec/SKILL.md",
+      "start": 54,
+      "end": 87
+    },
+    "X": {
+      "path": "ports/codex/wolftac-spec.md",
+      "start": 56,
+      "end": 89
+    },
+    "H": {
+      "path": "ports/hermes/wolftac-spec/SKILL.md",
+      "start": 89,
+      "end": 122
+    }
+  }
 }
