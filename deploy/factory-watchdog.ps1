@@ -173,6 +173,7 @@ $readFailure = $false
 $auditStatuses = New-Object System.Collections.Generic.List[string]
 $auditIds = New-Object System.Collections.Generic.List[string]
 $needsYouItems = @{}
+$needsYouObserved = $false
 
 function Add-Finding([string]$Text) { $script:findings.Add($Text) }
 
@@ -312,7 +313,8 @@ function Test-NeedsYou([string]$Dir) {
             $segments = @($hits[$hits.Count - 1].Value -split '; ' | Where-Object { $_ -cmatch '^(?:gatekeeper: )?needs-you: ' })
             if ($segments.Count -ne 1) { continue }
             $value = $segments[0] -creplace '^(?:gatekeeper: )?needs-you: ', ''
-            if ($value -cin @('none', 'unknown')) { continue }
+            if ($value -ceq 'none') { $script:needsYouObserved = $true; continue }
+            if ($value -ceq 'unknown') { continue }
             if ($value -cnotmatch '\AWD-[0-9]+=[0-9]+[dhms]\((?:blocked-question|parked)\)(?:,WD-[0-9]+=[0-9]+[dhms]\((?:blocked-question|parked)\))*\z') { continue }
             foreach ($entry in ($value -split ',')) {
                 [void]($entry -cmatch '\A(WD-[0-9]+)=([0-9]+)([dhms])\((blocked-question|parked)\)\z')
@@ -324,13 +326,19 @@ function Test-NeedsYou([string]$Dir) {
                     $script:needsYouItems[$key] = $item
                 }
             }
+            $script:needsYouObserved = $true
         } catch { } # Unknown reports add no finding; never echo their content.
     }
 }
 
 function Format-NeedsYou($Item) {
     $suffix = if ($Item.Reason -eq 'parked' -and $Item.Seconds -gt 604800) { ' (keep or drop?)' } else { '' }
-    return "$($Item.Line)$suffix"
+    # Keep exact wire seconds for thresholds; floor only the human-facing age.
+    $age = if ($Item.Seconds -ge 86400) { "$([math]::Floor($Item.Seconds / 86400))d" }
+           elseif ($Item.Seconds -ge 3600) { "$([math]::Floor($Item.Seconds / 3600))h" }
+           elseif ($Item.Seconds -ge 60) { "$([math]::Floor($Item.Seconds / 60))m" }
+           else { "$($Item.Seconds)s" }
+    return "$($Item.Id)=$age($($Item.Reason))$suffix"
 }
 
 function Test-LinearTokenExpiry {
@@ -937,11 +945,26 @@ function Invoke-LearnRetention {
 }
 
 # ── run the checks ───────────────────────────────────────────────────────────────
+# Read the same scratch-scoped state before deciding whether liveness recovered.
+$statePath = Get-StatePath $CronDir[0]
+$prev = $null
+if (Test-Path -LiteralPath $statePath) {
+    try { $prev = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { $prev = $null }
+}
 foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir }
 foreach ($dir in $CronDir) { Test-NeedsYou $dir }
 $needsYouList = @($needsYouItems.Values | Sort-Object { [System.Numerics.BigInteger]::Parse($_.Id.Substring(3)) }, Reason)
 foreach ($item in $needsYouList) {
     if ($item.Seconds -gt 14400) { Add-Finding "needs-you: $(Format-NeedsYou $item)" }
+}
+# An unavailable probe cannot close previously open waits. Carry their identity,
+# first-seen time and text, without creating a finding or replaying a stale list.
+$needsYouHeld = @()
+$oldOpen = Get-Prop $prev 'open_findings'
+if (-not $needsYouObserved -and $null -ne $oldOpen) {
+    $needsYouHeld = @($oldOpen.PSObject.Properties | Where-Object {
+        $_.Name -cmatch '^needs-you\|WD-[0-9]+\|(blocked-question|parked)$'
+    } | ForEach-Object { $_.Name })
 }
 Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
@@ -965,7 +988,7 @@ if (-not $DryRun) {
         catch { Add-Finding "[$($CronDir[0])] digest-$($digest.name): cannot write latest diagnostic file" }
     }
 }
-$healthy = ($findings.Count -eq 0)
+$healthy = ($findings.Count -eq 0 -and $needsYouHeld.Count -eq 0)
 
 Write-Output "Factory watchdog $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - watching: $($CronDir -join ', ')"
 foreach ($r in $report) {
@@ -974,8 +997,9 @@ foreach ($r in $report) {
 if ($healthy) {
     Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Gatekeeper auth)"
 } else {
-    Write-Output "UNHEALTHY: $($findings.Count) finding(s)"
+    Write-Output "UNHEALTHY: $($findings.Count + $needsYouHeld.Count) finding(s)"
     foreach ($f in $findings) { Write-Output "  - $f" }
+    if ($needsYouHeld.Count) { Write-Output "NEEDS-YOU: probe unavailable; $($needsYouHeld.Count) previously open finding(s) retained." }
 }
 
 Write-Output "CONFIG: $(if ($configFindings.Count) { 'warning' } else { 'clean' })"
@@ -1031,13 +1055,7 @@ if ($SkipAudit) {
 # AUDIT END: output
 
 # ── transition-based alerting ────────────────────────────────────────────────────
-# State lives per cron directory, so a scratch-dir fault-injection run can never
-# read or clobber the live watchdog's memory.
-$statePath = Get-StatePath $CronDir[0]
-$prev = $null
-if (Test-Path -LiteralPath $statePath) {
-    try { $prev = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { $prev = $null }
-}
+# State was read above, before the recovery decision, from this cron directory.
 $deliveryFailures = @{}
 $lastDelivery = @{}
 $oldFailures = Get-Prop $prev 'delivery_failure'
@@ -1105,6 +1123,10 @@ foreach ($finding in $findings) {
     $openFindings[$key] = if ($previousOpen.ContainsKey($key)) { $previousOpen[$key] } else { $now.ToString('o') }
     $findingTexts[$key] = $finding
 }
+foreach ($key in $needsYouHeld) {
+    $openFindings[$key] = $previousOpen[$key]
+    if ($previousTexts.ContainsKey($key)) { $findingTexts[$key] = $previousTexts[$key] }
+}
 $added = @($openFindings.Keys | Where-Object { -not $previousOpen.ContainsKey($_) } | Sort-Object)
 $removed = @($previousOpen.Keys | Where-Object { -not $openFindings.ContainsKey($_) } | Sort-Object)
 if ($added.Count -or $removed.Count) {
@@ -1117,7 +1139,7 @@ if ($added.Count -or $removed.Count) {
     } else {
         ":warning: *Factory watchdog: the worker loops need attention* $mention`n$($lines -join "`n")`n$($openFindings.Count) liveness finding(s) still open."
     }
-} elseif (-not $healthy) {
+} elseif ($findings.Count -gt 0) {
     $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
     if ($hoursSince -ge $NagHours) {
         $shouldPost = $true

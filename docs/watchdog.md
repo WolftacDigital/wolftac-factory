@@ -76,8 +76,11 @@ rather than guessing an interval.
 ### Waiting on Jonathan (WD-628)
 
 The newest Gatekeeper output per cron directory may contain a `needs-you:`
-segment. Only the complete ID/age/reason grammar is accepted; malformed,
-missing, `none` or `unknown` segments add no finding and no daily-list message.
+segment. Only the complete ID/age/reason grammar is accepted. Malformed,
+missing or `unknown` segments add no finding and no daily-list message, but
+retain previously open needs-you incidents (identity, first-seen time and text)
+until a valid inventory arrives. They never claim recovery or replay a stale
+list. A valid `none` clears those incidents through the existing recovery path.
 Old output files are never used as fallback. The only reasons are
 `blocked-question` and `parked`, as defined in `docs/factory-gatekeeper.md`.
 
@@ -85,6 +88,12 @@ Old output files are never used as fallback. The only reasons are
   existing liveness alert path. Its incident key is ID plus reason, not age,
   so increasing ages do not create a fresh outage every tick. Existing
   transition, reminder, recovery and exit-code behavior applies.
+  Retained incidents keep liveness unhealthy during an unknown tick without
+  generating a new incident or a reminder from an unobserved wait alone.
+  Other liveness findings still transition independently.
+  Thresholds use exact wire seconds; findings and list lines floor the age to
+  its largest unit (`23d`, `2d`, `4h`, `3m`, `12s`). Thus `14401s` alerts as `4h`,
+  and a park at `604801s` displays `7d` **with** `(keep or drop?)`.
 - A separate `Factory needs you` message lists **every** current item, including
   items below the alert threshold, through the existing `Send-DiscordAlert`.
   `needs_you_last_digest_at` is the sole new optional state key; absent or invalid

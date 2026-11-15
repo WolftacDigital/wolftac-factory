@@ -88,8 +88,12 @@ Unreadable/incomplete pages, malformed data or probe failure print
 obeys the existing token-wide build/review dispatch veto; other diagnostic
 failures do not stop worker dispatch. Audit-only runs omit this segment.
 
-The watchdog consumes the newest output, adds over-4-hour findings through its
-existing alert path, and sends a separate current list at most once per 24 hours.
+The watchdog consumes this exact-age wire format from the newest output, adds
+over-4-hour findings through its existing alert path, and sends a separate current
+list at most once per 24 hours. Its human-facing ages use the largest floored unit
+(for example `241565s` becomes `2d`), without rounding the threshold decisions.
+Unknown/missing/invalid observations retain open incidents, not a stale daily list;
+only a valid inventory (including `none`) can establish that a wait has cleared.
 No schedule or live installation is changed by this feature. Fixture proof:
 `python -B -m unittest discover -s deploy/tests -p test_needs_you.py -v`.
 

@@ -201,7 +201,8 @@ class NeedsYouWatchdogTests(unittest.TestCase):
         self.state.write_text(json.dumps(state))
 
     def run_script(self, value, dry=True, outbox=None):
-        self.report.write_text('gatekeeper: build: idle; needs-you: ' + value + '; audit: clean\n', encoding='utf-8')
+        segment = '' if value is None else 'needs-you: ' + value + '; '
+        self.report.write_text('gatekeeper: build: idle; ' + segment + 'audit: clean\n', encoding='utf-8')
         before = self.state.read_bytes() if self.state.exists() else None
         inputs = {p: p.read_bytes() for p in (self.report, self.expiry, self.cron / 'jobs.json')}
         args = [PWSH, '-NoProfile', '-NonInteractive', '-File', str(ROOT / 'deploy/factory-watchdog.ps1'),
@@ -228,12 +229,12 @@ class NeedsYouWatchdogTests(unittest.TestCase):
                 self.assertEqual(code, int(failed), text)
                 self.assertEqual(text.count('  - needs-you:'), int(failed))
                 self.assertEqual(text.count('DRY RUN POST: *Factory needs you*'), 1)
-        for age, suffix in (('7d', False), ('604801s', True), ('8d', True)):
+        for age, human_age, suffix in (('7d', '7d', False), ('604801s', '7d', True), ('8d', '8d', True)):
             code, text = self.run_script(f'WD-2={age}(parked)')
             self.assertEqual(code, 1, text)
             self.assertEqual('(keep or drop?)' in text, suffix)
             if suffix:
-                self.assertIn(f'WD-2={age}(parked) (keep or drop?)\n', text)
+                self.assertIn(f'WD-2={human_age}(parked) (keep or drop?)\n', text)
         self.assertNotIn('(keep or drop?)', self.run_script('WD-2=8d(blocked-question)')[1])
 
     def test_daily_cap_old_state_and_dryrun(self):
@@ -263,6 +264,96 @@ class NeedsYouWatchdogTests(unittest.TestCase):
         os.utime(old, (1, 1))
         self.assertNotIn('WD-2', self.run_script('none')[1])
         self.assertNotIn('WD-2', self.run_script('unknown')[1])
+
+    def test_unknown_missing_invalid_preserve_open_incidents_across_ticks(self):
+        key = 'needs-you|WD-547|parked'
+        code, text = self.run_script('WD-547=2077194s(parked)', dry=False)
+        self.assertEqual(code, 1, text)
+        initial = json.loads(self.state.read_text(encoding='utf-8-sig'))
+        self.assertEqual(len(list(self.outbox.glob('*.txt'))), 2)
+        for value in ('unknown', None, 'WD-547=8d(parked)PRIVATE', '', 'unknown'):
+            with self.subTest(value=value):
+                # Even an overdue daily list must not replay stale inventory.
+                state = json.loads(self.state.read_text(encoding='utf-8-sig'))
+                state['needs_you_last_digest_at'] = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+                self.seed(**state)
+                code, text = self.run_script(value, dry=False)
+                self.assertEqual(code, 1, text)
+                after = json.loads(self.state.read_text(encoding='utf-8-sig'))
+                self.assertEqual(after['open_findings'], initial['open_findings'])
+                self.assertEqual(after['finding_texts'], initial['finding_texts'])
+                self.assertEqual(after['status'], 'unhealthy')
+                self.assertEqual(datetime.fromisoformat(after['needs_you_last_digest_at']),
+                                 datetime.fromisoformat(state['needs_you_last_digest_at']))
+                self.assertEqual(len(list(self.outbox.glob('*.txt'))), 2)
+                self.assertNotIn('recovered:', text)
+        # Return of the same known item is not a new incident; the due list may send.
+        code, text = self.run_script('WD-547=2082594s(parked)', dry=False)
+        self.assertEqual(code, 1, text)
+        after = json.loads(self.state.read_text(encoding='utf-8-sig'))
+        self.assertEqual(after['open_findings'][key], initial['open_findings'][key])
+        self.assertEqual(len(list(self.outbox.glob('*.txt'))), 3)
+        self.assertEqual(sum('new: needs-you:' in p.read_text() for p in self.outbox.glob('*.txt')), 1)
+        self.run_script('none', dry=False)
+        self.assertEqual(json.loads(self.state.read_text(encoding='utf-8-sig'))['open_findings'], {})
+        self.assertEqual(len(list(self.outbox.glob('*.txt'))), 4)
+        self.assertEqual(sum('recovered: needs-you:' in p.read_text() for p in self.outbox.glob('*.txt')), 1)
+
+    def test_unknown_preserves_wait_without_masking_other_liveness_transitions(self):
+        self.run_script('WD-1=5h(blocked-question)', dry=False)
+        key = 'needs-you|WD-1|blocked-question'
+        initial = json.loads(self.state.read_text(encoding='utf-8-sig'))
+        job_file = self.cron / 'jobs.json'
+        jobs = json.loads(job_file.read_text())
+        jobs['jobs'][0]['last_status'] = 'error'
+        job_file.write_text(json.dumps(jobs))
+        code, text = self.run_script('unknown', dry=False)
+        self.assertEqual(code, 1, text)
+        state = json.loads(self.state.read_text(encoding='utf-8-sig'))
+        self.assertEqual(len(state['open_findings']), 2)
+        self.assertEqual(state['open_findings'][key], initial['open_findings'][key])
+        jobs['jobs'][0]['last_status'] = 'ok'
+        job_file.write_text(json.dumps(jobs))
+        code, text = self.run_script('unknown', dry=False)
+        self.assertEqual(code, 1, text)
+        self.assertEqual(json.loads(self.state.read_text(encoding='utf-8-sig'))['open_findings'],
+                         initial['open_findings'])
+        messages = '\n'.join(p.read_text() for p in self.outbox.glob('*.txt'))
+        self.assertIn('new: [', messages)
+        self.assertIn('recovered: [', messages)
+        self.assertNotIn('recovered: needs-you:', messages)
+        self.assertNotIn('all liveness checks passing again', messages)
+        self.assertEqual(len(list(self.outbox.glob('*.txt'))), 4)
+        # Dry-run preserves both the incident and all state without sending.
+        before = self.state.read_bytes()
+        self.outbox = self.root / 'dry-outbox'
+        code, text = self.run_script(None)
+        self.assertEqual(code, 1, text)
+        self.assertEqual(self.state.read_bytes(), before)
+        # A valid, changed inventory may close the old wait and open another.
+        code, text = self.run_script('WD-2=5h(parked)', dry=False)
+        self.assertEqual(code, 1, text)
+        state = json.loads(self.state.read_text(encoding='utf-8-sig'))
+        self.assertEqual(list(state['open_findings']), ['needs-you|WD-2|parked'])
+
+    def test_precise_linear_timestamps_render_human_ages_without_losing_thresholds(self):
+        now = datetime(2026, 11, 14, 23, 22, 41, 987654, tzinfo=timezone.utc)
+        rows = [row('WD-547', [dict(body='**REVIEW REPORT — NEEDS HUMAN**',
+                                  createdAt='2026-10-21T23:22:47.333Z')]),
+                row('WD-628', [dict(body='BLOCKED: PRIVATE',
+                                   createdAt=(now - timedelta(seconds=241565.123)).isoformat())]),
+                row('WD-700', [dict(body='BLOCKED: PRIVATE',
+                                   createdAt=(now - timedelta(seconds=14430.456)).isoformat())])]
+        wire = g.needs_you_status(rows, now).removeprefix('needs-you: ')
+        code, text = self.run_script(wire, dry=False)
+        self.assertEqual(code, 1, text)
+        messages = '\n'.join(p.read_text() for p in self.outbox.glob('*.txt'))
+        for expected in ('WD-547=23d(parked) (keep or drop?)',
+                         'WD-628=2d(blocked-question)', 'WD-700=4h(blocked-question)'):
+            self.assertIn(expected, messages)
+            self.assertIn('needs-you: ' + expected, text)
+        self.assertNotRegex(messages, r'=[0-9]{4,}s\(')
+        self.assertNotIn('PRIVATE', messages)
 
     def test_actual_persistence_delivery_failure_retry_and_no_number_churn(self):
         value = 'WD-1=5h(blocked-question)'
