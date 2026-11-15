@@ -134,6 +134,16 @@ class OperateContractTests(unittest.TestCase):
         self.assertEqual(contract.validate_block(EXAMPLE, TARGET_MAP), {"status": "ok", "error": None})
         self.assertEqual(contract.parse_operate(fenced(EXAMPLE))["block"], EXAMPLE)
 
+    def test_approval_and_smoke_allow_multiline_text_within_length_limits(self):
+        block = copy.deepcopy(EXAMPLE)
+        block.update(approval="First approval step\nSecond step", smoke=["First check\nSecond check"])
+        self.assertEqual(contract.validate_block(block, TARGET_MAP)["status"], "ok")
+        built = self.build(block)
+        self.assertEqual(built["status"], "ok", built)
+        self.assertEqual(contract.parse_record(built["text"]), built["record"])
+        self.assertEqual(built["record"]["approval"]["value"], block["approval"])
+        self.assertEqual(built["record"]["smoke"]["value"], block["smoke"])
+
     def test_block_rejections_name_fields(self):
         cases = [("extra", 1, "block"), ("version", 2, "version"), ("version", True, "version"),
                  *[("checkpoint_days", value, "checkpoint_days") for value in (True, 0, 1.5, 15)],

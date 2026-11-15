@@ -42,8 +42,12 @@ def _keys(obj, required, optional=()):
             and obj.keys() <= set(required) | set(optional))
 
 
+def _text(value, limit):
+    return isinstance(value, str) and 1 <= len(value) <= limit
+
+
 def _string(value, limit):
-    return isinstance(value, str) and 1 <= len(value) <= limit and value.isprintable()
+    return _text(value, limit) and value.isprintable()
 
 
 def _hex(value, size):
@@ -67,7 +71,7 @@ def _iso(value):
 
 def _smoke(value):
     return (type(value) is list and 1 <= len(value) <= 10
-            and all(_string(item, 300) for item in value))
+            and all(_text(item, 300) for item in value))
 
 
 def _map_error(target_map):
@@ -105,7 +109,7 @@ def _block_error(obj, target_map=None):
         return "owner"
     if "checkpoint_days" in obj and (type(obj["checkpoint_days"]) is not int or not 1 <= obj["checkpoint_days"] <= 14):
         return "checkpoint_days"
-    if "approval" in obj and not _string(obj["approval"], 300):
+    if "approval" in obj and not _text(obj["approval"], 300):
         return "approval"
     if "smoke" in obj and not _smoke(obj["smoke"]):
         return "smoke"
@@ -253,7 +257,7 @@ def _record_error(obj, target_map=None):
         if item["provenance"] == "none":
             if item["value"] != (None if field == "approval" else []):
                 return field
-        elif not (_string(item["value"], 300) if field == "approval" else _smoke(item["value"])):
+        elif not (_text(item["value"], 300) if field == "approval" else _smoke(item["value"])):
             return field
     targets = obj["targets"]
     if type(targets) is not list or (metadata == "ok" and not 1 <= len(targets) <= 10) or (metadata != "ok" and targets):
