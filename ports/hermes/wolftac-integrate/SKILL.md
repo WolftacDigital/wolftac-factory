@@ -535,3 +535,50 @@ every task" rule):
 - Never force-push, never delete branches, never rewrite history.
 - `BLOCKED:` is reserved for genuine spec defects; an unreachable repo is a silent skip.
 - Secrets never appear in proof packs, reports, or logs.
+
+## Landing several approved PRs into one repo in a single pass
+
+The first merge moves the default branch and invalidates every other pack's
+**Default head** line. That staleness is about GATE FRESHNESS, not consent: the
+verifier binds issue, repo, PR, head SHA and proof-pack URL and never reads the
+default branch, so an unchanged head SHA still carries the human's approval. Re-run
+the gates against the moved default instead of either merging on stale evidence or
+demanding a new reaction for an unchanged commit. Disclose the deviation in the
+report, naming the recorded and the actual default head.
+
+- **Order the sequence so the lowest-overlap PRs land first**, and before each merge
+  diff every candidate against the pre-sequence default
+  (`git diff --name-only <old default> <reviewed SHA>`) to find PRs that touch the
+  same files. Overlapping additive features (two new sibling functions inserted in
+  one region, two new sections in one doc) conflict even though each PR was CLEAN
+  on its own.
+- **Never trust `mergeable` / `mergeStateStatus` right after the default moves** —
+  `gh pr view` returns `UNKNOWN` while GitHub recomputes, and a cached `CLEAN` is
+  not proof. Prove it locally: detached worktree at the new default,
+  `git merge --no-ff --no-edit <reviewed SHA>`, then
+  `git diff --name-only --diff-filter=U`.
+- **A conflict is the ordinary Todo path, not a thing to resolve here.** Resolving it
+  composes change sets no reviewer ever saw together. `git merge --abort`, remove the
+  worktree, confirm `git ls-remote` still shows the reviewed SHA, post the numbered
+  defect report, set `Todo`, `unclaim`, push NOTHING. Say explicitly in the report
+  that the approval verified APPROVED and was not the blocker, and that the new head
+  will need one new reaction because the artifact must change.
+- **A gate that asserts a property of the repository rather than of the deliverable
+  can fail purely from the moved base.** Before treating such a failure as a defect,
+  read the gate: find how it derives its base (a pinned SHA in a ledger is the tell),
+  check whether the substantive assertions passed, re-assert the intended property
+  against the change set's own base, and check whether CI runs the gate at all. A
+  pinned-base `assert all(p.startswith("docs/") for p in git diff <pinned base>)`
+  fails forever once any non-docs commit lands. Record the finding and raise a
+  follow-up; do not silently drop it.
+
+## Gate wrapper traps on this Windows host
+
+- **Never wrap a gate as `-- bash -c` in a git worktree.** `bash` resolves to WSL
+  bash, which cannot read a Windows worktree's `.git` pointer file and fails with
+  `fatal: not a git repository: /mnt/d/...`, so no gate logic runs and the exit code
+  is meaningless. Pass native argv (`-- git grep -l <marker> -- <paths>`) or do the
+  work in `python`. Repeated across runs; always disclose and re-run rather than
+  reporting the first result.
+- **`tail`/`head` in a gate pipeline hides the real exit code** — the pipeline
+  reports the pager's status. Read `GATE-RESULT`'s `exit_code`, not the shell's.
