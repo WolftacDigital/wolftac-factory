@@ -280,6 +280,148 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(findings(text), [])
         self.assertIn("minimum 5m", text)
 
+    # WD-578 additions: reuse the real DryRun harness with scratch-only inputs.
+    def degraded_history(self, entries):
+        folder = self.cron / "output/gk-549"
+        if folder.exists():
+            for path in folder.iterdir():
+                path.unlink()
+        return [self.output(name, text, age=age) for name, text, age in entries]
+
+    def run_degraded(self, expected=0, extra=(), script=SCRIPT):
+        self.env = {k: v for k, v in os.environ.items() if k.upper() in {
+            "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "PROGRAMFILES",
+            "PROGRAMFILES(X86)", "SYSTEMDRIVE"}}
+        for key in ("HOME", "USERPROFILE", "LOCALAPPDATA", "HERMES_HOME", "TEMP", "TMP", "TMPDIR"):
+            self.env[key] = str(self.root)
+        before = {p.relative_to(self.cron): p.read_bytes()
+                  for p in self.cron.rglob("*") if p.is_file()}
+        code, text = self.run_watchdog(script=script,
+                                      extra=("-HermesHome", str(self.root), *extra))
+        self.assertEqual(code, expected, text)
+        self.assertEqual(before, {p.relative_to(self.cron): p.read_bytes()
+                                 for p in self.cron.rglob("*") if p.is_file()})
+        return text
+
+    def test_degraded_mixed_markers_one_finding(self):
+        self.degraded_history([("tick-a.txt", "FAIL-OPEN", 120),
+                               ("tick-b.txt", "discord-check-failed", 60),
+                               ("tick-c.txt", "LANE-ERROR", 0)])
+        text = self.run_degraded(expected=1)
+        rows = findings(text)
+        self.assertEqual(rows, [f"- [{self.cron}] gatekeeper-degraded: the newest 3 Gatekeeper "
+                               "outputs all report FAIL-OPEN, discord-check-failed or LANE-ERROR "
+                               "(seen: FAIL-OPEN, discord-check-failed, LANE-ERROR)"])
+        reports = [r for r in text.splitlines() if "gatekeeper-degraded" in r
+                   and r.lstrip().startswith("FAIL ")]
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(text.count("DRY RUN POST:"), 1)
+
+    def test_degraded_all_fail_open_one_finding_no_content(self):
+        sentinel = "lin_WD578_SYNTHETIC_OUTPUT_SENTINEL"
+        self.degraded_history([(f"tick-{i}.txt", f"FAIL-OPEN {sentinel}\nPRIVATE-BODY-578", i * 60)
+                               for i in range(3)])
+        text = self.run_degraded(expected=1)
+        self.assertEqual(len(findings(text)), 1)
+        self.assertIn("(seen: FAIL-OPEN)", findings(text)[0])
+        self.assertNotIn(sentinel, text)
+        self.assertNotIn("PRIVATE-BODY-578", text)
+        self.assertNotIn("tick-", findings(text)[0])
+
+    def test_degraded_two_files_do_not_alert(self):
+        self.degraded_history([("a.txt", "FAIL-OPEN", 60), ("b.txt", "LANE-ERROR", 0)])
+        text = self.run_degraded()
+        self.assertEqual(findings(text), [])
+        self.assertRegex(text, r"skipped\s+gatekeeper-degraded")
+
+    def test_degraded_newest_healthy_breaks_streak(self):
+        self.degraded_history([("a.txt", "FAIL-OPEN", 180), ("b.txt", "FAIL-OPEN", 120),
+                               ("c.txt", "FAIL-OPEN", 60), ("d.txt", "healthy", 0)])
+        text = self.run_degraded()
+        self.assertEqual(findings(text), [])
+        self.assertRegex(text, r"ok\s+gatekeeper-degraded")
+
+    def test_degraded_write_time_precedes_filename(self):
+        self.degraded_history([("z.txt", "FAIL-OPEN", 180), ("y.txt", "FAIL-OPEN", 120),
+                               ("x.txt", "FAIL-OPEN", 60), ("a.txt", "healthy", 0)])
+        self.assertEqual(findings(self.run_degraded()), [])
+
+    def test_degraded_auth_only_keeps_auth_finding(self):
+        self.degraded_history([(f"tick-{i}.txt", "linear-auth-failed", i * 60) for i in range(3)])
+        text = self.run_degraded(expected=1)
+        self.assertEqual(len(findings(text)), 1)
+        self.assertIn("gatekeeper-linear-auth:", findings(text)[0])
+        self.assertNotIn("gatekeeper-degraded:", text)
+
+    def test_degraded_missing_job_directory_and_empty_history(self):
+        self.assertEqual(findings(self.run_degraded()), [])
+        (self.cron / "output/gk-549").mkdir(parents=True)
+        self.assertEqual(findings(self.run_degraded()), [])
+        self.degraded_history([(f"tick-{i}.txt", "FAIL-OPEN", i * 60) for i in range(3)])
+        self.change_gatekeeper(name="Wolftac Factory Build Worker")
+        self.assertEqual(findings(self.run_degraded()), [])
+
+    def test_degraded_case_sensitive_and_no_historical_slack_marker(self):
+        for marker in ("fail-open", "Fail-Open", "DISCORD-CHECK-FAILED", "Discord-check-failed",
+                       "lane-error", "Lane-Error", "slack-check-failed", ""):
+            with self.subTest(marker=marker):
+                self.degraded_history([("a.txt", "FAIL-OPEN", 120),
+                                       ("b.txt", "LANE-ERROR", 60), ("c.txt", marker, 0)])
+                self.assertEqual(findings(self.run_degraded()), [])
+
+    def test_degraded_tied_write_times_use_name_descending(self):
+        paths = self.degraded_history([("a.txt", "healthy", 0), ("b.txt", "FAIL-OPEN", 0),
+                                       ("c.txt", "FAIL-OPEN", 0), ("d.txt", "FAIL-OPEN", 0)])
+        at = time.time() - 60
+        for path in paths:
+            os.utime(path, (at, at))
+        self.assertEqual(len(findings(self.run_degraded(expected=1))), 1)
+        paths[0].rename(paths[0].with_name("z.txt"))
+        self.assertEqual(findings(self.run_degraded()), [])
+
+    def test_degraded_threshold_and_safe_id(self):
+        self.degraded_history([("a.txt", "FAIL-OPEN", 60), ("b.txt", "LANE-ERROR", 0)])
+        text = self.run_degraded(expected=1, extra=("-DegradedTicks", "2"))
+        self.assertEqual(len(findings(text)), 1)
+        self.assertIn("newest 2 Gatekeeper outputs", findings(text)[0])
+        for job_id in ("../gk-549", "..\\gk-549", "gk-549/../gk-549", "", None):
+            with self.subTest(job_id=job_id):
+                self.change_gatekeeper(id=job_id)
+                self.assertEqual(findings(self.run_degraded(extra=("-DegradedTicks", "2"))), [])
+
+    def test_degraded_not_filtered_by_worker_pattern(self):
+        self.degraded_history([(f"tick-{i}.txt", "FAIL-OPEN", i * 60) for i in range(3)])
+        text = self.run_degraded(expected=1, extra=("-JobNamePattern", "*Build Worker*"))
+        self.assertEqual(sum("gatekeeper-degraded:" in row for row in findings(text)), 1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows file-sharing denial fixture")
+    def test_degraded_unreadable_older_file_is_finding_even_after_healthy(self):
+        paths = self.degraded_history([("a.txt", "FAIL-OPEN", 120),
+                                       ("b.txt", "FAIL-OPEN", 60), ("c.txt", "healthy", 0)])
+        quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+        wrapper = self.root / "locked-degraded.ps1"
+        wrapper.write_text("$lock=[IO.File]::Open(" + quote(paths[1]) +
+            ",[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)\n"
+            "try { & " + quote(SCRIPT) + " @args\nexit $LASTEXITCODE } "
+            "finally { $lock.Dispose() }\n", encoding="utf-8", newline="\n")
+        text = self.run_degraded(script=wrapper, expected=1)
+        self.assertEqual(findings(text), [f"- [{self.cron}] gatekeeper-degraded: "
+                                         "watchdog cannot read Gatekeeper output"])
+        self.assertNotIn("FAIL-OPEN", text)
+        self.assertNotIn("Exception", text)
+
+    def test_degraded_placement_and_read_failure_contract(self):
+        current = SCRIPT.read_text(encoding="utf-8")
+        start = current.index("function Test-GatekeeperDegraded([string]$Dir)")
+        end = current.index("function Test-LinearTokenExpiry", start)
+        part = current[start:end]
+        self.assertEqual(part.count("function "), 1)
+        self.assertIn("$script:readFailure = $true", part)
+        self.assertNotIn("Send-", part)
+        self.assertNotIn("slack-check-failed", part)
+        dispatch = current.split("# ── run the checks", 1)[1].splitlines()[1]
+        self.assertIn("Test-GatekeeperDegraded $dir", dispatch)
+
     def baseline(self):
         text = subprocess.check_output(["git", "show", "origin/main:deploy/factory-watchdog.ps1"],
                                        cwd=ROOT, encoding="utf-8")
