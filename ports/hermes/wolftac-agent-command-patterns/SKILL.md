@@ -347,7 +347,12 @@ like this:
   which prior instruction each one replaces.
 - **Re-read the target record immediately before writing the ruling, not at session start.** A
   sibling controller session can post a clearance or correction in the intervening minutes, and
-  a ruling written over it creates two live instructions.
+  a ruling written over it creates two live instructions. Reading before the write is not enough
+  when composing takes minutes: re-read the channel or issue tail immediately *after* your write
+  lands. If a sibling published the same correction while you were drafting, post one short
+  housekeeping line naming which message is canonical and what the duplicate omits, rather than
+  leaving near-identical copies standing. Agreeing copies cost the owner the same attention as a
+  contradiction, because he has to read all of them to discover they agree.
 - **Answer the question asked, then name the constraint they did not.** A well-verified package
   can still be aimed at the wrong decision. Before ruling, resolve the whole chain the work must
   travel — build, review, approval, merge, live promotion — and find the stage that is actually
@@ -393,6 +398,68 @@ promise of work.
    list gets re-litigated by the next session that reads the thread.
 6. **Own your own slips in one clause and move on.** State the fix already in place; do not
    explain.
+7. **Arm every clock time you give as a one-shot scheduled job, not a session intention.** A
+   commitment that exists only inside the current session dies with it, which is how the same
+   name keeps reappearing in the slipped column. Schedule the job to fire roughly ten minutes
+   before the deadline, with a fully self-contained prompt — a cron run starts with no chat
+   context and cannot ask a question — that performs the verification itself and posts either
+   the proof or the single real blocker. Name the job after the commitment so a later session
+   finds it instead of filing a second one against the same deadline. Where the deliverable
+   depends on an owner decision you do not control, commit to the *status* at that time and say
+   plainly that it is not a commitment to the outcome; promising the merge and delivering a
+   blocker report reads as another slip even when the work was right.
+8. **Encode a ruling in the field the automation reads, not only in the record.** A queue order,
+   hold or sequencing decision that lives solely in a comment is not in force, because no worker
+   reads prose — it survives only until the next tick breaks the tie on the stored fields. After
+   writing the record, change the field that governs the behaviour and read it back, then state
+   in the record which field was changed and what restores it.
+
+## Putting one decision to the owner
+
+1. **Never leave two option sets live for the same decision.** When you restate or re-put a
+   question, name the superseded message ID and withdraw it in the same message. Two live
+   versions read as indecision and reliably produce no answer, because the owner cannot tell
+   which one he is answering. The withdrawal belongs in the thread where the question lives, not
+   in a status summary a subordinate wrote.
+2. **Verify every worker's pinned provider before claiming a route keeps build and review
+   cross-vendor.** Read each job's `provider` and `model` in `profiles/<profile>/cron/jobs.json`;
+   the review worker has been pinned to `anthropic`. Read the WORKER's own profile store, never
+   the controller's: a controller profile keeps superseded copies of the same worker jobs, left
+   disabled and renamed as rollback artifacts, so reading the wrong store reports the build lane
+   as disabled or mis-pinned while it is live and failing. A profile's default provider is not
+   the operative route either — only the enabled job's own pin is, and the two routinely differ. Routing the builder onto the reviewer's
+   vendor silently makes everything it builds ineligible to merge until it is re-reviewed
+   elsewhere, so an option justified that way is worse than the pause it replaces.
+3. **Take a usage-limit reset time from the provider's own `resets_at` epoch, never from a cron
+   job's name or a teammate's summary.** The payload sits in the Hermes `logs/agent.log*` lines
+   carrying the refusal. That log interleaves binary run data, so a content search that
+   auto-detects binary files will report a match and print nothing usable — force text mode
+   (`grep -a` in a terminal) when `search_files` comes back empty on a log you know holds the
+   string. Derive the wall-clock time
+   the way *Verification gates* prescribes, not by converting the epoch through a timezone
+   database. A job scheduled near the reset is a human-chosen run time, and quoting it as the
+   provider figure puts two conflicting deadlines in one thread; the usual source of the wrong
+   figure is a preflight job deliberately set a few minutes *after* the reset, whose name reads
+   like a provider deadline. Re-derive the figure from the newest refusal yourself rather than
+   inheriting a subordinate's quoted time.
+4. **Treat `limit_window_minutes: 10080` plus a 429 on the fallback candidate as proof the limit
+   is account-wide.** Do not offer "move to another model from the same vendor" when no sibling
+   model has headroom; an option that cannot work is not a choice.
+5. **Fold variants of the same answer under one letter instead of minting a new option set.** Two
+   ways to spend money are one decision with two forms; say which one you will take and that you
+   will post the exact command before running it.
+
+## Breaking a queue tie
+
+**Use priority, not a synthetic `blocks` relation.** A `blocks` edge is a factual dependency
+claim that automated gates read, so writing a false edge to win a tiebreak corrupts the record
+every later stage reads. Lowering the loser from Urgent to High makes the lane's existing
+"Urgent, oldest first" rule produce the intended order with nothing false in the graph. State the
+restore condition as the loser's real gate (its own blocker reaching Done), not as a side effect
+of the winner starting, and check first whether the loser is even eligible — a lane that fails
+closed on an unresolved blocker means the demotion costs it no buildable time. Two rulings minutes
+apart that imply opposite orders are your defect, not a subordinate's: settle it in one record
+that names both and says which clause is superseded.
 
 ## Final reporting
 
