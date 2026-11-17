@@ -56,6 +56,8 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## Preflight
 Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
+Before claiming, compare mandatory verification actions with this worker's standing execution restrictions. A scratch runtime is still a runtime: an issue requiring real Hermes cancellation or process termination does not override a higher-priority prohibition. Leave such work unclaimed and report the permission boundary rather than substituting mocks for required execution. If the observed gate has no supported `skip_report.py` reason, report that reporting limitation explicitly; never relabel it as `protected-file`, `BLOCKED`, or completion budget, and never widen the helper's allowlist during pickup.
+
 ### Completion-budget gate
 Before claiming an issue, estimate the change surface and the remaining execution/tool budget. Reserve the final 20% of the run for at least one fix cycle, the full test plan, diff review, commit/push verification, the Linear build report, and the `In Review` transition. If that reserve cannot be protected, skip the candidate without claiming it rather than leaving partially edited work in `In Progress`.
 
@@ -369,7 +371,7 @@ pickup and claim-race rules remain unchanged):
    check provider revocation boundaries before assuming feature-grant isolation; see
    `references/provider-oauth-contracts.md`.
 
-6. **Verify.** For ordered SQL seed changes, use `references/ordered-sql-seed-regressions.md` to test collisions, idempotency and preservation against production-shaped data. For PowerShell notification changes, use `references/powershell-delivery-tests.md` for hermetic command shims, exit propagation, timestamp comparisons, and honest live-proof boundaries. Execute the spec's Test plan literally. Every criterion needs evidence
+6. **Verify.** For self-hosted font provenance and prerender/blocked-host proof, use `references/font-provenance-and-prerender-proof.md`. For ordered SQL seed changes, use `references/ordered-sql-seed-regressions.md` to test collisions, idempotency and preservation against production-shaped data. For PowerShell notification changes, use `references/powershell-delivery-tests.md` for hermetic command shims, exit propagation, timestamp comparisons, and honest live-proof boundaries. Execute the spec's Test plan literally. Every criterion needs evidence
    from running code — "looks right" is not verification. Classify proof precisely:
    automated command output, live browser/API behavior, or an unavailable fixture path.
    If a live criterion needs config, credentials, or a fixture that is not safely
