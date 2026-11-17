@@ -24,7 +24,8 @@ The expected bot id is pinned in this file and is deliberately NOT overridable
 by flag or environment — a caller that could supply its own id could defeat the
 gate. Rotating the bot identity is a reviewed change to this constant.
 
-Exit codes: 0 ok · 2 missing/unmintable credentials · 3 not the isolated runtime,
+Exit codes: 0 ok · 1 OAuth/network/persistence failure · 2 missing credentials ·
+3 not the isolated runtime,
 or a Linear-capable transport wired in the profile · 4 viewer identity mismatch ·
 5 profile root/env unreadable.
 
@@ -40,7 +41,8 @@ with credentials found elsewhere on the host. Isolation is by profile
 construction — this preflight verifies that construction on every tick, and the
 Linear comment audit trail (author ids) verifies conduct after the fact.
 """
-import argparse, glob, json, os, re, sys, urllib.request, urllib.parse
+import argparse, glob, importlib.util, os, re, sys
+from pathlib import Path
 
 EXPECTED_BOT_ID = "b8fece8e-8ec5-4125-b4b2-d7fa882db137"  # Wolftac Factory Bot — pinned, not overridable
 FORBIDDEN_TOKENS = re.compile(r"\b(linear|composio)\b", re.I)
@@ -130,44 +132,13 @@ def check_executing_runtime(root):
           "human/default Linear-capable credentials in the process environment — OK")
 
 
-def viewer(token):
-    q = json.dumps({"query": "{ viewer { id name } }"}).encode()
-    req = urllib.request.Request(
-        "https://api.linear.app/graphql", data=q,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
-    try:
-        out = json.loads(urllib.request.urlopen(req).read())
-        return (out.get("data") or {}).get("viewer")
-    except Exception:
-        return None
-
-def mint(app_id, secret):
-    data = urllib.parse.urlencode({
-        "grant_type": "client_credentials", "client_id": app_id,
-        "client_secret": secret, "scope": "read,write,app:assignable,app:mentionable"}).encode()
-    req = urllib.request.Request(
-        "https://api.linear.app/oauth/token", data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"})
-    try:
-        resp = json.loads(urllib.request.urlopen(req).read())
-        return resp.get("access_token"), resp.get("expires_in")
-    except Exception:
-        return None, None
-
-def persist_token(env_path, env_txt, token):
-    if re.search(r"^LINEAR_FACTORY_BOT_TOKEN=", env_txt, re.M):
-        env_txt = re.sub(r"^LINEAR_FACTORY_BOT_TOKEN=.*$",
-                         "LINEAR_FACTORY_BOT_TOKEN=" + token, env_txt, flags=re.M)
-    else:
-        env_txt += "\nLINEAR_FACTORY_BOT_TOKEN=" + token + "\n"
-    # Atomic persist: write a sibling temp file, then os.replace — an interrupted
-    # write can never leave a truncated/corrupt .env behind.
-    tmp = env_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        f.write(env_txt)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, env_path)
+def load_helper():
+    # Works in the source port and in its deployed profile without sys.path lookup.
+    helper_path = Path(__file__).resolve().parents[1] / "skills/wolftac-integrate/scripts/linear_bot.py"
+    spec = importlib.util.spec_from_file_location("factory_linear_bot", helper_path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    return helper
 
 def main():
     ap = argparse.ArgumentParser()
@@ -183,7 +154,7 @@ def main():
         print(f"PREFLIGHT FAIL (5): profile root {root} does not exist")
         sys.exit(5)
     env_path = os.path.join(root, ".env")
-    env_txt, get = load_env(env_path)
+    _, get = load_env(env_path)
     token = get("LINEAR_FACTORY_BOT_TOKEN")
     app_id, secret = get("LINEAR_FACTORY_APP_ID"), get("LINEAR_FACTORY_APP_SECRET")
     if not token and not (app_id and secret):
@@ -195,34 +166,17 @@ def main():
 
     check_executing_runtime(root)
 
-    v = viewer(token) if token else None
-    if v is None:
-        if not (app_id and secret):
-            print("PREFLIGHT FAIL (2): bot token invalid and no app credentials to re-mint — fail closed")
-            sys.exit(2)
-        fresh, expires = mint(app_id, secret)
-        if fresh is None:
-            print("PREFLIGHT FAIL (2): token re-mint failed — fail closed, claim nothing")
-            sys.exit(2)
-        v = viewer(fresh)
-        if v is None:
-            print("PREFLIGHT FAIL (2): re-minted token did not authenticate — fail closed, nothing persisted")
-            sys.exit(2)
-        if v.get("id") != EXPECTED_BOT_ID:
-            print(f"PREFLIGHT FAIL (4): re-minted token resolves to {v.get('name')} ({v.get('id')}), "
-                  f"not the pinned factory bot {EXPECTED_BOT_ID} — nothing persisted, claim nothing")
-            sys.exit(4)
-        persist_token(env_path, env_txt, fresh)
-        print(f"token re-minted via client_credentials (expires_in: {expires}), viewer-verified as the "
-              "factory bot, then stored")
-
+    helper = load_helper()
+    helper.initialize()
+    # Shared expiry/401 recovery; all profile isolation assertions above still run
+    # before this can mint or persist anything. The helper pins the same bot id.
+    v = helper.ensure_fresh_token()
     if v.get("id") != EXPECTED_BOT_ID:
-        print(f"PREFLIGHT FAIL (4): viewer is {v.get('name')} ({v.get('id')}), expected pinned factory "
-              f"bot {EXPECTED_BOT_ID} — this runtime is not the bot; claim nothing")
+        print("PREFLIGHT FAIL (4): viewer is not the pinned factory bot; claim nothing")
         sys.exit(4)
 
-    print(f"PREFLIGHT OK: profile {root}; viewer = {v.get('name')} ({v.get('id')}); "
-          "no Linear-capable transport wired in profile configs")
+    print(helper.redact(f"PREFLIGHT OK: profile {root}; viewer = {v.get('name')} ({v.get('id')}); "
+                        "no Linear-capable transport wired in profile configs"))
     sys.exit(0)
 
 if __name__ == "__main__":
