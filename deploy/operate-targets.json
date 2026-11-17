@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "targets": {
+    "gatekeeper-script": {
+      "kind": "file",
+      "installed": "%LOCALAPPDATA%\\hermes\\scripts\\factory_gatekeeper.py",
+      "source": "deploy/factory-gatekeeper.py",
+      "repo": "WolftacDigital/wolftac-factory"
+    },
+    "approval-policy": {
+      "kind": "file",
+      "installed": "%LOCALAPPDATA%\\hermes\\scripts\\approval-policy.json",
+      "source": "deploy/approval-policy.json",
+      "repo": "WolftacDigital/wolftac-factory"
+    },
+    "factory-checkout": {
+      "kind": "git-head",
+      "installed": "D:\\Wolftac\\Factory",
+      "repo": "WolftacDigital/wolftac-factory"
+    },
+    "factory-live": {
+      "kind": "git-head",
+      "installed": "D:\\Wolftac\\.factory-live",
+      "repo": "WolftacDigital/wolftac-factory"
+    }
+  }
+}
