@@ -1,5 +1,31 @@
 [
   {
+    "id": "build-never-silent",
+    "description": "Every build surface forbids human authentication, time-boxes commands, reports interrupted work and preserves recovery.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-build/SKILL.md",
+        "pattern": "BUILD-NEVER-SILENT"
+      },
+      {
+        "file": "ports/hermes/wolftac-build/SKILL.md",
+        "pattern": "BUILD-NEVER-SILENT"
+      },
+      {
+        "file": "ports/codex/wolftac-build.md",
+        "pattern": "BUILD-NEVER-SILENT"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md",
+        "pattern": "BUILD-NEVER-SILENT"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-build/SKILL.md",
+        "pattern": "BUILD-NEVER-SILENT"
+      }
+    ]
+  },
+  {
     "id": "integrate-factory-skills-post-merge",
     "description": "Factory-only post-merge skill deployment preserves live edits and discloses junction and operator gaps.",
     "checks": [
