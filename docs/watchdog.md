@@ -33,6 +33,7 @@ Per cron directory, every run:
 | `next-run-fresh` | `next_run_at` is more than `-StaleIntervals` (default 3) scheduling intervals in the past |
 | `recent-failure` | a job's `last_failure.at` is within `-RecentFailureHours` (default 6). Hermes often writes `last_status: ok` on a tick that failed the same way, so `last-status` alone flaps and posts false recoveries |
 | `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
+| `gatekeeper-degraded` | all of the newest `-DegradedTicks` Gatekeeper outputs (default 3) contain at least one case-sensitive marker: `FAIL-OPEN`, `discord-check-failed`, or `LANE-ERROR` |
 | `worker-safety-net` | an enabled, unpaused agent worker matching `-JobNamePattern` has an interval below `-WorkerMinIntervalMinutes` (default 120), or a present schedule kind other than `interval` |
 
 The safety-net check excludes `Wolftac Factory Gatekeeper`, `no_agent: true`,
@@ -68,6 +69,43 @@ adds no finding; other checks cover scheduler liveness. An unreadable existing
 output produces an unhealthy read finding. Output contents are never included in
 alerts. Auth failures feed liveness; expiry warnings feed configuration. Both use
 the existing Discord sender, independently.
+
+### Repeated degraded Gatekeeper ticks (WD-578)
+
+`Test-GatekeeperDegraded` runs per cron directory, independently of
+`-JobNamePattern`. It uses the auth check's safe single-component job ID guard
+and reads the newest `-DegradedTicks` files in `output\<job-id>\`, ordered by
+`LastWriteTimeUtc, Name` descending (write time first, filename breaks ties).
+The threshold is a positive integer, default 3. Each selected file must contain
+at least one of the three markers; they need not all contain the same marker.
+`FAIL-OPEN` backoff lines count, so a persistent outage remains visible even when
+the Gatekeeper suppresses another worker launch. Matching is case-sensitive;
+the historical `slack-check-failed` marker is not recognized. Outputs containing
+only `linear-auth-failed` belong to the existing auth check, not this check.
+
+An all-degraded window adds exactly one `gatekeeper-degraded` liveness finding
+and one `FAIL` report row. The finding names only allowlisted markers, never
+output content, token strings, filenames or exception text. A healthy output in
+the window breaks the streak. Missing jobs/directories or fewer than the required
+files add no finding. An unreadable selected file adds an unhealthy read finding
+and sets the existing read-failure flag; a healthy file does not hide an unreadable
+one elsewhere in that selected window. Findings go through `Add-Finding` and the
+existing liveness transition/nag/recovery path, with no new sender or state file.
+
+The paired [Gatekeeper changes](factory-gatekeeper.md) limit successful fail-open
+dispatches to one per lane per 120 minutes via `fail_open_dispatched`, clearing
+that lane's backoff on a healthy probe. They retain the in-flight guard and 401
+re-mint behavior. Gatekeeper state is written to a same-directory temporary file,
+flushed and fsynced, then atomically replaced; write failure preserves the old
+state and reports only `state: save-failed (<ExceptionType>)`. Token values have
+surrounding quotes stripped before use; an empty quoted token remains an error
+and no token value is logged. The watchdog does not perform these operations.
+
+Hermetic coverage in `deploy/tests/test_factory_watchdog.py` uses real `-DryRun`
+execution with scratch cron/env/deploy inputs. It covers mixed/all-fail-open
+windows, short/healthy histories, write-time and tie ordering, auth-only output,
+case sensitivity, missing/unsafe jobs, sentinel suppression and a Windows-only
+file-sharing-denial fixture. No live credential, cron state or sender is used.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
@@ -394,10 +432,42 @@ Until it is resolved, refresh the files only and leave that fallback task intact
 For that fallback, `-Verify -ExpectedLogon Interactive` recognizes both the
 `Interactive` label and Task Scheduler's `InteractiveToken` XML spelling, and prints
 `DEGRADED task logon Interactive (signed-in only; does not run after a reboot until sign-in)`.
-All other checks are unchanged. Exit 6 means degradation was the only non-pass;
+Exit 6 means degradation was the only non-pass;
 any real failure still exits 1. Without the parameter, Interactive remains a FAIL.
 S4U is still the default and all-pass S4U still exits 0. This is truthful reporting
 of reduced availability, not permission to replace S4U or a full verification PASS.
+
+Verify compares the operator and task principal by resolved SID. It accepts the
+old case-insensitive name comparison only when neither identity resolves, and
+still rejects SYSTEM. An absent XML `RunLevel` means the Task Scheduler default,
+`LeastPrivilege`; an empty element or `HighestAvailable` fails.
+
+The exact bare PowerShell action remains valid in either mode. Only with
+`-ExpectedLogon Interactive`, Verify also accepts the full system path
+`%SystemRoot%\System32\conhost.exe` (case-insensitive) with arguments exactly
+`--headless "<PwshPath>" <planned arguments>` (case-sensitive, single spaces).
+Other wrapper paths, a different PowerShell path, extra/reordered switches or
+changed arguments fail. Default S4U verification never accepts the wrapper.
+This changes verification only: plan, Apply, FilesOnly and generated task XML
+are unchanged; it neither re-registers the fallback nor repairs S4U.
+
+The install-directory ACL comparison masks only the `Synchronize` bit on both
+actual and expected rights (`FullControl` includes it). Plain `ReadAndExecute`
+and `ReadAndExecute, Synchronize` therefore match. The protected, exactly
+three-entry, unique-SID, allow-only, non-inherited ACE requirements and exact
+inheritance/propagation flags are unchanged; `Modify` still fails.
+
+**Post-merge operator proof (WD-645 AC-10):** fast-forward both checkouts, prepare
+a manifest of the five installed files and run the non-elevated User-flow check:
+
+```powershell
+pwsh -NoProfile -File deploy\install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Verify -ExpectedLogon Interactive -ExpectedManifest <manifest>
+```
+
+Expect exit 6 and exactly one non-PASS line, `DEGRADED`. This live proof is not a
+build/review test. Workers use synthetic ACL rules, task XML, SID resolution and
+trusted-install fixtures only; they do not read the live task or `C:\ProgramData`,
+apply an installation, or change ACLs. Offline success does not prove the live install.
 
 The install directory is owned by `BUILTIN\Administrators`. Its protected DACL
 disables inherited permissions and contains exactly three inheritable ACEs:

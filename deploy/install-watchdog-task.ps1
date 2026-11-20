@@ -684,6 +684,44 @@ function New-WdReadIo {
     $io
 }
 
+function Test-WdAclRules {
+    param([bool]$Protected, [object[]]$Rules, [string]$OperatorSid)
+    # Normalize only Synchronize, including in FullControl's composite mask.
+    # Every other permission bit and all ACE shape constraints remain exact.
+    try {
+        if (-not $Protected -or $Rules.Count -ne 3 -or -not $OperatorSid -or
+            $OperatorSid -in @('S-1-5-18', 'S-1-5-32-544')) { return $false }
+        $mask = -bnot [int][Security.AccessControl.FileSystemRights]::Synchronize
+        $full = [int][Security.AccessControl.FileSystemRights]::FullControl -band $mask
+        $read = [int][Security.AccessControl.FileSystemRights]::ReadAndExecute -band $mask
+        $expected = @{'S-1-5-18' = $full; 'S-1-5-32-544' = $full; $OperatorSid = $read}
+        $seen = @{}
+        foreach ($rule in $Rules) {
+            $sid = $rule.IdentityReference.Value
+            $rights = [int][Security.AccessControl.FileSystemRights]$rule.FileSystemRights -band $mask
+            if ($seen.ContainsKey($sid) -or -not $expected.ContainsKey($sid) -or
+                $rights -ne $expected[$sid] -or
+                $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                $rule.IsInherited -or
+                $rule.InheritanceFlags -ne ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit) -or
+                $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) { return $false }
+            $seen[$sid] = $true
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Resolve-WdAccountSid {
+    param([string]$Account)
+    if (-not $Account) { return $null }
+    try {
+        if ($Account -match '^S-\d-') {
+            return [Security.Principal.SecurityIdentifier]::new($Account).Value
+        }
+        return ([Security.Principal.NTAccount]::new($Account)).Translate([Security.Principal.SecurityIdentifier]).Value
+    } catch { return $null }
+}
+
 function Get-WdInstallChecks {
     param([string]$InstallDir, [string]$OperatorUser, [bool]$Elevated)
     try {
@@ -691,20 +729,8 @@ function Get-WdInstallChecks {
         $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
         [pscustomobject]@{ Name = 'install-dir owner'; Ok = ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -eq $adminSid.Value); Detail = '' }
         $operatorSid = ([Security.Principal.NTAccount]::new($OperatorUser)).Translate([Security.Principal.SecurityIdentifier]).Value
-        $expected = @{'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl'}
-        $expected[$operatorSid] = 'ReadAndExecute'
         $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
-        $aclOk = $acl.AreAccessRulesProtected -and $rules.Count -eq 3
-        $seen = @{}
-        foreach ($rule in $rules) {
-            $sid = $rule.IdentityReference.Value
-            if ($seen.ContainsKey($sid) -or -not $expected.ContainsKey($sid) -or
-                "$($rule.FileSystemRights)" -ne $expected[$sid] -or
-                "$($rule.AccessControlType)" -ne 'Allow' -or $rule.IsInherited -or
-                "$($rule.InheritanceFlags)" -ne 'ContainerInherit, ObjectInherit' -or
-                "$($rule.PropagationFlags)" -ne 'None') { $aclOk = $false }
-            $seen[$sid] = $true
-        }
+        $aclOk = Test-WdAclRules -Protected $acl.AreAccessRulesProtected -Rules $rules -OperatorSid $operatorSid
         [pscustomobject]@{ Name = 'install-dir ACL'; Ok = $aclOk; Detail = '' }
     } catch { [pscustomobject]@{ Name = 'install-dir ACL'; Ok = $false; Detail = '' } }
     # This tests the current non-elevated user, not an impersonated account.
@@ -768,16 +794,27 @@ if ($Verify) {
         }
         $users = $actual.SelectNodes('//t:Principal', $ns)
         $user = Value '//t:Principal/t:UserId'
-        Result 'task principal' ($users.Count -eq 1 -and $user -ieq $OperatorUser -and $user -notmatch '^(SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$')
+        $taskSid = Resolve-WdAccountSid $user
+        $expectedSid = Resolve-WdAccountSid $OperatorUser
+        $sameUser = if ($taskSid -and $expectedSid) { $taskSid -eq $expectedSid }
+                    else { -not $taskSid -and -not $expectedSid -and $user -ieq $OperatorUser }
+        Result 'task principal' ($users.Count -eq 1 -and $sameUser -and $taskSid -ne 'S-1-5-18' -and $user -notmatch '^(SYSTEM|NT AUTHORITY\\SYSTEM|S-1-5-18)$')
         $logon = Get-WdLogonResult -Actual (Value '//t:Principal/t:LogonType') -Expected $ExpectedLogon
         Write-Output $logon.Line
         if ($logon.Failed) { $script:failed = $true }
         $script:degraded = $logon.Degraded
-        Result 'run level' ((Value '//t:Principal/t:RunLevel') -ceq 'LeastPrivilege')
+        Result 'run level' ($actual.SelectNodes('//t:Principal/t:RunLevel', $ns).Count -eq 0 -or
+            (Value '//t:Principal/t:RunLevel') -ceq 'LeastPrivilege')
         Result 'no password' ($actual.SelectNodes('//*[local-name()="Password"]').Count -eq 0)
-        Result 'action path' ($actual.SelectNodes('//t:Actions/*', $ns).Count -eq 1 -and
-            (Value '//t:Exec/t:Command') -ieq $PwshPath -and
-            (Value '//t:Exec/t:Arguments') -ceq $arguments)
+        $command = Value '//t:Exec/t:Command'
+        $actualArguments = Value '//t:Exec/t:Arguments'
+        $actionOk = $command -ieq $PwshPath -and $actualArguments -ceq $arguments
+        if ($ExpectedLogon -ceq 'Interactive') {
+            $wrappedArguments = '--headless "' + $PwshPath + '" ' + $arguments
+            $actionOk = $actionOk -or ($command -ieq (Join-Path $env:SystemRoot 'System32\conhost.exe') -and
+                $actualArguments -ceq $wrappedArguments)
+        }
+        Result 'action path' ($actual.SelectNodes('//t:Actions/*', $ns).Count -eq 1 -and $actionOk)
     } catch { Result 'task definition readable' $false }
     foreach ($check in Get-WdInstallChecks -InstallDir $InstallDir -OperatorUser $OperatorUser -Elevated $elevated) {
         Result $check.Name $check.Ok $check.Detail

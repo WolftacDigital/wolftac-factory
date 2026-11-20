@@ -56,6 +56,8 @@ Use MoA reference output as private counsel, not as proof. Proof still comes onl
 ## Preflight
 Confirm Linear tools exist (see /wolftac-spec skill's preflight). No tools → STOP and say so.
 
+Before claiming, compare mandatory verification actions with this worker's standing execution restrictions. The restriction covers managing the Hermes runtime and ending processes this worker did not start. A scratch runtime is still a runtime: an issue whose own acceptance criteria or test plan make this worker cancel or stop a real Hermes run, stop a gateway or service, or end any process it did not itself launch for that test does not override a higher-priority prohibition. Leave such work unclaimed and report the permission boundary rather than substituting mocks for required execution. This gate is not a ban on tests that manage their own children: a repository test that starts a scratch child process and ends that same child (for example the `run_gate.py` timeout tests, which call `taskkill` on the fixture they spawned) is ordinary test execution. Running the repository's full suite never triggers this gate by itself; decide from what the issue's own acceptance criteria and test plan require of this worker, not from what unrelated tests elsewhere in the suite do. If the observed gate has no supported `skip_report.py` reason, report that reporting limitation explicitly; never relabel it as `protected-file`, `BLOCKED`, or completion budget, and never widen the helper's allowlist during pickup.
+
 ### Completion-budget gate
 Before claiming an issue, estimate the change surface and the remaining execution/tool budget. Reserve the final 20% of the run for at least one fix cycle, the full test plan, diff review, commit/push verification, the Linear build report, and the `In Review` transition. If that reserve cannot be protected, skip the candidate without claiming it rather than leaving partially edited work in `In Progress`.
 
@@ -146,6 +148,36 @@ or the reporting failure. This reporting contract does not authorize live instal
 <!-- NO-SILENT-SKIP-END -->
 
 ## Procedure
+
+**BUILD-NEVER-SILENT** (applies throughout the procedure after a verified claim;
+pickup and claim-race rules remain unchanged):
+
+1. **No human auth.** Never authenticate as a human. Do not use a password manager,
+   a saved-login or vault tool (for example `browser_vault`), a login form, a live
+   `.env` value, or any credential the spec does not name. A spec may define a
+   credential-free test session; use only that, never invent an authentication bypass.
+2. **Time-box commands.** Run any command expected to take more than about 2 minutes
+   (installs, builds, test suites, dev servers) as a background process with an explicit
+   limit, and poll its output. Record the start time and bound tool waits to the
+   remaining limit; do not hold one blocking call longer than the tool allows. After
+   a timeout, try once more with a narrower command or a longer explicit limit. If it
+   fails again, treat it as a blocker. Do not keep retrying or wait for a human in an
+   unattended run.
+3. **Stop with a report.** On any blocker, or when the run nears its turn or time
+   budget, stop new work. Post one `BUILD INTERRUPTED` comment with **Agent**, **Work
+   completed**, **Stopped step / observed signal**, **Branch / worktree state**, and
+   **Next action** sections. Name the exact step and observed status, never credential
+   values. Set the issue to `Todo`, keep the assignee, and read the state back. A run
+   that has claimed an issue may end only after a BUILD REPORT (`In Review`) or a
+   BUILD INTERRUPTED report (`Todo`). An ordinary failing test still follows the
+   existing rework path; this rule makes an unfinished exit visible. A hard process
+   crash remains covered by the existing stale-claim sweep.
+4. **Leave the work recoverable.** Commit work in progress to the issue branch before
+   stopping if the branch builds or the commit is clearly labelled `WIP:`. Never push
+   a WIP commit to an open PR's head without saying so in the report. Never delete the
+   worktree on an interrupted run. Preserve the existing dirty-worktree ownership
+   protections: this rule does not authorize committing or changing another writer's
+   work.
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `Todo`, label
    `Factory Queue`. Exhaust pagination before concluding the queue or stale-claim set is
@@ -340,7 +372,7 @@ or the reporting failure. This reporting contract does not authorize live instal
    check provider revocation boundaries before assuming feature-grant isolation; see
    `references/provider-oauth-contracts.md`.
 
-6. **Verify.** For ordered SQL seed changes, use `references/ordered-sql-seed-regressions.md` to test collisions, idempotency and preservation against production-shaped data. For PowerShell notification changes, use `references/powershell-delivery-tests.md` for hermetic command shims, exit propagation, timestamp comparisons, and honest live-proof boundaries. Execute the spec's Test plan literally. Every criterion needs evidence
+6. **Verify.** For self-hosted font provenance and prerender/blocked-host proof, use `references/font-provenance-and-prerender-proof.md`. For ordered SQL seed changes, use `references/ordered-sql-seed-regressions.md` to test collisions, idempotency and preservation against production-shaped data. For PowerShell notification changes, use `references/powershell-delivery-tests.md` for hermetic command shims, exit propagation, timestamp comparisons, and honest live-proof boundaries. Execute the spec's Test plan literally. Every criterion needs evidence
    from running code — "looks right" is not verification. Classify proof precisely:
    automated command output, live browser/API behavior, or an unavailable fixture path.
    If a live criterion needs config, credentials, or a fixture that is not safely

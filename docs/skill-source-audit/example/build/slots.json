@@ -1,0 +1,398 @@
+[
+  {
+    "marker": "slot-001",
+    "rows": [
+      "B-entry"
+    ],
+    "hermes_lines": [
+      2,
+      10
+    ],
+    "codex_lines": [
+      2,
+      3
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-002",
+    "rows": [
+      "B-entry"
+    ],
+    "hermes_lines": [
+      13,
+      13
+    ],
+    "codex_lines": [
+      6,
+      6
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-003",
+    "rows": [
+      "B-entry"
+    ],
+    "hermes_lines": [
+      15,
+      16
+    ],
+    "codex_lines": [
+      8,
+      13
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-004",
+    "rows": [
+      "B-model"
+    ],
+    "hermes_lines": [
+      33,
+      48
+    ],
+    "codex_lines": null,
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-005",
+    "rows": [
+      "B-budget",
+      "B-contract",
+      "B-tools"
+    ],
+    "hermes_lines": [
+      52,
+      62
+    ],
+    "codex_lines": [
+      33,
+      40
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-006",
+    "rows": [
+      "B-pickup"
+    ],
+    "hermes_lines": [
+      151,
+      154
+    ],
+    "codex_lines": [
+      129,
+      129
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-007",
+    "rows": [
+      "B-pickup"
+    ],
+    "hermes_lines": [
+      195,
+      195
+    ],
+    "codex_lines": [
+      170,
+      171
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-008",
+    "rows": [
+      "B-dirty-sweep",
+      "B-pickup"
+    ],
+    "hermes_lines": [
+      198,
+      204
+    ],
+    "codex_lines": [
+      174,
+      174
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-009",
+    "rows": [
+      "B-dirty-preclaim",
+      "B-pickup"
+    ],
+    "hermes_lines": [
+      210,
+      237
+    ],
+    "codex_lines": null,
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-010",
+    "rows": [
+      "B-claim"
+    ],
+    "hermes_lines": [
+      245,
+      245
+    ],
+    "codex_lines": [
+      187,
+      187
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-011",
+    "rows": [
+      "B-claim",
+      "B-existing-proof"
+    ],
+    "hermes_lines": [
+      265,
+      271
+    ],
+    "codex_lines": [
+      207,
+      209
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-012",
+    "rows": [
+      "B-merge-prerequisite",
+      "B-repo",
+      "B-wsl-repo"
+    ],
+    "hermes_lines": [
+      275,
+      285
+    ],
+    "codex_lines": [
+      213,
+      213
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-013",
+    "rows": [
+      "B-branch",
+      "B-git-auth",
+      "B-native-path",
+      "B-preserve-history",
+      "B-webgl-reference"
+    ],
+    "hermes_lines": [
+      290,
+      326
+    ],
+    "codex_lines": [
+      218,
+      222
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-014",
+    "rows": [
+      "B-implement",
+      "B-oauth"
+    ],
+    "hermes_lines": [
+      334,
+      340
+    ],
+    "codex_lines": [
+      230,
+      235
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-015",
+    "rows": [
+      "B-verify"
+    ],
+    "hermes_lines": [
+      342,
+      349
+    ],
+    "codex_lines": [
+      237,
+      238
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-016",
+    "rows": [
+      "B-commit"
+    ],
+    "hermes_lines": [
+      369,
+      370
+    ],
+    "codex_lines": [
+      258,
+      259
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-017",
+    "rows": [
+      "B-commit"
+    ],
+    "hermes_lines": [
+      373,
+      373
+    ],
+    "codex_lines": [
+      262,
+      263
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-018",
+    "rows": [
+      "B-pr"
+    ],
+    "hermes_lines": [
+      376,
+      378
+    ],
+    "codex_lines": [
+      266,
+      268
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-019",
+    "rows": [
+      "B-pr"
+    ],
+    "hermes_lines": [
+      382,
+      385
+    ],
+    "codex_lines": [
+      272,
+      275
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-020",
+    "rows": [
+      "B-handoff"
+    ],
+    "hermes_lines": [
+      387,
+      387
+    ],
+    "codex_lines": [
+      277,
+      277
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-021",
+    "rows": [
+      "B-handoff"
+    ],
+    "hermes_lines": [
+      391,
+      391
+    ],
+    "codex_lines": [
+      281,
+      281
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-022",
+    "rows": [
+      "B-handoff"
+    ],
+    "hermes_lines": [
+      393,
+      393
+    ],
+    "codex_lines": [
+      283,
+      283
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-023",
+    "rows": [
+      "B-handoff"
+    ],
+    "hermes_lines": [
+      398,
+      398
+    ],
+    "codex_lines": [
+      288,
+      288
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-024",
+    "rows": [
+      "B-handoff"
+    ],
+    "hermes_lines": [
+      401,
+      401
+    ],
+    "codex_lines": [
+      291,
+      291
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-025",
+    "rows": [
+      "B-cleanup"
+    ],
+    "hermes_lines": [
+      405,
+      405
+    ],
+    "codex_lines": [
+      295,
+      295
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  },
+  {
+    "marker": "slot-026",
+    "rows": [
+      "B-cleanup"
+    ],
+    "hermes_lines": [
+      408,
+      426
+    ],
+    "codex_lines": [
+      298,
+      299
+    ],
+    "decided_example_action": "preserve pinned variant; no behavioral reconciliation"
+  }
+]
