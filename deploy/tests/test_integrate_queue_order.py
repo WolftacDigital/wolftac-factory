@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 import copy
+from datetime import datetime
 import hashlib
 import importlib.util
 import io
@@ -47,18 +48,34 @@ def issue(number, entered, updated):
 
 
 class QueueOrderTests(unittest.TestCase):
-    def queue(self, nodes, lane=None, state="Approved"):
+    def queue(self, nodes, lane=None, state="Approved", unordered_history=False):
         calls = []
 
         def fake_gq(query, variables=None):
             self.assertNotIn("mutation", query)
             calls.append((query, variables))
             if "issues(" in query:
-                self.assertIn("createdAt history(last: 50)", query)
+                window = re.search(r"history\((first|last): (\d+)\)", query)
+                self.assertIsNotNone(window)
+                assert window is not None
                 self.assertIn("toState { name }", query)
                 self.assertEqual(variables, {"team": "WD", "state": state,
                                              "label": "Factory Queue"})
-                return {"issues": {"nodes": copy.deepcopy(nodes)}}
+                response = copy.deepcopy(nodes)
+                # Linear history: first selects newest, last selects oldest.
+                # Honour the query instead of returning all fixture entries.
+                direction, count = window.groups()
+                for node in response:
+                    connection = node.get("history") or {}
+                    if "nodes" not in connection:
+                        continue
+                    selected = sorted(connection["nodes"], key=lambda entry:
+                                      datetime.fromisoformat(entry["createdAt"].replace("Z", "+00:00")),
+                                      reverse=direction == "first")[:int(count)]
+                    if unordered_history:
+                        selected = selected[1:] + selected[:1]
+                    connection["nodes"] = selected
+                return {"issues": {"nodes": response}}
             self.assertIn("viewer", query)
             return {"viewer": {"id": "synthetic-viewer"}}
 
@@ -88,8 +105,21 @@ class QueueOrderTests(unittest.TestCase):
         a = issue(99999, 1, 9)
         a["history"]["nodes"] = [history(4), history(9, "Todo"), history(1),
                                    {"createdAt": timestamp(8), "toState": None}, history(3)]
-        self.assertEqual(self.queue([a])[0]["enteredStateAt"], timestamp(4))
-        self.assertEqual(self.queue([a], state="Todo")[0]["enteredStateAt"], timestamp(9))
+        self.assertEqual(self.queue([a], unordered_history=True)[0]["enteredStateAt"], timestamp(4))
+        self.assertEqual(self.queue([a], state="Todo", unordered_history=True)[0]["enteredStateAt"], timestamp(9))
+
+    def test_newest_state_entry_outside_oldest_history_window(self):
+        for old_match in (False, True):
+            with self.subTest(old_match=old_match):
+                a, b = issue(99999, 10, 11), issue(100000, 5, 6)
+                churn = [{"createdAt": f"2026-01-01T02:{minute:02d}:00.000Z",
+                          "toState": None} for minute in range(60)]
+                a["history"]["nodes"] = ([history(1)] if old_match else []) + churn + [history(10)]
+                b["history"]["nodes"] = churn[:10] + [history(5)]
+                self.assertGreater(len(a["history"]["nodes"]), 50)
+                result = self.queue([a, b])
+                self.assertEqual([x["identifier"] for x in result], ["WD-100000", "WD-99999"])
+                self.assertEqual([x["enteredStateAt"] for x in result], [timestamp(5), timestamp(10)])
 
     def test_missing_matching_history_falls_back_ac2(self):
         for entries in ([], [history(7, "Todo")], [{"createdAt": timestamp(8), "toState": None}]):

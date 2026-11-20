@@ -244,7 +244,7 @@ def cmd_queue(args):
         }
         first: 50
       ) {
-        nodes { %s %s createdAt history(last: 50) { nodes { createdAt toState { name } } } }
+        nodes { %s %s createdAt history(first: 50) { nodes { createdAt toState { name } } } }
       }
     }
     """ % (ISSUE_FIELDS, COMMENT_FIELDS)
