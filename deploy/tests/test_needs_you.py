@@ -409,10 +409,17 @@ class NeedsYouWatchdogTests(unittest.TestCase):
         self.assertEqual(list(state['open_findings']), ['needs-you|WD-1|blocked-question'])
         messages = list(self.outbox.glob('*.txt'))
         self.assertEqual(len(messages), 2)  # immediate finding and separate daily list
+        # Deterministically exercise PowerShell's seven-to-six fractional-digit
+        # round trip instead of waiting for the clock to end in a zero.
+        stamp = datetime.fromisoformat(stamp).replace(microsecond=571782).isoformat(timespec='microseconds')
+        stamp = stamp[:-6] + '0' + stamp[-6:]
+        state['needs_you_last_digest_at'] = stamp
+        self.seed(**state)
         code, text = self.run_script('WD-1=6h(blocked-question)', dry=False)
         self.assertEqual(code, 1, text)
         self.assertEqual(len(list(self.outbox.glob('*.txt'))), 2)
-        self.assertEqual(json.loads(self.state.read_text(encoding='utf-8-sig'))['needs_you_last_digest_at'], stamp)
+        saved = json.loads(self.state.read_text(encoding='utf-8-sig'))['needs_you_last_digest_at']
+        self.assertEqual(datetime.fromisoformat(saved), datetime.fromisoformat(stamp))
         # Force only the list due, and fail the existing outbox sender without invoking a CLI.
         state = json.loads(self.state.read_text(encoding='utf-8-sig'))
         prior = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
@@ -428,7 +435,8 @@ class NeedsYouWatchdogTests(unittest.TestCase):
         code, text = self.run_script('WD-1=6h(blocked-question)', dry=False)
         self.assertEqual(code, 1, text)
         self.assertEqual(len(list(self.outbox.glob('*.txt'))), 3)
-        self.assertNotEqual(json.loads(self.state.read_text(encoding='utf-8-sig'))['needs_you_last_digest_at'], prior)
+        saved = json.loads(self.state.read_text(encoding='utf-8-sig'))['needs_you_last_digest_at']
+        self.assertGreater(datetime.fromisoformat(saved), datetime.fromisoformat(prior))
         self.run_script('none', dry=False)
         self.assertEqual(len(list(self.outbox.glob('*.txt'))), 4)  # existing liveness recovery only
         self.assertEqual(sum('Factory needs you' in p.read_text() for p in self.outbox.glob('*.txt')), 2)
