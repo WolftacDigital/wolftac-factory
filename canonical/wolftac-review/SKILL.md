@@ -54,6 +54,36 @@ every task" rule):
 
 ## Procedure
 
+**REVIEW-NEVER-SILENT** (applies throughout the procedure after a verified claim;
+pickup and claim-race rules remain unchanged):
+
+1. **No human auth.** Never authenticate as a human. Do not use a password manager,
+   a saved-login or vault tool (for example `browser_vault`), a login form, a live
+   `.env` value, or any credential the spec does not name. A spec may define a
+   credential-free test session; use only that, never invent an authentication bypass.
+2. **Time-box commands.** Run any command expected to take more than about 2 minutes
+   (installs, builds, test suites, dev servers) as a background process with an explicit
+   limit, and poll its output. Record the start time and bound tool waits to the
+   remaining limit; do not hold one blocking call longer than the tool allows. After
+   a timeout, try once more with a narrower command. If it fails again, treat it as
+   a blocker. Do not keep retrying or wait for a human in an unattended run.
+3. **Stop with a report.** On a blocker, or when the run nears its turn or time
+   budget, stop new work. Post one `REVIEW INTERRUPTED` comment with **Agent**,
+   **Criteria verified**, **Stopped step / observed signal**, **Branch / worktree
+   state**, and **Next action** sections. Name the exact step and observed status,
+   never credential values. Restore only the claim changes this run made, preserving
+   pre-existing fields and never clearing another worker's delegate. Keep the issue
+   in `In Review` and read the state and claim fields back. A run that has claimed
+   an issue may end only with a verdict report or a REVIEW INTERRUPTED report. For
+   the existing waiting-on-CI path, include the waiting note in that one interruption
+   report, not a second comment; keep the CI gate and its no-verdict outcome unchanged.
+   A hard process crash remains covered by the existing stale-claim sweep.
+4. **An interruption is not a verdict.** Never record an environment blocker as
+   FAIL or NEEDS HUMAN. A FAIL needs a defect in the work; a NEEDS HUMAN needs a
+   product decision. An ordinary failing test still follows the existing defect
+   path. Never reuse partial results as a PASS. The four verdicts and their finding
+   tags are unchanged; this rule makes an unfinished exit visible.
+
 ### 1. Pick up work
 - If the Linear MCP tools aren't loaded, load them via ToolSearch (keyword query:
   `"Linear workspace issues"` — you need `list_issues`, `get_issue`, `save_issue`,

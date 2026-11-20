@@ -81,6 +81,46 @@ Repo reachability, final work selection and approval verification stay in skills
 Review/integrate eligibility and all existing fingerprint triggers are unchanged.
 The gatekeeper does not claim, comment or otherwise write to Linear or Discord.
 
+### Needs-you inventory (WD-628)
+
+Every normal tick independently reads all active WD `Factory Queue` issues,
+including Backlog and In Progress, and exhausts issue and comment pagination.
+Completed/canceled issues are excluded. This diagnostic still runs when every
+worker lane is in flight. It does not alter fingerprints, select work, or write
+to Linear. The pure `needs_you_status` projection emits, for example:
+
+```text
+needs-you: WD-1=5h(blocked-question),WD-2=8d(parked)
+```
+
+- `blocked-question`: a comment heading is its first nonblank line other than an
+  `**Agent:**` line. Ignore headings starting `BUILD SKIPPED:` or `SWEPT:`; the
+  newest remaining comment must have a heading starting `BLOCKED:`. Any newer
+  non-diagnostic comment clears this reason, regardless of author. Age starts at
+  the BLOCKED comment's `createdAt`.
+- `parked`: exactly the existing `not park_cleared(issue, comments)` test. Its
+  assignment/decision-record contract above is unchanged. Age starts at the
+  latest NEEDS HUMAN review. An issue may have both reasons.
+- Plan reviews are deliberately excluded. There is no worker-versus-human
+  classification for BLOCKED waits.
+
+Only validated issue IDs, ages and these two reason words are emitted. Whole
+days/hours/minutes use `d`/`h`/`m`; otherwise seconds (`s`) preserve exact 4-hour
+and 7-day threshold boundaries. Empty inventory prints `needs-you: none`.
+Unreadable/incomplete pages, malformed data or probe failure print
+`needs-you: unknown`, never partial results or comment/exception text. A 401
+obeys the existing token-wide build/review dispatch veto; other diagnostic
+failures do not stop worker dispatch. Audit-only runs omit this segment.
+
+The watchdog consumes this exact-age wire format from the newest output, adds
+over-4-hour findings through its existing alert path, and sends a separate current
+list at most once per 24 hours. Its human-facing ages use the largest floored unit
+(for example `241565s` becomes `2d`), without rounding the threshold decisions.
+Unknown/missing/invalid observations retain open incidents, not a stale daily list;
+only a valid inventory (including `none`) can establish that a wait has cleared.
+No schedule or live installation is changed by this feature. Fixture proof:
+`python -B -m unittest discover -s deploy/tests -p test_needs_you.py -v`.
+
 ### Fingerprint rule
 
 For each issue, canonical sorted JSON includes:
