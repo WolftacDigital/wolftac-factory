@@ -28,6 +28,26 @@ Git worktree, never live junctions or `deploy.ps1 -Deploy`.
 | `factory-watchdog-drift.tests.ps1` | `factory-watchdog.ps1` drift alerting: truthful magnitude on any kind of edit, no false "running normally" while liveness is failing, and `cannot compare` for a deployed copy that is absent. Plus the alert state machine — transition, cooldown, 12h nag, recovery — and agreement with `deploy.ps1 -Check` on which targets are drifted. |
 | `factory-watchdog-learn.tests.ps1` | `factory-watchdog.ps1` pending `/learn` edits (WD-362): clean is silent, a modified or untracked file in the junctioned live worktree alerts once by path and line count (never content), is snapshotted byte-exact, and survives `git restore .`; cooldown, 12h nag, single recovery, 30-day retention keeping the newest, and "cannot check" for an unresolvable worktree or failed `git status`. Hermetic: scratch repo, scratch junctioned worktree, `-SlackOutbox` interception. |
 
+## WD-672 sync regression additions
+
+Run `python -B -m unittest discover -s deploy/tests -p test_factory_sync.py -v`
+and `python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v`.
+Then run `pwsh deploy/parity-check.ps1`, `pwsh deploy/semantic-check.ps1` and the
+full deploy unittest suite. Set TEMP, TMP and TMPDIR to profile scratch first.
+
+The new sync suite creates a local bare remote and two real clones for every
+test, with an empty scratch global Git config, `GIT_CONFIG_NOSYSTEM=1` and
+`core.autocrlf=false`. All seven path/remote flags are explicit. It proves clean
+fast-forwards and idempotence, dirty/diverged/mismatched-remote refusal,
+in-flight/completed/expired/unreadable markers, byte-exact atomic install and
+backup behavior, failed replacement cleanup, seven-install retention, protected
+read-only comparison, full-tree dry-run immutability and one-line sanitized output.
+Watchdog additions execute the real scratch `-DryRun` path for six/24-hour
+thresholds, recovery, in-flight exclusion, missing inputs and untrusted text.
+Existing test methods remain unchanged. Operator AC-12/AC-13 are not automated
+or claimed by these tests; never run the sync command with live default paths
+inside a worker session.
+
 ## WD-641 installer regression additions
 
 Run `pwsh -NoProfile -File deploy/tests/watchdog-install.tests.ps1 -Repo <worktree> -Scratch <new-scratch-directory>`

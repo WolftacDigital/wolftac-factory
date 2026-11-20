@@ -377,6 +377,73 @@ function Format-NeedsYou($Item) {
     return "$($Item.Id)=$age($($Item.Reason))$suffix"
 }
 
+function Test-FactorySync([string]$Dir) {
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return }
+    foreach ($job in @($jobs | Where-Object { (Get-Prop $_ 'name') -ceq 'Wolftac Factory Sync' })) {
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $folder = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+        try {
+            $nowUtc = [datetime]::UtcNow
+            $files = @(Get-ChildItem -LiteralPath $folder -File -ErrorAction Stop |
+                Where-Object { $_.LastWriteTimeUtc -le $nowUtc } |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending)
+            if ($files.Count -lt 6) { continue }
+            $rows = @()
+            foreach ($file in $files) {
+                $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+                $hits = [regex]::Matches("$text", '(?m)^sync: [^\r\n]*')
+                $values = @{}
+                if ($hits.Count -eq 1) {
+                    foreach ($segment in ($hits[0].Value.Substring(6) -split '; ')) {
+                        if ($segment -cmatch '^(main-clone|live|gatekeeper|policy|watchdog-files): (.+)$') {
+                            $target = $Matches[1]; $value = $Matches[2]
+                            if ($values.ContainsKey($target)) { $values[$target] = '' }
+                            else { $values[$target] = $value }
+                        }
+                    }
+                }
+                $rows += [pscustomobject]@{ At = $file.LastWriteTimeUtc; Values = $values }
+                # Retain one boundary observation to prove a full 24-hour span,
+                # instead of treating six recently written files as six hours.
+                if ($file.LastWriteTimeUtc -le $nowUtc.AddHours(-24)) { break }
+            }
+            foreach ($target in @('main-clone', 'live', 'gatekeeper', 'policy', 'watchdog-files')) {
+                $hours = if ($target -eq 'watchdog-files') { 24 } else { 6 }
+                $cutoff = $nowUtc.AddHours(-$hours)
+                if ($rows[0].At -le $cutoff) { continue }
+                $window = @()
+                foreach ($row in $rows) {
+                    $window += $row
+                    if ($row.At -le $cutoff) { break }
+                }
+                if ($window.Count -lt 6 -or $window[-1].At -gt $cutoff) { continue }
+                $allFailed = $true
+                $reason = ''; $count = ''
+                foreach ($row in $window) {
+                    $value = [string]$row.Values[$target]
+                    if ($target -eq 'watchdog-files') {
+                        if ($value -cmatch '^stale \(([1-5]) of 5\)$') {
+                            if (-not $count) { $count = $Matches[1] }
+                        } else { $allFailed = $false }
+                    } elseif ($value -cmatch '^(dirty|diverged|remote-mismatch|fetch-failed|ff-failed|install-failed)(?: \([^;\r\n]*\))?(?: -> skipped)?$') {
+                        if (-not $reason) { $reason = $Matches[1] }
+                    } else { $allFailed = $false }
+                }
+                if ($allFailed) {
+                    if ($target -eq 'watchdog-files') {
+                        Add-Finding "[$Dir] factory-sync: protected watchdog files are stale ($count of 5); run the elevated files-only refresh"
+                    } else {
+                        Add-Finding "[$Dir] factory-sync: $target has not been updated for 6h ($reason)"
+                    }
+                }
+            }
+        } catch { } # Unknown evidence is not proof of a six-hour failure streak.
+    }
+}
+
 function Test-GatekeeperDegraded([string]$Dir) {
     $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
     if ($null -eq $jobs) { return } # Existing cron check owns input failures.
@@ -1028,7 +1095,7 @@ function Invoke-LearnRetention {
 }
 
 # ── run the checks ───────────────────────────────────────────────────────────────
-foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-GatekeeperDegraded $dir }
+foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-GatekeeperDegraded $dir; Test-FactorySync $dir }
 foreach ($dir in $CronDir) { Test-ProviderHolds $dir }
 # Read the same scratch-scoped state before deciding whether liveness recovered.
 $statePath = Get-StatePath $CronDir[0]
