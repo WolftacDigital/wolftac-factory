@@ -3,7 +3,7 @@
   "repos": [
     {"path": "D:\\Wolftac\\Factory", "github": "WolftacDigital/wolftac-factory"},
     {"path": "D:\\Wolftac\\atlas_raw_only", "github": "WolftacDigital/atlas_raw_only"},
-    {"path": "C:\\Users\\logan_vwagmmf\\OneDrive\\Wolftac Digital\\Codex\\wolftac-crm", "github": "WolftacDigital/wolftac-crm"},
+    {"path": "D:\\Wolftac\\wolftac-crm", "github": "WolftacDigital/wolftac-crm"},
     {"path": "D:\\Wolftac\\wolftac-digital-site", "github": "WolftacDigital/wolftac-digital-site"},
     {"path": "D:\\Wolftac\\peptide-vault", "github": null},
     {"path": "D:\\Wolftac\\factory-console", "github": "WolftacDigital/factory-console"},
