@@ -175,6 +175,8 @@ $report = New-Object System.Collections.Generic.List[object]
 $readFailure = $false
 $auditStatuses = New-Object System.Collections.Generic.List[string]
 $auditIds = New-Object System.Collections.Generic.List[string]
+$needsYouItems = @{}
+$needsYouObserved = $false
 
 function Add-Finding([string]$Text) { $script:findings.Add($Text) }
 
@@ -293,6 +295,53 @@ function Test-WorkerStuckRuns([string]$Dir) {
             Add-Report $name 'worker-stuck' 'ok' "$stopped stopped runs before progress or end of lookback (threshold $StuckRunThreshold)"
         }
     }
+}
+
+function Test-NeedsYou([string]$Dir) {
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    foreach ($job in @($jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $folder = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
+        try {
+            $file = Get-ChildItem -LiteralPath $folder -File |
+                Sort-Object LastWriteTimeUtc, Name -Descending | Select-Object -First 1
+            if ($null -eq $file) { continue }
+            $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+            # Accept only the segment on an actual Gatekeeper output line. Never
+            # relay arbitrary text, partial matches, prompts, or exception bodies.
+            $hits = [regex]::Matches("$text", '(?m)^gatekeeper: [^\r\n]*')
+            if (-not $hits.Count) { continue }
+            $segments = @($hits[$hits.Count - 1].Value -split '; ' | Where-Object { $_ -cmatch '^(?:gatekeeper: )?needs-you: ' })
+            if ($segments.Count -ne 1) { continue }
+            $value = $segments[0] -creplace '^(?:gatekeeper: )?needs-you: ', ''
+            if ($value -ceq 'none') { $script:needsYouObserved = $true; continue }
+            if ($value -ceq 'unknown') { continue }
+            if ($value -cnotmatch '\AWD-[0-9]+=[0-9]+[dhms]\((?:blocked-question|parked)\)(?:,WD-[0-9]+=[0-9]+[dhms]\((?:blocked-question|parked)\))*\z') { continue }
+            foreach ($entry in ($value -split ',')) {
+                [void]($entry -cmatch '\A(WD-[0-9]+)=([0-9]+)([dhms])\((blocked-question|parked)\)\z')
+                $identifier = $Matches[1]; $amount = [double]$Matches[2]; $unit = $Matches[3]; $reason = $Matches[4]
+                $seconds = $amount * @{ d = 86400; h = 3600; m = 60; s = 1 }[$unit]
+                $key = "$identifier|$reason"
+                $item = [pscustomobject]@{ Id = $identifier; Reason = $reason; Seconds = $seconds; Line = $entry }
+                if (-not $script:needsYouItems.ContainsKey($key) -or $script:needsYouItems[$key].Seconds -lt $seconds) {
+                    $script:needsYouItems[$key] = $item
+                }
+            }
+            $script:needsYouObserved = $true
+        } catch { } # Unknown reports add no finding; never echo their content.
+    }
+}
+
+function Format-NeedsYou($Item) {
+    $suffix = if ($Item.Reason -eq 'parked' -and $Item.Seconds -gt 604800) { ' (keep or drop?)' } else { '' }
+    # Keep exact wire seconds for thresholds; floor only the human-facing age.
+    $age = if ($Item.Seconds -ge 86400) { "$([math]::Floor($Item.Seconds / 86400))d" }
+           elseif ($Item.Seconds -ge 3600) { "$([math]::Floor($Item.Seconds / 3600))h" }
+           elseif ($Item.Seconds -ge 60) { "$([math]::Floor($Item.Seconds / 60))m" }
+           else { "$($Item.Seconds)s" }
+    return "$($Item.Id)=$age($($Item.Reason))$suffix"
 }
 
 function Test-GatekeeperDegraded([string]$Dir) {
@@ -947,6 +996,26 @@ function Invoke-LearnRetention {
 
 # ── run the checks ───────────────────────────────────────────────────────────────
 foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-GatekeeperDegraded $dir }
+# Read the same scratch-scoped state before deciding whether liveness recovered.
+$statePath = Get-StatePath $CronDir[0]
+$prev = $null
+if (Test-Path -LiteralPath $statePath) {
+    try { $prev = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { $prev = $null }
+}
+foreach ($dir in $CronDir) { Test-NeedsYou $dir }
+$needsYouList = @($needsYouItems.Values | Sort-Object { [System.Numerics.BigInteger]::Parse($_.Id.Substring(3)) }, Reason)
+foreach ($item in $needsYouList) {
+    if ($item.Seconds -gt 14400) { Add-Finding "needs-you: $(Format-NeedsYou $item)" }
+}
+# An unavailable probe cannot close previously open waits. Carry their identity,
+# first-seen time and text, without creating a finding or replaying a stale list.
+$needsYouHeld = @()
+$oldOpen = Get-Prop $prev 'open_findings'
+if (-not $needsYouObserved -and $null -ne $oldOpen) {
+    $needsYouHeld = @($oldOpen.PSObject.Properties | Where-Object {
+        $_.Name -cmatch '^needs-you\|WD-[0-9]+\|(blocked-question|parked)$'
+    } | ForEach-Object { $_.Name })
+}
 Test-LinearTokenExpiry
 if (-not $SkipDrift) { Measure-Drift }
 if (-not $SkipLearn) { Measure-Learn }
@@ -969,7 +1038,7 @@ if (-not $DryRun) {
         catch { Add-Finding "[$($CronDir[0])] digest-$($digest.name): cannot write latest diagnostic file" }
     }
 }
-$healthy = ($findings.Count -eq 0)
+$healthy = ($findings.Count -eq 0 -and $needsYouHeld.Count -eq 0)
 
 Write-Output "Factory watchdog $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - watching: $($CronDir -join ', ')"
 foreach ($r in $report) {
@@ -978,8 +1047,9 @@ foreach ($r in $report) {
 if ($healthy) {
     Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Gatekeeper auth)"
 } else {
-    Write-Output "UNHEALTHY: $($findings.Count) finding(s)"
+    Write-Output "UNHEALTHY: $($findings.Count + $needsYouHeld.Count) finding(s)"
     foreach ($f in $findings) { Write-Output "  - $f" }
+    if ($needsYouHeld.Count) { Write-Output "NEEDS-YOU: probe unavailable; $($needsYouHeld.Count) previously open finding(s) retained." }
 }
 
 Write-Output "CONFIG: $(if ($configFindings.Count) { 'warning' } else { 'clean' })"
@@ -1035,13 +1105,7 @@ if ($SkipAudit) {
 # AUDIT END: output
 
 # ── transition-based alerting ────────────────────────────────────────────────────
-# State lives per cron directory, so a scratch-dir fault-injection run can never
-# read or clobber the live watchdog's memory.
-$statePath = Get-StatePath $CronDir[0]
-$prev = $null
-if (Test-Path -LiteralPath $statePath) {
-    try { $prev = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { $prev = $null }
-}
+# State was read above, before the recovery decision, from this cron directory.
 $deliveryFailures = @{}
 $lastDelivery = @{}
 $oldFailures = Get-Prop $prev 'delivery_failure'
@@ -1073,6 +1137,9 @@ $message = $null
 $mention = "<@1022999767753691186>"
 
 function Get-FindingKey([string]$Text) {
+    if ($Text -cmatch '^needs-you: (WD-[0-9]+)=[0-9]+[dhms]\((blocked-question|parked)\)') {
+        return "needs-you|$($Matches[1])|$($Matches[2])"
+    }
     # Retain scope/job identity verbatim (including digits); discard only the
     # observation after a known check marker. Ages/errors are not incident IDs.
     if ($Text -match '^(\[.+?\] .+?): (DISABLED|PAUSED|last_status=error|FAILED|unparseable last_failure.at|OVERDUE|unparseable next_run_at|worker-safety-net)(?:\b| )') {
@@ -1106,6 +1173,10 @@ foreach ($finding in $findings) {
     $openFindings[$key] = if ($previousOpen.ContainsKey($key)) { $previousOpen[$key] } else { $now.ToString('o') }
     $findingTexts[$key] = $finding
 }
+foreach ($key in $needsYouHeld) {
+    $openFindings[$key] = $previousOpen[$key]
+    if ($previousTexts.ContainsKey($key)) { $findingTexts[$key] = $previousTexts[$key] }
+}
 $added = @($openFindings.Keys | Where-Object { -not $previousOpen.ContainsKey($_) } | Sort-Object)
 $removed = @($previousOpen.Keys | Where-Object { -not $openFindings.ContainsKey($_) } | Sort-Object)
 if ($added.Count -or $removed.Count) {
@@ -1118,7 +1189,7 @@ if ($added.Count -or $removed.Count) {
     } else {
         ":warning: *Factory watchdog: the worker loops need attention* $mention`n$($lines -join "`n")`n$($openFindings.Count) liveness finding(s) still open."
     }
-} elseif (-not $healthy) {
+} elseif ($findings.Count -gt 0) {
     $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
     if ($hoursSince -ge $NagHours) {
         $shouldPost = $true
@@ -1315,6 +1386,22 @@ if ($auditShouldPost) {
 }
 # AUDIT END: transition
 
+# WD-628: a separate current list, at most once per 24 hours. Failed delivery
+# does not advance the sole new timestamp; next tick retries the current list.
+$needsYouLastDigest = Get-Prop $prev 'needs_you_last_digest_at'
+$needsYouDelivered = $true
+$needsYouSince = [double]::MaxValue
+if ($needsYouLastDigest) {
+    try { $needsYouSince = ($now.ToUniversalTime() - [datetime]::Parse($needsYouLastDigest).ToUniversalTime()).TotalHours }
+    catch { } # A malformed old timestamp means never sent.
+}
+if ($needsYouList.Count -gt 0 -and $needsYouSince -ge 24) {
+    $needsYouMessage = "*Factory needs you* $mention`n" + (($needsYouList | ForEach-Object { Format-NeedsYou $_ }) -join "`n")
+    if ($AlertPrefix) { $needsYouMessage = "$AlertPrefix`n$needsYouMessage" }
+    $needsYouDelivered = Send-DiscordAlert $needsYouMessage
+    if ($needsYouDelivered) { $needsYouLastDigest = $now.ToString('o') }
+}
+
 # Persist AFTER the attempt. A failed delivery leaves last_alert_at untouched so the
 # next tick retries rather than silently swallowing the alert.
 if ($DryRun) {
@@ -1324,6 +1411,7 @@ if ($DryRun) {
 $newState = [ordered]@{
     status              = if ($healthy) { 'healthy' } else { 'unhealthy' }
     checked_at          = $now.ToString('o')
+    needs_you_last_digest_at = $needsYouLastDigest
     findings            = @($findings)
     open_findings       = $openFindings
     finding_texts       = $findingTexts
@@ -1357,7 +1445,7 @@ try {
     exit 4
 }
 
-if (-not $delivered -or -not $configDelivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered) { exit 3 }
+if (-not $delivered -or -not $configDelivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered -or -not $needsYouDelivered) { exit 3 }
 # Drift and pending /learn edits deliberately do NOT change the exit code: a drifted-but-running factory is
 # not an outage, and Task Scheduler's Last Result is the liveness signal (AC-3).
 exit ($healthy ? 0 : 1)
