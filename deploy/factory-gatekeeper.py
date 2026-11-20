@@ -18,7 +18,7 @@ Design constraints learned the hard way (WD-357, WD-380):
   worker run must remain visible. Keep it outside the popped in-flight marker.
   Exclude ``updatedAt``, ``delegate``, ``SWEPT:`` and ``BUILD SKIPPED:`` churn so silent
   integrate runs settle without duplicating worker skip rules here.
-* Linear/env/probe failures fail OPEN (subject to the in-flight guard), except
+* Linear/env/probe failures fail OPEN (subject to in-flight and 120m backoff), except
   a Linear HTTP 401 anywhere in the tick: skip build/review and dispatch only
   integrate for re-mint. Probe all ready lanes before dispatching any of them.
   Discord is also an exception: on an otherwise unchanged integrate lane, an
@@ -44,6 +44,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -61,6 +62,7 @@ DEFAULT_JOB_MAP = {
 LANE_FILTERS = {"build": "agentic", "build-crm": "Wolftac CRM v2"}
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
+FAIL_OPEN_BACKOFF_MINUTES = 120
 STALE_ELIGIBLE_MINUTES = 15
 # The human park owner in the WD workspace. A park clears on a DECISION RECORD
 # for the issue (shape only, WD-638) or on a later comment by this user.
@@ -203,8 +205,9 @@ def parse_ts(value):
 def read_token(env_path: str, name="LINEAR_FACTORY_BOT_TOKEN") -> str:
     with open(env_path, encoding="utf-8") as fh:
         for line in fh:
+            line = line.strip()
             if line.startswith(name + "="):
-                value = line.split("=", 1)[1].strip()
+                value = line.split("=", 1)[1].strip().strip('"').strip("'")
                 if value:
                     return value
     raise ProbeError(name + " missing or empty")
@@ -224,19 +227,38 @@ def load_state(path: str) -> dict:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    for key in ("lanes", "fingerprints", "approval_dispatched", "audit", "last_dispatch_at"):
+    for key in ("lanes", "fingerprints", "approval_dispatched", "audit", "last_dispatch_at",
+                "fail_open_dispatched"):
         if not isinstance(data.get(key), dict):
             data[key] = {}
     return data
 
 
-def save_state(path: str, state: dict) -> None:
+def save_state(path: str, state: dict) -> str | None:
+    """Replace only a complete, flushed state; return a safe error type on failure."""
+    temp_path = None
+    fd = None
     try:
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(dir=directory, prefix=".gatekeeper-state.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fd = None  # the file object now owns the descriptor
             json.dump(state, fh, indent=2)
-    except OSError:
-        pass  # state is an optimisation; losing it degrades to fail-open
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, path)
+    except OSError as exc:
+        return type(exc).__name__
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if temp_path is not None:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+    return None
 
 
 def lane_entry(entry):
@@ -780,6 +802,7 @@ def main() -> int:
     fingerprints = state["fingerprints"]
     approvals = state["approval_dispatched"]
     last_dispatch = state["last_dispatch_at"]
+    fail_open_dispatched = state["fail_open_dispatched"]
     token = None
     fail_open_reason = None
     try:
@@ -872,6 +895,7 @@ def main() -> int:
         try:
             fingerprint = None
             approval = None
+            fail_open = False
             if linear_auth_failed:
                 reason = "linear-auth-failed (401)"
                 if lane != "integrate":
@@ -880,11 +904,14 @@ def main() -> int:
                     continue
             elif fail_open_reason is not None:
                 reason = f"FAIL-OPEN ({fail_open_reason})"
+                fail_open = True
             else:
                 issues, fingerprint, probe_error = probes[lane]
                 if probe_error is not None:
                     reason = f"probe failed ({probe_error}) -> FAIL-OPEN"
+                    fail_open = True
                 else:
+                    fail_open_dispatched.pop(lane, None)
                     eligible = [i for i in issues if build_eligible(i)] if lane in LANE_FILTERS else issues
                     if not issues:
                         pending.discard(lane)
@@ -916,10 +943,20 @@ def main() -> int:
                             continue
                         reason = f"discord-approval {approval[0]}"
 
+            if fail_open:
+                previous = parse_ts(fail_open_dispatched.get(lane))
+                if previous is not None:
+                    until = previous + timedelta(minutes=FAIL_OPEN_BACKOFF_MINUTES)
+                    if now_utc() < until:
+                        lines.append(f"{lane}: {reason} -> backoff until {until.isoformat()}")
+                        continue
+
             result = dispatch(job_id, lane, args.dry_run, exec_override, profile)
             suffix = " for re-mint" if linear_auth_failed and result.startswith("dispatched(") else ""
             lines.append(f"{lane}: {reason} -> {result}{suffix}")
             if not args.dry_run and result.startswith("dispatched(pid="):
+                if fail_open:
+                    fail_open_dispatched[lane] = now_utc().isoformat()
                 last_dispatch[lane] = now_utc().isoformat()
                 if not degraded and not linear_auth_failed:
                     pending.discard(lane)
@@ -947,7 +984,9 @@ def main() -> int:
             audit_lines = [f"audit: failed ({error_reason(exc)})"]
         lines.extend(line + (" (dry-run)" if args.dry_run else "") for line in audit_lines)
     if not args.dry_run:
-        save_state(state_path, state)
+        save_error = save_state(state_path, state)
+        if save_error is not None:
+            lines.append(f"state: save-failed ({save_error})")
     print("gatekeeper: " + "; ".join(lines))
     return 0
 

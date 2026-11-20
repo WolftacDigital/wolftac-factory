@@ -1,0 +1,128 @@
+BASE 2ae4c8fb8946498c3c9c9c5b882b22efddd7dfdc
+INVENTORY 21 skill entrypoints; 42 reference assets; 5 template/loader assets
+EXECUTABLE ASSETS 16 exact hashes checked; three Integrate families each identical across six copies; no scripts imported/executed
+COVERAGE 8734 source lines each owned exactly once
+TP1 spec: 10 real Git pair diffs; 594 distinct differing source lines; unmapped=0; multiply-mapped=0
+SAMPLE spec ports/codex/wolftac-spec.md:74 -> S-template-quality | - Security / privacy:
+SAMPLE spec ports/claude-desktop/wolftac-spec/SKILL.md:75 -> S-template-quality | - Public claims: no compliance, certification or security claim without evidence the reviewer can check.
+SAMPLE spec ports/codex/wolftac-spec.md:116 -> S-filing | Wolftac Digital). Then create the issue: team `Wolftac Digital`, state `Todo`, label
+SAMPLE spec canonical/wolftac-spec/SKILL.md:78 -> S-draft |
+SAMPLE spec ports/codex/wolftac-spec.md:91 -> S-draft |
+SAMPLE spec ports/hermes/wolftac-spec/SKILL.md:117 -> S-template-evidence | |---|---|---|---|
+SAMPLE spec ports/hermes/wolftac-spec/SKILL.md:35 -> S-model |
+SAMPLE spec ports/codex/wolftac-spec.md:59 -> S-template-goals | ## Goals
+SAMPLE spec plugins/wolftac-factory/skills/wolftac-spec/SKILL.md:69 -> S-filing | label `Factory Queue`, selected priority (default Medium), estimate, and project
+SAMPLE spec ports/claude-desktop/wolftac-spec/SKILL.md:54 -> S-template-header | **Repo:** <absolute path or git URL> | **Priority:** <Urgent/High/Medium/Low> | **Estimate:** <points>
+SAMPLE spec canonical/wolftac-spec/SKILL.md:115 -> S-guardrails | - One feature per issue. Bundling unrelated work is a spec failure.
+SAMPLE spec ports/claude-desktop/wolftac-spec/SKILL.md:55 -> S-template-header |
+SAMPLE spec ports/hermes/wolftac-spec/SKILL.md:162 -> S-draft-workflow | every numbered review point, and record each round in one parent-issue comment. When the
+SAMPLE spec ports/claude-desktop/wolftac-spec/SKILL.md:109 -> S-proof | criteria as operator steps.
+SAMPLE spec ports/codex/wolftac-spec.md:35 -> S-contract | - Linear tool names vary by platform (`create_issue`/`update_issue` here vs `save_issue` elsewhere) — use your Linear MCP toolset'
+SAMPLE spec canonical/wolftac-spec/SKILL.md:42 -> S-discovery | - Cover: the problem and who has it, success criteria, scope boundaries, technical
+SAMPLE spec ports/claude-desktop/wolftac-spec/SKILL.md:65 -> S-template-technical | - **Key decisions:**
+SAMPLE spec ports/claude-desktop/wolftac-spec/SKILL.md:34 -> S-contract | platform (`save_issue` here vs `create_issue`/`update_issue` elsewhere).
+SAMPLE spec ports/hermes/wolftac-spec/SKILL.md:93 -> S-template-non-goals | ## Non-goals
+SAMPLE spec ports/hermes/wolftac-spec/SKILL.md:191 -> S-blocked-spec | - Amend in place: keep AC/NG IDs, tag changed items as amended, and append new IDs. Add non-goals that fence off the rejected opti
+TP1 build: 10 real Git pair diffs; 1083 distinct differing source lines; unmapped=0; multiply-mapped=0
+SAMPLE build ports/codex/wolftac-build.md:132 -> B-pickup | **PARKED-NEEDS-HUMAN-SKIP:** Skip any issue whose latest review report is
+SAMPLE build ports/claude-desktop/wolftac-build/SKILL.md:129 -> B-pickup | 1. **Pick up work.** `list_issues`: team `Wolftac Digital`, state `Todo`, label
+SAMPLE build ports/codex/wolftac-build.md:217 -> B-branch | branches in a checkout with user changes and never commit directly to main/master.
+SAMPLE build canonical/wolftac-build/SKILL.md:221 -> B-branch | Fetch the remote, then create a dedicated worktree for this issue from the current
+SAMPLE build ports/codex/wolftac-build.md:166 -> B-pickup | ends its hold. A blocker outside this run's lane cannot hold a repo in this run.
+SAMPLE build ports/hermes/wolftac-build/SKILL.md:230 -> B-dirty-preclaim | priority order. Use `git diff --stat` for unstaged changes, `git diff --cached --stat`
+SAMPLE build ports/codex/wolftac-build.md:265 -> B-pr | **PR-CREATE-CONTRACT:** After push and remote-SHA verification, create one
+SAMPLE build ports/claude-desktop/wolftac-build/SKILL.md:293 -> B-cleanup | artifacts (`node_modules`, `.next`, `tsconfig.tsbuildinfo`), then
+SAMPLE build plugins/wolftac-factory/skills/wolftac-build/SKILL.md:161 -> B-pickup | There is no timed expiry or pickup-time GitHub capacity probe.
+SAMPLE build plugins/wolftac-factory/skills/wolftac-build/SKILL.md:239 -> B-handoff | **BUILD REPORT**
+SAMPLE build canonical/wolftac-build/SKILL.md:291 -> B-pr |
+SAMPLE build plugins/wolftac-factory/skills/wolftac-build/SKILL.md:242 -> B-handoff | - **Verified:** <commands and results mapped to criteria>
+SAMPLE build ports/hermes/wolftac-build/SKILL.md:320 -> B-git-auth | Clear the inherited helper for that command only; do not edit persistent Git
+SAMPLE build ports/claude-desktop/wolftac-build/SKILL.md:196 -> B-claim | **CLAIM-DID-NOT-TAKE:** Distinguish your own failed claim from a lost race.
+SAMPLE build ports/claude-desktop/wolftac-build/SKILL.md:250 -> B-ci-capacity | flow (review handles queued checks as `waiting on CI`). On a capacity blocker,
+SAMPLE build canonical/wolftac-build/SKILL.md:148 -> B-pickup | A relay without the Discord message link does NOT clear the park.
+SAMPLE build ports/claude-desktop/wolftac-build/SKILL.md:2 -> B-entry | name: wolftac-build
+SAMPLE build plugins/wolftac-factory/skills/wolftac-build/SKILL.md:206 -> B-ci-capacity | through `gh api repos/<owner>/<repo>/check-runs/<id>/annotations`. Capacity is the
+SAMPLE build ports/hermes/wolftac-build/SKILL.md:182 -> B-pickup | `\` removed. A missing `Repo:` header follows the existing `BLOCKED:` path.
+SAMPLE build ports/hermes/wolftac-build/SKILL.md:378 -> B-pr | Otherwise run
+TP1 review: 10 real Git pair diffs; 1117 distinct differing source lines; unmapped=0; multiply-mapped=0
+SAMPLE review ports/codex/wolftac-review.md:95 -> R-claim | `assignee`, never in `delegate`. Before writing, resolve the operator's identity
+SAMPLE review ports/claude-desktop/wolftac-review/SKILL.md:80 -> R-pickup | Before choosing an unclaimed review, perform a read-first stale-claim sweep:
+SAMPLE review ports/codex/wolftac-review.md:180 -> R-verdict | - **FAIL** — any major defect (criterion unmet, design deviation, security issue,
+SAMPLE review canonical/wolftac-review/SKILL.md:152 -> R-ci | **CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repository has
+SAMPLE review ports/codex/wolftac-review.md:129 -> R-evidence | worktree that vanishes strands a `.git/worktrees/` entry in the target repo.
+SAMPLE review ports/hermes/wolftac-review/SKILL.md:204 -> R-operator | criterion as `[operator]` during review.
+SAMPLE review ports/hermes/wolftac-review/SKILL.md:9 -> R-entry | Use when asked to "review", "run the review stage", "QA the queue", or on a
+SAMPLE review ports/codex/wolftac-review.md:66 -> R-pickup | whose spec **Repo:** path is unreachable from this session's environment.
+SAMPLE review plugins/wolftac-factory/skills/wolftac-review/SKILL.md:106 -> R-verify | from scratch. Walk every criterion with observed evidence. Always check for new
+SAMPLE review plugins/wolftac-factory/skills/wolftac-review/SKILL.md:184 -> R-cleanup | stderr). On `Permission denied`, `rm -rf` each `.git/worktrees/<name>` prune names
+SAMPLE review canonical/wolftac-review/SKILL.md:222 -> R-verdict | FAIL; only product decisions may park an issue.**
+SAMPLE review ports/claude-desktop/wolftac-review/SKILL.md:3 -> R-entry | description: Factory stage 3 — QA the oldest Linear factory issue in In Review (team Wolftac Digital, label Factory Queue) against
+SAMPLE review ports/hermes/wolftac-review/SKILL.md:294 -> R-url-masking | `references/preview-bypass-secret-masking-review.md`.
+SAMPLE review ports/claude-desktop/wolftac-review/SKILL.md:147 -> R-ci | **CI-RED-BLOCKS-PASS:** Before any PASS verdict, determine whether the repo has a
+SAMPLE review ports/claude-desktop/wolftac-review/SKILL.md:201 -> R-report | - **Baseline checks:** <clean or findings>
+SAMPLE review canonical/wolftac-review/SKILL.md:79 -> R-pickup | `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or no later
+SAMPLE review ports/claude-desktop/wolftac-review/SKILL.md:41 -> R-contract | DIFFERENT agent/model than yourself when possible — the build report's Agent line
+SAMPLE review plugins/wolftac-factory/skills/wolftac-review/SKILL.md:151 -> R-verdict | - NEEDS HUMAN: any `[SCOPE-CONFLICT]` or finding requiring a product decision.
+SAMPLE review ports/hermes/wolftac-review/SKILL.md:156 -> R-claim | Use `mcp__linear__save_issue` to set `assignee: me`, keeping `In Review`.
+SAMPLE review ports/hermes/wolftac-review/SKILL.md:352 -> R-drift | **Content-drift reconciliation checks:** when an issue reconciles live/deployed
+TP1 integrate: 15 real Git pair diffs; 2320 distinct differing source lines; unmapped=0; multiply-mapped=0
+SAMPLE integrate ports/codex/wolftac-integrate.md:110 -> I-bot-access | python ~/.codex/prompts/wolftac-integrate-scripts/linear_bot.py issue WD-123
+SAMPLE integrate ports/claude-desktop/wolftac-integrate/SKILL.md:118 -> I-bot-access | python "$env:USERPROFILE\.claude\skills\wolftac-integrate\scripts\linear_bot.py" unclaim WD-123
+SAMPLE integrate ports/codex/wolftac-integrate.md:364 -> I-proof-pack | with the message id and permalink once it is sent.
+SAMPLE integrate canonical/wolftac-integrate/SKILL.md:366 -> I-proof-pack |
+SAMPLE integrate ports/codex/wolftac-integrate.md:217 -> I-claim | `delegate.id` still equals your bot viewer id. Exit 2 (`"claimed": false`) means
+SAMPLE integrate ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md:393 -> I-merge | SHA; anything else means merge nothing, report the verdict and reason, and stop.
+SAMPLE integrate ports/codex/wolftac-integrate.md:461 -> I-branchless | ```text
+SAMPLE integrate ports/claude-desktop/wolftac-integrate/SKILL.md:532 -> I-guardrails | approval → no Done.
+SAMPLE integrate plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md:248 -> I-gates | numbered defect report
+SAMPLE integrate plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md:449 -> I-branchless | 6-alt. **Land (approval path).** Run this step only on the verifier's `APPROVED` (exit 0) for the newest request.
+SAMPLE integrate canonical/wolftac-integrate/SKILL.md:506 -> I-branchless | the live deliverable again on this
+SAMPLE integrate plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md:455 -> I-branchless | the spec's **Test plan** (command gates via `run_gate.py run`, per GATE-RUNNER)
+SAMPLE integrate ports/hermes/wolftac-integrate/SKILL.md:81 -> I-identity | - **Worker Linear identity is the bot, enforced at the connection.** Every Linear
+SAMPLE integrate ports/claude-desktop/wolftac-integrate/SKILL.md:338 -> I-proof-pack | Require `isCrossRepository` `false`, the head repository equal to the spec's
+SAMPLE integrate ports/claude-desktop/wolftac-integrate/SKILL.md:445 -> I-merged-report | - **Merged:** <branch> @ <SHA> → <default branch> @ <new default SHA>
+SAMPLE integrate canonical/wolftac-integrate/SKILL.md:172 -> I-pickup | ### 1. Pick up work
+SAMPLE integrate ports/claude-desktop/wolftac-integrate/SKILL.md:64 -> I-notify | - **Approval requests go to Discord #approvals.** This surface has no supported
+SAMPLE integrate plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md:382 -> I-post-merge | Never pass `-Force`. Only skill/Markdown reference targets may be copied: stale
+SAMPLE integrate ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md:251 -> I-approval | any prior MERGE PROOF PACK. Locate the newest proof pack and the newest valid
+SAMPLE integrate ports/hermes/wolftac-integrate/SKILL.md:242 -> I-claim | mechanism. Do not "repair" this back to `assigneeId`. If `delegateId` is itself
+TP1 TOTAL pairs=45; differing-source-lines=5114; samples=80
+TP1 templates: 10 real Git extracted-body pair diffs; 127 distinct differing source lines; unmapped=0; multiply-mapped=0
+SAMPLE templates ports/hermes/wolftac-spec/SKILL.md:99 -> S-template-technical | - **APIs / interfaces:**
+SAMPLE templates canonical/wolftac-spec/spec-template.md:55 -> S-template-evidence |
+SAMPLE templates canonical/wolftac-spec/spec-template.md:41 -> S-template-quality | path, or use `N/A — <feature-specific reason>` when none are involved.
+SAMPLE templates plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md:64 -> S-template-notes | - Keep secrets in environment variables.
+SAMPLE templates canonical/wolftac-spec/spec-template.md:64 -> S-template-tests | cases to cover (happy path, edge, failure), and any manual checks with expected results.
+SAMPLE templates canonical/wolftac-spec/spec-template.md:13 -> S-template-non-goals | - NG-1: <Out-of-scope item>
+SAMPLE templates canonical/wolftac-spec/spec-template.md:57 -> S-template-evidence |
+SAMPLE templates plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md:14 -> S-template-flow |
+SAMPLE templates plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md:65 -> S-template-notes | - Follow repository instructions and document environment prerequisites.
+SAMPLE templates canonical/wolftac-spec/spec-template.md:68 -> S-template-notes | - Secrets go in .env / env vars — never hardcoded (this is checked at review).
+SAMPLE templates canonical/wolftac-spec/spec-template.md:53 -> S-template-evidence | are not required for review PASS. Do not rewrite existing specs or relabel unmet worker
+SAMPLE templates canonical/wolftac-spec/spec-template.md:26 -> S-template-criteria | - [ ] AC-1: <Independently testable criterion; prefer "user can X and sees Y" over "code does Z">
+SAMPLE templates canonical/wolftac-spec/spec-template.md:31 -> S-template-criteria |
+SAMPLE templates ports/codex/wolftac-spec.md:79 -> S-template-quality | - Data / migration: (schema/persisted-state changes and migration/rollback path,
+SAMPLE templates canonical/wolftac-spec/spec-template.md:19 -> S-template-technical | - **Entry points / affected files:** real paths verified against the repo, not guesses
+SAMPLE templates ports/claude-desktop/wolftac-spec/SKILL.md:66 -> S-template-technical | - **Dependencies:**
+SAMPLE templates plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md:21 -> S-template-technical | - **Dependencies:** libraries, environment variables, external services
+SAMPLE templates plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md:58 -> S-template-tests |
+SAMPLE templates canonical/wolftac-spec/spec-template.md:47 -> S-template-evidence | acceptance criterion must name an exact worker command or test that can prove it unattended,
+SAMPLE templates canonical/wolftac-spec/spec-template.md:50 -> S-template-evidence | do not file until resolved. Record the proof in the Evidence map column "Proven by (worker
+LOADERS spec/build/review: all lines classified; identical Linear dependency block
+TP2 rows=192; missing-decision=0; conflicts=12; sign-off=NOT CLAIMED
+TP3 hermes: rendered from core+overlay; baseline diff=0; sha256=6a98c1840bf3e86e59270eb331e2300f761de624013ca773dd8e6ae14f453b58
+TP3 codex: rendered from core+overlay; baseline diff=0; sha256=c7bf464d39474d1595677c33c92c1153c7f4c6ccad25461fe055425832148873
+NEGATIVE hole: rejected
+NEGATIVE duplicate: rejected
+NEGATIVE undecided: rejected
+NEGATIVE omitted-source: rejected canonical/wolftac-spec/spec-template.md
+NEGATIVE omitted-source: rejected plugins/wolftac-factory/skills/wolftac-build/agents/openai.yaml
+NEGATIVE omitted-source: rejected plugins/wolftac-factory/skills/wolftac-review/agents/openai.yaml
+NEGATIVE omitted-source: rejected plugins/wolftac-factory/skills/wolftac-spec/agents/openai.yaml
+NEGATIVE omitted-source: rejected plugins/wolftac-factory/skills/wolftac-spec/references/spec-template.md
+NEGATIVE unknown-file: rejected
+NEGATIVE script-hash: rejected
+NEGATIVE template-hole: rejected
+NEGATIVE template-duplicate: rejected
+TP4 changed paths=10; only docs/; LF-only
+PASS: mechanical coverage and rendering; semantic judgment/sign-off remain human review

@@ -186,6 +186,26 @@ foreach ($surface in $helperCopies.Keys) {
     }
 }
 
+# WD-646: Contract v1 ships next to each helper. Compare bytes, not normalized text.
+$canonicalContract = "canonical/wolftac-integrate/scripts/operate_contract.py"
+$contractHash = $null
+if (Read-RepoFile $canonicalContract) {
+    $contractHash = (Get-FileHash -LiteralPath (Join-Path $RepoRoot $canonicalContract) -Algorithm SHA256).Hash
+} else {
+    $errors.Add("$canonicalContract - OPERATE contract is missing or empty")
+}
+foreach ($helper in $helperCopies.Values) {
+    $copy = $helper -replace 'linear_bot\.py$', 'operate_contract.py'
+    if (Read-RepoFile $copy) {
+        $copyHash = (Get-FileHash -LiteralPath (Join-Path $RepoRoot $copy) -Algorithm SHA256).Hash
+        if ($contractHash -and $copyHash -ne $contractHash) {
+            $errors.Add("$copy - drifted from $canonicalContract; OPERATE contracts must be byte-identical")
+        }
+    } else {
+        $errors.Add("$copy - OPERATE contract is missing or empty")
+    }
+}
+
 # Gate runners are byte-identical, including the isolated Hermes surface. Do not
 # normalize line endings before hashing: byte drift itself must fail this check.
 $canonicalRunner = "canonical/wolftac-integrate/scripts/run_gate.py"

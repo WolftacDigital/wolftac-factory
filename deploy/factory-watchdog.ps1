@@ -80,6 +80,9 @@ param(
     [int]$WorkerMinIntervalMinutes = 120,
     [int]$NagHours = 12,
     [int]$RecentFailureHours = 6,
+    # WD-578: consecutive degraded Gatekeeper outputs, newest by write time.
+    [ValidateRange(1, 2147483647)]
+    [int]$DegradedTicks = 3,
     # WD-566: bounded completed-output history; zero threshold disables the check.
     [ValidateRange(0, 2147483647)]
     [int]$StuckRunThreshold = 3,
@@ -339,6 +342,53 @@ function Format-NeedsYou($Item) {
            elseif ($Item.Seconds -ge 60) { "$([math]::Floor($Item.Seconds / 60))m" }
            else { "$($Item.Seconds)s" }
     return "$($Item.Id)=$age($($Item.Reason))$suffix"
+}
+
+function Test-GatekeeperDegraded([string]$Dir) {
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return } # Existing cron check owns input failures.
+    $markers = @('FAIL-OPEN', 'discord-check-failed', 'LANE-ERROR')
+    foreach ($job in @($jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        # Keep the auth check's single-component guard; never traverse job paths.
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) {
+            Add-Report $Dir 'gatekeeper-degraded' 'skipped' 'output directory absent'
+            continue
+        }
+        try {
+            $files = @(Get-ChildItem -LiteralPath $outputDir -File -ErrorAction Stop |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending | Select-Object -First $DegradedTicks)
+            if ($files.Count -lt $DegradedTicks) {
+                Add-Report $Dir 'gatekeeper-degraded' 'skipped' "fewer than $DegradedTicks outputs"
+                continue
+            }
+            $allDegraded = $true
+            $seen = @{}
+            foreach ($file in $files) {
+                $output = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+                $degraded = $false
+                foreach ($marker in $markers) {
+                    if ($output -cmatch $marker) { $degraded = $true; $seen[$marker] = $true }
+                }
+                if (-not $degraded) { $allDegraded = $false }
+                # Read the whole selected window: a healthy file must not hide an
+                # unreadable one. Only allowlisted marker names leave this check.
+            }
+            if ($allDegraded) {
+                $names = ($markers | Where-Object { $seen.ContainsKey($_) }) -join ', '
+                Add-Finding "[$Dir] gatekeeper-degraded: the newest $DegradedTicks Gatekeeper outputs all report FAIL-OPEN, discord-check-failed or LANE-ERROR (seen: $names)"
+                Add-Report $Dir 'gatekeeper-degraded' 'FAIL' "$DegradedTicks degraded outputs (seen: $names)"
+            } else {
+                Add-Report $Dir 'gatekeeper-degraded' 'ok' "not all newest $DegradedTicks outputs are degraded"
+            }
+        } catch {
+            Add-Finding "[$Dir] gatekeeper-degraded: watchdog cannot read Gatekeeper output"
+            Add-Report $Dir 'gatekeeper-degraded' 'FAIL' 'output unreadable'
+            $script:readFailure = $true
+        }
+    }
 }
 
 function Test-LinearTokenExpiry {
@@ -945,13 +995,13 @@ function Invoke-LearnRetention {
 }
 
 # ── run the checks ───────────────────────────────────────────────────────────────
+foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-GatekeeperDegraded $dir }
 # Read the same scratch-scoped state before deciding whether liveness recovered.
 $statePath = Get-StatePath $CronDir[0]
 $prev = $null
 if (Test-Path -LiteralPath $statePath) {
     try { $prev = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { $prev = $null }
 }
-foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir }
 foreach ($dir in $CronDir) { Test-NeedsYou $dir }
 $needsYouList = @($needsYouItems.Values | Sort-Object { [System.Numerics.BigInteger]::Parse($_.Id.Substring(3)) }, Reason)
 foreach ($item in $needsYouList) {

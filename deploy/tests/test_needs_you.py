@@ -200,9 +200,18 @@ class NeedsYouWatchdogTests(unittest.TestCase):
     def seed(self, **state):
         self.state.write_text(json.dumps(state))
 
-    def run_script(self, value, dry=True, outbox=None):
+    def assert_open_findings_equal(self, actual, expected):
+        # PowerShell may trim fractional trailing zeros while round-tripping JSON.
+        # Preserve identities and first-seen instants, not their string spelling.
+        self.assertEqual(actual.keys(), expected.keys())
+        for key in actual:
+            self.assertEqual(datetime.fromisoformat(actual[key]),
+                             datetime.fromisoformat(expected[key]), key)
+
+    def run_script(self, value, dry=True, outbox=None, degraded=False):
         segment = '' if value is None else 'needs-you: ' + value + '; '
-        self.report.write_text('gatekeeper: build: idle; ' + segment + 'audit: clean\n', encoding='utf-8')
+        lane = 'FAIL-OPEN' if degraded else 'idle'
+        self.report.write_text('gatekeeper: build: ' + lane + '; ' + segment + 'audit: clean\n', encoding='utf-8')
         before = self.state.read_bytes() if self.state.exists() else None
         inputs = {p: p.read_bytes() for p in (self.report, self.expiry, self.cron / 'jobs.json')}
         args = [PWSH, '-NoProfile', '-NonInteractive', '-File', str(ROOT / 'deploy/factory-watchdog.ps1'),
@@ -280,7 +289,7 @@ class NeedsYouWatchdogTests(unittest.TestCase):
                 code, text = self.run_script(value, dry=False)
                 self.assertEqual(code, 1, text)
                 after = json.loads(self.state.read_text(encoding='utf-8-sig'))
-                self.assertEqual(after['open_findings'], initial['open_findings'])
+                self.assert_open_findings_equal(after['open_findings'], initial['open_findings'])
                 self.assertEqual(after['finding_texts'], initial['finding_texts'])
                 self.assertEqual(after['status'], 'unhealthy')
                 self.assertEqual(datetime.fromisoformat(after['needs_you_last_digest_at']),
@@ -291,7 +300,7 @@ class NeedsYouWatchdogTests(unittest.TestCase):
         code, text = self.run_script('WD-547=2082594s(parked)', dry=False)
         self.assertEqual(code, 1, text)
         after = json.loads(self.state.read_text(encoding='utf-8-sig'))
-        self.assertEqual(after['open_findings'][key], initial['open_findings'][key])
+        self.assert_open_findings_equal(after['open_findings'], initial['open_findings'])
         self.assertEqual(len(list(self.outbox.glob('*.txt'))), 3)
         self.assertEqual(sum('new: needs-you:' in p.read_text() for p in self.outbox.glob('*.txt')), 1)
         self.run_script('none', dry=False)
@@ -311,13 +320,13 @@ class NeedsYouWatchdogTests(unittest.TestCase):
         self.assertEqual(code, 1, text)
         state = json.loads(self.state.read_text(encoding='utf-8-sig'))
         self.assertEqual(len(state['open_findings']), 2)
-        self.assertEqual(state['open_findings'][key], initial['open_findings'][key])
+        self.assert_open_findings_equal({key: state['open_findings'][key]}, initial['open_findings'])
         jobs['jobs'][0]['last_status'] = 'ok'
         job_file.write_text(json.dumps(jobs))
         code, text = self.run_script('unknown', dry=False)
         self.assertEqual(code, 1, text)
-        self.assertEqual(json.loads(self.state.read_text(encoding='utf-8-sig'))['open_findings'],
-                         initial['open_findings'])
+        self.assert_open_findings_equal(json.loads(self.state.read_text(encoding='utf-8-sig'))['open_findings'],
+                                       initial['open_findings'])
         messages = '\n'.join(p.read_text() for p in self.outbox.glob('*.txt'))
         self.assertIn('new: [', messages)
         self.assertIn('recovered: [', messages)
@@ -335,6 +344,41 @@ class NeedsYouWatchdogTests(unittest.TestCase):
         self.assertEqual(code, 1, text)
         state = json.loads(self.state.read_text(encoding='utf-8-sig'))
         self.assertEqual(list(state['open_findings']), ['needs-you|WD-2|parked'])
+
+    def test_degraded_ticks_and_needs_you_recover_independently(self):
+        # Current-main WD-578 must remain active alongside the WD-628 hold.
+        for number in (1, 2):
+            old = self.output / f'older-{number}.txt'
+            old.write_text('gatekeeper: build: FAIL-OPEN; needs-you: unknown; audit: clean\n')
+            os.utime(old, (number, number))
+        value = 'WD-1=5h(blocked-question)'
+        code, text = self.run_script(value, degraded=True)
+        self.assertEqual(code, 1, text)
+        self.assertEqual(text.count('  - needs-you:'), 1)
+        self.assertIn('gatekeeper-degraded: the newest 3', text)
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.outbox.exists())
+        code, text = self.run_script(value, dry=False, degraded=True)
+        self.assertEqual(code, 1, text)
+        initial = json.loads(self.state.read_text(encoding='utf-8-sig'))
+        key = 'needs-you|WD-1|blocked-question'
+        self.assertEqual(len(initial['open_findings']), 2)
+        self.assertIn(key, initial['open_findings'])
+        self.assertEqual(len(list(self.outbox.glob('*.txt'))), 2)
+        # Healthy output closes degradation, but an unknown wait is not recovery.
+        code, text = self.run_script('unknown', dry=False)
+        self.assertEqual(code, 1, text)
+        after = json.loads(self.state.read_text(encoding='utf-8-sig'))
+        self.assert_open_findings_equal(after['open_findings'], {key: initial['open_findings'][key]})
+        messages = '\n'.join(p.read_text() for p in self.outbox.glob('*.txt'))
+        self.assertIn('recovered: [', messages)
+        self.assertIn('gatekeeper-degraded:', messages)
+        self.assertNotIn('recovered: needs-you:', messages)
+        self.assertEqual(len(list(self.outbox.glob('*.txt'))), 3)
+        code, text = self.run_script('none', dry=False)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(json.loads(self.state.read_text(encoding='utf-8-sig'))['open_findings'], {})
+        self.assertEqual(len(list(self.outbox.glob('*.txt'))), 4)
 
     def test_precise_linear_timestamps_render_human_ages_without_losing_thresholds(self):
         now = datetime(2026, 11, 14, 23, 22, 41, 987654, tzinfo=timezone.utc)
