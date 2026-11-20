@@ -7,6 +7,49 @@ unchanged blocked queue must not dispatch another silent worker on every tick.
 WD-620 adds bounded retries for eligible build work and one recovery dispatch
 after a degraded period, so an outage cannot strand an unchanged ready queue.
 
+## Keeping the live copies on main
+
+`deploy/factory-sync.py` is an operator-only, stdlib no-agent job. It is not
+called by build, review or integrate, and it does not restart anything. After
+Jonathan creates the `Wolftac Factory Sync` job on the default profile at a
+30-minute interval, it reports exactly one `sync:` line per run (exit 0).
+No scheduled job is installed by this change. First run `--dry-run` and have a
+person read it; after the next merge authorized by Jonathan's verified Discord
+reaction, verify both checkout HEADs and the reported SHA (WD-672 operator AC-12/AC-13).
+
+The main clone is checked before the live checkout. For each, the origin URL must
+match the pinned `--expected-remote`; fetch has a 120-second limit. Dirty trees
+and diverged histories are skipped without reset, stash, clean or force. A clean
+ancestor advances only with `git merge --ff-only origin/main`. The live checkout
+also waits while any lane is in flight: the lane map and TTL are imported from
+the adjacent Gatekeeper, and marker time plus the profile job's `last_run_at`
+determine whether it is still active. Unreadable state/jobs fail closed. This is
+an observation of the existing Gatekeeper markers, not a new scheduler or lease.
+
+Only a current/updated main clone can supply installed bytes. Gatekeeper and
+approval policy are compared byte-for-byte, backed up as `.bak-<UTC
+YYYYmmddTHHMMSSZ>`, then atomically replaced in the scripts directory. Retain the
+five newest matching backups per file; unrelated names are untouched. An install
+failure reports its exception type, never the exception text. The protected
+watchdog's five files are only hashed and counted, never written or elevated.
+
+All locations have explicit overrides: `--main-clone`, `--live`, `--scripts-dir`,
+`--watchdog-dir`, `--gatekeeper-state`, `--hermes-home`, `--expected-remote`.
+Build/review must provide scratch values for every flag, using a local bare
+remote. Defaults are the existing Factory/main/live/scripts/protected locations;
+the state defaults to `cron/gatekeeper-state.json` under `--hermes-home`.
+
+`--dry-run` uses `git ls-remote`, never fetch, merge, install or backup. It reports
+`would-update` without downloading missing commit objects; ancestry is definitive
+only in the real run after fetch. `would-install` is likewise an intent when the
+main clone would advance, not proof of remote-file parity. Protected-file hashes
+in dry run describe the currently present main clone. No live files, jobs or
+credentials need to be read for the synthetic test plan.
+
+Rollback is an approved revert plus operator removal of the sync job. Keep the
+installed-file backups for manual recovery. The script never moves a checkout
+backward and never executes `deploy.ps1`; copy-deployed skills remain WD-632.
+
 ## How it works
 
 `deploy/factory-gatekeeper.py` is canonical. The manually installed copy is

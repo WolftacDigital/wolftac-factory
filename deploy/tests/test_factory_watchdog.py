@@ -148,6 +148,78 @@ class WatchdogTests(unittest.TestCase):
         self.assertFalse(self.outbox.exists(), "DryRun must not attempt alert delivery")
         return result.returncode, text
 
+    def sync_history(self, values, hours=6, job_id="sync-672"):
+        jobs_path = self.cron / "jobs.json"
+        jobs = json.loads(jobs_path.read_text())
+        jobs["jobs"] = [j for j in jobs["jobs"] if j["name"] != "Wolftac Factory Sync"]
+        jobs["jobs"].append({"id": job_id, "name": "Wolftac Factory Sync", "enabled": True,
+                             "paused": False, "last_status": "ok", "schedule": {"minutes": 30},
+                             "next_run_at": timestamp(1)})
+        jobs_path.write_text(json.dumps(jobs))
+        folder = self.cron / "output/sync-672"
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.iterdir():
+            old.unlink()
+        now = time.time() - 2
+        for i, value in enumerate(values):
+            file = folder / f"{i:02}.txt"
+            file.write_text(value, encoding="utf-8")
+            at = now - i * hours * 3600 / max(len(values) - 1, 1)
+            os.utime(file, (at, at))
+
+    def test_sync_ac10_six_hour_failure_and_progress(self):
+        line = "sync: main-clone: current 1234567; live: dirty (1 files) -> skipped; gatekeeper: current; policy: current; watchdog-files: current"
+        self.sync_history([line] * 6)
+        code, text = self.run_watchdog()
+        expected = f"- [{self.cron}] factory-sync: live has not been updated for 6h (dirty)"
+        self.assertEqual(findings(text), [expected])
+        self.assertEqual(code, 1)
+        self.sync_history([line.replace("dirty (1 files) -> skipped", "lanes-in-flight (build) -> skipped")] * 6)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        rows = [line] * 6
+        rows[2] = line.replace("dirty (1 files) -> skipped", "updated 1234567")
+        self.sync_history(rows)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        self.sync_history([line] * 6, hours=5)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+
+    def test_sync_ac10_protected_24_not_23_hours(self):
+        line = "sync: main-clone: current 1234567; live: current 1234567; gatekeeper: current; policy: current; watchdog-files: stale (1 of 5)"
+        self.sync_history([line] * 6, hours=24)
+        self.assertEqual(findings(self.run_watchdog()[1]), [f"- [{self.cron}] factory-sync: protected watchdog files are stale (1 of 5); run the elevated files-only refresh"])
+        self.sync_history([line] * 6, hours=23)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        rows = [line] * 6
+        rows[3] = line.replace("stale (1 of 5)", "current")
+        self.sync_history(rows, hours=24)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+
+    def test_sync_missing_fewer_unsafe_id_and_untrusted_output(self):
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        line = "sync: live: dirty (1 files) -> skipped"
+        self.sync_history([line] * 5)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        self.sync_history([line] * 6, job_id="../sync-672")
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        self.sync_history([line] * 6)
+        shutil.rmtree(self.cron / "output/sync-672")
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        for invalid in ("prefix " + line, "sync: live: dirty; live: current", "sync: live: dirty SECRET", "sync: live: arbitrary-secret"):
+            with self.subTest(invalid=invalid):
+                self.sync_history([invalid] * 6)
+                text = self.run_watchdog()[1]
+                self.assertEqual(findings(text), [])
+                self.assertNotIn("SECRET", text)
+                self.assertNotIn("arbitrary-secret", text)
+
+    def test_sync_all_allowlisted_failure_targets(self):
+        for target, reason in (("main-clone", "diverged"), ("main-clone", "remote-mismatch"),
+                               ("live", "fetch-failed"), ("live", "ff-failed"),
+                               ("gatekeeper", "install-failed"), ("policy", "install-failed")):
+            with self.subTest(target=target, reason=reason):
+                self.sync_history([f"sync: {target}: {reason}"] * 6)
+                self.assertEqual(findings(self.run_watchdog()[1]), [f"- [{self.cron}] factory-sync: {target} has not been updated for 6h ({reason})"])
+
     def test_expiry_matrix(self):
         cases = [(timestamp(10), None), (timestamp(2), "expires"), (None, "missing"),
                  ("not-a-date", "unparseable"), ("", "missing"), (timestamp(-1), "expires"),
