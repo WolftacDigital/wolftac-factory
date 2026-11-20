@@ -297,6 +297,39 @@ function Test-WorkerStuckRuns([string]$Dir) {
     }
 }
 
+$providerHoldScopes = @{}
+function Test-ProviderHolds([string]$Dir) {
+    # Missing/invalid output is unknown, not recovery. Never copy error text.
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return }
+    foreach ($job in @($jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $folder = Join-Path (Join-Path $Dir 'output') "$id"
+        try {
+            $file = Get-ChildItem -LiteralPath $folder -File -ErrorAction Stop |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending | Select-Object -First 1
+            if (-not $file) { continue }
+            $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+            $segments = [regex]::Matches($text, '(?m)(?:^gatekeeper: |; )provider-holds: ([^;\r\n]+)')
+            if ($segments.Count -ne 1) { continue }
+            $value = $segments[0].Groups[1].Value.Trim()
+            $held = @{}
+            if ($value -ne 'none') {
+                foreach ($item in ($value -split ',')) {
+                    if ($item -cnotmatch '^([a-z0-9][a-z0-9_-]{0,63}) until (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00))$') {
+                        throw 'invalid inventory'
+                    }
+                    $provider = $Matches[1]
+                    $until = [datetimeoffset]::Parse($Matches[2]).UtcDateTime.ToString('o')
+                    $held[$provider] = $until
+                }
+            }
+            $script:providerHoldScopes[$Dir] = $held
+        } catch { continue }
+    }
+}
+
 function Test-NeedsYou([string]$Dir) {
     $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
     foreach ($job in @($jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
@@ -1063,6 +1096,7 @@ function Invoke-LearnRetention {
 
 # ── run the checks ───────────────────────────────────────────────────────────────
 foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-GatekeeperDegraded $dir; Test-FactorySync $dir }
+foreach ($dir in $CronDir) { Test-ProviderHolds $dir }
 # Read the same scratch-scoped state before deciding whether liveness recovered.
 $statePath = Get-StatePath $CronDir[0]
 $prev = $null
@@ -1103,6 +1137,26 @@ if (-not $DryRun) {
         if ($digest.skip) { continue }
         try { [IO.File]::WriteAllLines($digest.path, [string[]]$digest.lines, [Text.UTF8Encoding]::new($false)) }
         catch { Add-Finding "[$($CronDir[0])] digest-$($digest.name): cannot write latest diagnostic file" }
+    }
+}
+$providerHoldFindings = @()
+foreach ($dir in $CronDir) {
+    if (-not $providerHoldScopes.ContainsKey($dir)) {
+        $old = Get-Prop (Get-Prop $prev 'provider_hold_scopes') $dir
+        $held = @{}
+        if ($old) {
+            foreach ($p in $old.PSObject.Properties) {
+                if ($p.Name -cmatch '^[a-z0-9][a-z0-9_-]{0,63}$') {
+                    try { $held[$p.Name] = [datetimeoffset]::Parse($p.Value).UtcDateTime.ToString('o') } catch { }
+                }
+            }
+        }
+        $providerHoldScopes[$dir] = $held
+    }
+    foreach ($provider in @($providerHoldScopes[$dir].Keys | Sort-Object)) {
+        $finding = "[$dir] provider-hold ${provider}: until $($providerHoldScopes[$dir][$provider]) (including release probe)"
+        $providerHoldFindings += $finding
+        Add-Finding $finding
     }
 }
 $healthy = ($findings.Count -eq 0 -and $needsYouHeld.Count -eq 0)
@@ -1177,7 +1231,7 @@ $deliveryFailures = @{}
 $lastDelivery = @{}
 $oldFailures = Get-Prop $prev 'delivery_failure'
 if ($oldFailures) {
-    foreach ($key in @('liveness', 'config', 'drift', 'learn')) {
+    foreach ($key in @('liveness', 'config', 'drift', 'learn', 'provider')) {
         $entry = Get-Prop $oldFailures $key
         if ($entry -and (Get-Prop $entry 'message') -and (Get-Prop $entry 'status')) {
             $deliveryFailures[$key] = @{
@@ -1204,6 +1258,7 @@ $message = $null
 $mention = "<@1022999767753691186>"
 
 function Get-FindingKey([string]$Text) {
+    if ($Text -match '^(\[.+?\] provider-hold [a-z0-9][a-z0-9_-]{0,63}):') { return $Matches[1] }
     if ($Text -cmatch '^needs-you: (WD-[0-9]+)=[0-9]+[dhms]\((blocked-question|parked)\)') {
         return "needs-you|$($Matches[1])|$($Matches[2])"
     }
@@ -1256,7 +1311,7 @@ if ($added.Count -or $removed.Count) {
     } else {
         ":warning: *Factory watchdog: the worker loops need attention* $mention`n$($lines -join "`n")`n$($openFindings.Count) liveness finding(s) still open."
     }
-} elseif ($findings.Count -gt 0) {
+} elseif (-not $healthy -and @($findings | Where-Object { $_ -notmatch '^\[.+?\] provider-hold ' }).Count) {
     $hoursSince = if ($prevAlert) { ($now - [datetime]::Parse($prevAlert)).TotalHours } else { [double]::MaxValue }
     if ($hoursSince -ge $NagHours) {
         $shouldPost = $true
@@ -1286,6 +1341,15 @@ $configMessage = if ($configStatus -eq 'warning') {
     ":wrench: *Factory configuration warning* (not a worker outage)`n$($configFindings -join "`n")"
 } else { ':white_check_mark: *Factory configuration recovered*' }
 $configDelivered = Send-Concern 'config' $configShouldPost $configMessage $configStatus
+
+# One stable incident above, plus a daily digest using the existing sender.
+# A failed send never consumes the cadence; the default liveness nag must not
+# repeat a provider-only hold every 12 hours.
+$prevProviderAlert = Get-Prop $prev 'provider_hold_last_alert_at'
+$providerHours = if ($prevProviderAlert) { ($now - [datetime]::Parse($prevProviderAlert)).TotalHours } else { [double]::MaxValue }
+$providerShouldPost = $providerHoldFindings.Count -gt 0 -and $providerHours -ge 24
+$providerMessage = ":hourglass: *Factory provider hold daily digest*`n$($providerHoldFindings -join "`n")"
+$providerDelivered = Send-Concern 'provider' $providerShouldPost $providerMessage $(if ($providerHoldFindings.Count) { 'held' } else { 'clear' })
 
 # ── drift alerting, on its own transition ────────────────────────────────────────
 # Post on transition, daily digest while unresolved, one
@@ -1486,6 +1550,8 @@ $newState = [ordered]@{
     config_findings     = @($configFindings)
     config_last_alert_at = if ($lastDelivery.ContainsKey('config')) { $lastDelivery['config'] } else { $prevConfigAlert }
     last_alert_at       = if ($lastDelivery.ContainsKey('liveness')) { $lastDelivery['liveness'] } else { $prevAlert }
+    provider_hold_scopes = $providerHoldScopes
+    provider_hold_last_alert_at = if ($lastDelivery.ContainsKey('provider')) { $lastDelivery['provider'] } else { $prevProviderAlert }
     # Drift state rides alongside liveness state in the same disposable sidecar.
     # -SkipDrift carries the previous drift state forward untouched rather than
     # asserting "clean" for a check that never ran.
@@ -1512,7 +1578,7 @@ try {
     exit 4
 }
 
-if (-not $delivered -or -not $configDelivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered -or -not $needsYouDelivered) { exit 3 }
+if (-not $delivered -or -not $configDelivered -or -not $driftDelivered -or -not $learnDelivered -or -not $auditDelivered -or -not $providerDelivered -or -not $needsYouDelivered) { exit 3 }
 # Drift and pending /learn edits deliberately do NOT change the exit code: a drifted-but-running factory is
 # not an outage, and Task Scheduler's Last Result is the liveness signal (AC-3).
 exit ($healthy ? 0 : 1)

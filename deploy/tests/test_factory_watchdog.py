@@ -183,6 +183,23 @@ class WatchdogTests(unittest.TestCase):
         self.sync_history([line] * 6, hours=5)
         self.assertEqual(findings(self.run_watchdog()[1]), [])
 
+    def test_sync_and_provider_hold_checks_both_run_after_main_merge(self):
+        line = "sync: main-clone: current 1234567; live: dirty (1 files) -> skipped; gatekeeper: current; policy: current; watchdog-files: current"
+        self.sync_history([line] * 6)
+        until = (datetime.now(timezone.utc) + timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
+        self.output("provider.txt", "gatekeeper: build: idle; provider-holds: provider-a until " + until)
+        sync_finding = f"- [{self.cron}] factory-sync: live has not been updated for 6h (dirty)"
+        provider_finding = f"- [{self.cron}] provider-hold provider-a: until {until} (including release probe)"
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1, text)
+        self.assertEqual(findings(text), [sync_finding, provider_finding])
+        # Neither dispatch may be dropped when resolving the shared checks loop.
+        self.sync_history([line.replace("dirty (1 files) -> skipped", "updated 1234567")] * 6)
+        self.assertEqual(findings(self.run_watchdog()[1]), [provider_finding])
+        self.sync_history([line] * 6)
+        self.output("provider.txt", "gatekeeper: build: idle; provider-holds: none")
+        self.assertEqual(findings(self.run_watchdog()[1]), [sync_finding])
+
     def test_sync_ac10_protected_24_not_23_hours(self):
         line = "sync: main-clone: current 1234567; live: current 1234567; gatekeeper: current; policy: current; watchdog-files: stale (1 of 5)"
         self.sync_history([line] * 6, hours=24)
