@@ -246,6 +246,78 @@ class SyncTests(unittest.TestCase):
             self.assertFalse(sys.dont_write_bytecode)
         self.assertEqual(before, self.snapshot())
 
+    def installed_layout(self):
+        scripts = self.home / "scripts"
+        scripts.mkdir()
+        entry = scripts / "factory-sync.py"
+        shutil.copyfile(SCRIPT, entry)
+        gatekeeper = ROOT / "deploy/factory-gatekeeper.py"
+        shutil.copyfile(gatekeeper, scripts / "factory_gatekeeper.py")
+        shutil.copyfile(gatekeeper, self.seed / "deploy/factory-gatekeeper.py")
+        self.cmd(self.seed, "add", ".")
+        self.cmd(self.seed, "commit", "-m", "scratch installed layout")
+        self.cmd(self.seed, "push", "origin", "main")
+        self.head = self.cmd(self.seed, "rev-parse", "HEAD")
+        argv = list(self.argv)
+        argv[argv.index("--scripts-dir") + 1] = str(scripts)
+        return entry, argv
+
+    def installed_run(self, entry, argv, *extra):
+        result = subprocess.run([sys.executable, "-B", str(entry), *argv, *extra],
+                                capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertTrue(result.stdout.startswith("sync: main-clone: "))
+        self.assertNotIn(str(self.root), result.stdout)
+        self.assertNotIn("IMPORT-SENTINEL", result.stdout)
+        return result.stdout
+
+    def test_installed_scripts_layout_updates_then_current(self):
+        entry, argv = self.installed_layout()
+        self.assertFalse(entry.with_name("factory-gatekeeper.py").exists())
+        text = self.installed_run(entry, argv)
+        for name, clone in (("main-clone", self.primary), ("live", self.live)):
+            self.assertIn(f"{name}: updated {self.head[:7]}", text)
+            self.assertEqual(self.cmd(clone, "rev-parse", "HEAD"), self.head)
+        again = self.installed_run(entry, argv)
+        self.assertIn(f"live: current {self.head[:7]}", again)
+        self.assertIn("gatekeeper: current", again)
+
+    def test_installed_scripts_layout_dry_run_and_inflight(self):
+        entry, argv = self.installed_layout()
+        before = self.snapshot()
+        text = self.installed_run(entry, argv, "--dry-run")
+        self.assertIn("live: would-update", text)
+        self.assertEqual(before, self.snapshot())
+        self.marker()
+        text = self.installed_run(entry, argv)
+        self.assertIn("live: lanes-in-flight (build) -> skipped", text)
+        self.assertEqual(self.cmd(self.live, "rev-parse", "HEAD"), self.base)
+
+    def test_installed_gatekeeper_load_failures_are_sanitized_and_closed(self):
+        entry, argv = self.installed_layout()
+        dependency = entry.with_name("factory_gatekeeper.py")
+        for source in (None, "invalid syntax IMPORT-SENTINEL",
+                       "raise RuntimeError('IMPORT-SENTINEL')\n", "DEFAULT_JOB_MAP = {}\n"):
+            with self.subTest(source=source):
+                if source is None:
+                    dependency.unlink()
+                else:
+                    dependency.write_text(source)
+                before = self.snapshot()
+                text = self.installed_run(entry, argv, "--dry-run")
+                self.assertIn("main-clone: would-update", text)
+                self.assertIn("live: ff-failed -> skipped", text)
+                self.assertEqual(before, self.snapshot())
+        # A real run may repair the installed dependency but never moves live
+        # using missing definitions; a later tick can re-evaluate safely.
+        text = self.installed_run(entry, argv)
+        self.assertIn("main-clone: updated", text)
+        self.assertIn("live: ff-failed -> skipped", text)
+        self.assertEqual(self.cmd(self.live, "rev-parse", "HEAD"), self.base)
+        self.assertIn("live: updated", self.installed_run(entry, argv))
+
     def test_ac9_fetch_failure_and_main_skip_no_install(self):
         original = sync.git
         def failing(repo, *args):

@@ -13,18 +13,32 @@ after a degraded period, so an outage cannot strand an unchanged ready queue.
 called by build, review or integrate, and it does not restart anything. After
 Jonathan creates the `Wolftac Factory Sync` job on the default profile at a
 30-minute interval, it reports exactly one `sync:` line per run (exit 0).
-No scheduled job is installed by this change. First run `--dry-run` and have a
-person read it; after the next merge authorized by Jonathan's verified Discord
-reaction, verify both checkout HEADs and the reported SHA (WD-672 operator AC-12/AC-13).
+No scheduled job is installed by this change. As part of operator AC-12, copy
+`deploy/factory-sync.py` from the merged checkout to the default profile's
+`HERMES_HOME/scripts/factory-sync.py` (normally
+`%LOCALAPPDATA%/hermes/scripts/factory-sync.py`). The no-agent job's script is
+`factory-sync.py`, relative to that scripts directory, not an absolute repository
+path or a symlink out of it. Its adjacent installed dependency is
+`factory_gatekeeper.py`, copied from `deploy/factory-gatekeeper.py` by the existing
+Gatekeeper operator setup; keep `approval-policy.json` alongside it. Do not rename
+the installed Gatekeeper or create a second hyphen-named installed copy.
+First run `--dry-run` and have a person read it; after the next merge authorized
+by Jonathan's verified Discord reaction, verify both checkout HEADs and the
+reported SHA (WD-672 operator AC-12/AC-13).
 
 The main clone is checked before the live checkout. For each, the origin URL must
 match the pinned `--expected-remote`; fetch has a 120-second limit. Dirty trees
 and diverged histories are skipped without reset, stash, clean or force. A clean
 ancestor advances only with `git merge --ff-only origin/main`. The live checkout
 also waits while any lane is in flight: the lane map and TTL are imported from
-the adjacent Gatekeeper, and marker time plus the profile job's `last_run_at`
-determine whether it is still active. Unreadable state/jobs fail closed. This is
-an observation of the existing Gatekeeper markers, not a new scheduler or lease.
+the adjacent Gatekeeper (`factory-gatekeeper.py` in the repository, otherwise
+`factory_gatekeeper.py` in the installed layout), and marker time plus the profile
+job's `last_run_at` determine whether it is still active. If that module cannot
+load or lacks required definitions, live is left untouched with the fixed segment
+`live: ff-failed -> skipped`; the main clone can still update and repair the
+installed dependency for the next tick. No import exception text or path is
+printed. Unreadable state/jobs fail closed. This is an observation of the existing
+Gatekeeper markers, not a new scheduler or lease.
 
 Only a current/updated main clone can supply installed bytes. Gatekeeper and
 approval policy are compared byte-for-byte, backed up as `.bak-<UTC

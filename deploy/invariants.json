@@ -1,5 +1,31 @@
 [
   {
+    "id": "review-never-silent",
+    "description": "Every review surface forbids human authentication, time-boxes commands and reports interruption without a false verdict.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-review/SKILL.md",
+        "pattern": "REVIEW-NEVER-SILENT"
+      },
+      {
+        "file": "ports/hermes/wolftac-review/SKILL.md",
+        "pattern": "REVIEW-NEVER-SILENT"
+      },
+      {
+        "file": "ports/codex/wolftac-review.md",
+        "pattern": "REVIEW-NEVER-SILENT"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-review/SKILL.md",
+        "pattern": "REVIEW-NEVER-SILENT"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-review/SKILL.md",
+        "pattern": "REVIEW-NEVER-SILENT"
+      }
+    ]
+  },
+  {
     "id": "build-never-silent",
     "description": "Every build surface forbids human authentication, time-boxes commands, reports interrupted work and preserves recovery.",
     "checks": [

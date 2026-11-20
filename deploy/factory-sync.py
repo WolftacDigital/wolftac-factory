@@ -41,8 +41,12 @@ def checked(repo, *args):
 
 def load_gatekeeper():
     # Import definitions only, never main(), read_token(), or any dispatch path.
+    # Repository spelling differs from the operator-installed script spelling.
+    path = Path(__file__).with_name("factory-gatekeeper.py")
+    if not path.exists():
+        path = Path(__file__).with_name("factory_gatekeeper.py")
     spec = importlib.util.spec_from_file_location(
-        "factory_sync_gatekeeper", Path(__file__).with_name("factory-gatekeeper.py"))
+        "factory_sync_gatekeeper", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     previous = sys.dont_write_bytecode
@@ -92,6 +96,10 @@ def inflight(state_path, home, gatekeeper):
 
 
 def checkout(name, repo, args, gatekeeper):
+    if name == "live" and gatekeeper is None:
+        # No lane definitions means no proof that live is idle. Use the existing
+        # fixed failure vocabulary; never expose the import exception or path.
+        return "ff-failed -> skipped"
     try:
         if checked(repo, "remote", "get-url", "origin") != args.expected_remote:
             return "remote-mismatch -> skipped"
@@ -226,7 +234,14 @@ def main(argv=None):
     args = parser().parse_args(argv)
     if args.gatekeeper_state is None:
         args.gatekeeper_state = args.hermes_home / "cron/gatekeeper-state.json"
-    gatekeeper = load_gatekeeper()
+    try:
+        gatekeeper = load_gatekeeper()
+        # An incomplete installed module is also an unavailable safety guard.
+        for attribute in ("DEFAULT_JOB_MAP", "INFLIGHT_TTL_MINUTES", "lane_entry",
+                          "profile_jobs_path", "parse_ts"):
+            getattr(gatekeeper, attribute)
+    except Exception:
+        gatekeeper = None
     primary = checkout("main-clone", args.main_clone, args, gatekeeper)
     live = checkout("live", args.live, args, gatekeeper)
     source = args.main_clone / "deploy"
