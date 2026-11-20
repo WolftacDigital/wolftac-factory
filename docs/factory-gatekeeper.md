@@ -153,6 +153,69 @@ file; output adds `state: save-failed (<ExceptionType>)`, never the exception te
 The exit code remains 0. An interrupted JSON write cannot truncate the old
 in-flight markers. Dry-run creates no temporary file and writes no state.
 
+### Provider usage-limit holds (WD-630)
+
+Before dispatch, read each mapped job's pinned `provider` and completed outcome
+from its profile's `jobs.json`. There is no account lookup or credential access.
+Provider slugs must match `[a-z0-9][a-z0-9_-]{0,63}`. Missing, duplicate or unreadable
+job metadata creates no new hold; legacy unpinned jobs retain the old behavior.
+Match `usage limit`, `usage-limit`, `HTTP 429`, `rate limit` or `rate-limit` in
+`last_failure.detail`, using `last_failure.at` as the failure identity. Raw error
+text is never stored or printed. A later `last_run_at` with a terminal status
+(`ok`, `success`, `error`, `interrupted`, `delivery_failed` or `cancelled`)
+supersedes the retained historical failure. A failure at or after that timestamp
+still wins; delivery failure and cancellation do not themselves indicate a usage limit.
+
+`provider_holds[provider]` stores `since`, `until`, the next no-reset duration
+`step`, a completed-outcome `observed_at` watermark, and an optional `probe`.
+Each new consecutive failure without a reset holds for 60, 120, 240, then 480
+minutes, capped at 480. Re-reading the same failure does not extend the deadline
+or advance the step. A non-usage-limit completed outcome resets the step to 60.
+An explicit `last_failure.reset_at`, or a timezone-qualified ISO timestamp after
+`reset`, `resets`, or `reset_at` in the detail, takes precedence without using or
+advancing the step. Unparseable reset text falls back to the bounded escalation.
+
+While held, lanes on that provider print
+`<lane>: provider-hold (<provider> until <HH:MM>Z) -> skipped`.
+Other providers continue normally. At the deadline, exactly one ready lane probes
+the route, preferring integrate when it has work. A successful launch reserves
+that probe; a failed launch does not. The remaining lanes wait for a new completed
+outcome from the probe lane, even after the ordinary in-flight TTL. A repeated
+usage limit renews the hold; another outcome releases it. This never ends a run.
+No observed probe outcome means the hold remains visible for operator attention,
+not repeated speculative launches. Dry-run simulates one probe but writes nothing.
+When no probe is reserved, a non-usage-limit outcome from any mapped lane on that
+provider at or after the deadline also releases the hold. This lets a safety-net
+run establish recovery even with empty queues. A pre-deadline outcome, even when
+read after expiry, only resets escalation; the passage of time alone is not proof
+of recovery. Once a probe is reserved, a sibling outcome cannot release it.
+Provider holds take precedence over dispatch triggers, including fail-open and
+re-mint; without a provider hold, WD-548/WD-578 decisions are unchanged.
+
+The output also carries a complete safe `provider-holds:` inventory (provider and
+UTC reset timestamp, or `none`), including while a release probe is in-flight.
+The watchdog turns this into one stable finding per provider per cron directory,
+one recovery on explicit clearance, and a separate digest at most once per 24
+hours. A provider-only hold does not use the shorter liveness nag cadence.
+Missing/invalid inventory preserves prior incidents rather than reporting false
+recovery. The existing sender/outbox and failed-delivery retry rules are reused.
+An expired inventory deadline can still represent an unconfirmed recovery probe;
+the watchdog does not infer recovery from the clock. A post-deadline safety-net
+outcome with no reserved probe clears the Gatekeeper inventory to `none`, ending
+the watchdog incident and daily digest with one recovery.
+`provider_hold_scopes` and `provider_hold_last_alert_at` are optional watchdog keys.
+
+The `hermes-cron.integrate` target policy now uses the already-listed Anthropic
+route, separate from build's OpenAI Codex route. **Operator step:** Jonathan must
+choose/verify the account and pin integrate through `hermes -p integrator cron edit`,
+then deploy the merged scripts normally. This change does not apply that pin,
+create capacity, change fallback, change review's cross-vendor rule or touch a live
+schedule. Scheduled safety-net runs are outside Gatekeeper dispatch control.
+
+Offline proof: `python -B -m unittest discover -s deploy/tests -p test_provider_holds.py -v`.
+Fixtures patch HTTP, launch and clock, and execute the real watchdog with synthetic
+inputs, `-DryRun` and a scratch `-AlertOutbox`; no live delivery is acceptance proof.
+
 ### Repeated fail-open backoff (WD-578)
 
 `FAIL_OPEN_BACKOFF_MINUTES = 120` limits repeated non-401 probe/env failures per

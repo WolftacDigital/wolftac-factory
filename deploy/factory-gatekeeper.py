@@ -305,6 +305,128 @@ def job_last_run(jobs_path: str, job_id: str):
     return None
 
 
+# WD-630: only pinned provider slugs and parsed times may leave the failure reader.
+PROVIDER_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+USAGE_LIMIT = re.compile(r"usage[ -]limit|\bHTTP\s*429\b|rate[ -]limit", re.I)
+RESET_TIME = re.compile(
+    r"\breset(?:s|_at)?\s*(?:at|on|:|=)?\s*[\"']?"
+    r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))", re.I)
+
+
+def provider_jobs(job_map, home, override=None):
+    """Read only the selected jobs; malformed/missing metadata creates no hold."""
+    snapshots = {}
+    for lane, entry in job_map.items():
+        try:
+            _, job_id, profile = lane_entry(entry)
+            with open(override or profile_jobs_path(home, profile), encoding="utf-8") as fh:
+                jobs = json.load(fh)["jobs"]
+            matches = [j for j in jobs if isinstance(j, dict) and j.get("id") == job_id]
+            if len(matches) != 1:
+                continue
+            job = matches[0]
+            provider = job.get("provider")
+            if isinstance(provider, str) and PROVIDER_RE.fullmatch(provider):
+                snapshots[lane] = job
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    return snapshots
+
+
+def provider_outcome(job):
+    """Latest completed observation, not a retained historical last_failure.
+
+    Hermes can retain last_failure after a successful run. A newer last_run_at
+    with a recorded terminal status supersedes it; an error recorded after that
+    timestamp still wins, even if last_status says ok. No raw detail is persisted.
+    """
+    failure = job.get("last_failure")
+    failure = failure if isinstance(failure, dict) else {}
+    failed_at = parse_ts(failure.get("at"))
+    ran_at = parse_ts(job.get("last_run_at"))
+    status = job.get("last_status")
+    if failed_at and (not ran_at or failed_at >= ran_at):
+        detail = failure.get("detail", "")
+        detail = detail if isinstance(detail, str) else ""
+        limited = bool(USAGE_LIMIT.search(detail))
+        reset = parse_ts(failure.get("reset_at"))
+        if reset is None and (match := RESET_TIME.search(detail)):
+            reset = parse_ts(match.group(1))
+        return failed_at, limited, reset
+    if ran_at and status in ("ok", "success", "error", "interrupted", "delivery_failed", "cancelled"):
+        return ran_at, False, None
+    return None
+
+
+def update_provider_holds(state, jobs):
+    """Consume each completed outcome once, in time order across a provider.
+
+    `step` is the NEXT no-reset duration. Keep the watermark after release so a
+    stale job record cannot recreate a hold. A probe remains single-flight until
+    a new completed outcome from that lane is visible, not merely its launch.
+    """
+    holds = state.setdefault("provider_holds", {})
+    if not isinstance(holds, dict):
+        holds = state["provider_holds"] = {}
+    events = []
+    for lane, job in jobs.items():
+        outcome = provider_outcome(job)
+        if outcome:
+            events.append((outcome[0], lane, job["provider"], outcome[1], outcome[2]))
+    # Failure wins timestamp ties. All events at the watermark have already been
+    # observed together; never infer a successful probe from a different lane.
+    events.sort(key=lambda e: (e[0], e[3], e[1]))
+    watermarks = {p: parse_ts(h.get("observed_at")) for p, h in holds.items() if isinstance(h, dict)}
+    for stamp, lane, provider, limited, reset in events:
+        watermark = watermarks.get(provider)
+        if watermark and stamp <= watermark:
+            continue
+        hold = holds.setdefault(provider, {})
+        if not isinstance(hold, dict):
+            hold = holds[provider] = {}
+        step = hold.get("step", 60)
+        if step not in (60, 120, 240, 480):
+            step = 60
+        hold["observed_at"] = stamp.isoformat()
+        if limited:
+            hold.setdefault("since", now_utc().isoformat())
+            hold["until"] = (reset or now_utc() + timedelta(minutes=step)).isoformat()
+            hold["step"] = step if reset else min(step * 2, 480)
+            hold.pop("probe", None)
+        else:
+            hold["step"] = 60
+            probe = hold.get("probe")
+            released = False
+            if isinstance(probe, dict) and probe.get("lane") == lane:
+                after = parse_ts(probe.get("after"))
+                released = after is None or stamp > after
+            elif not probe:
+                # A safety-net run can prove recovery without queue work to
+                # reserve a probe. Its outcome must be at/after the deadline;
+                # merely observing an older success after expiry is not proof.
+                until = parse_ts(hold.get("until"))
+                released = until is not None and stamp >= until
+            if released:
+                hold.pop("until", None)
+                hold.pop("since", None)
+                hold.pop("probe", None)
+    return holds
+
+
+def provider_gate(provider, holds):
+    hold = holds.get(provider, {})
+    if not isinstance(hold, dict):
+        return None
+    until = parse_ts(hold.get("until"))
+    if until is None:
+        return None
+    if now_utc() < until:
+        return f"provider-hold ({provider} until {until.astimezone(timezone.utc):%H:%M}Z) -> skipped"
+    if hold.get("probe"):
+        return f"provider-hold ({provider} awaiting probe) -> skipped"
+    return "probe"
+
+
 def linear_query(token: str, query: str, variables: dict) -> dict:
     req = urllib.request.Request(
         "https://api.linear.app/graphql",
@@ -871,6 +993,8 @@ def main() -> int:
     approvals = state["approval_dispatched"]
     last_dispatch = state["last_dispatch_at"]
     fail_open_dispatched = state["fail_open_dispatched"]
+    jobs = provider_jobs(job_map, home, args.jobs_path)
+    provider_holds = update_provider_holds(state, jobs)
     token = None
     fail_open_reason = None
     try:
@@ -961,8 +1085,19 @@ def main() -> int:
         pending.update(job_map)
         state.pop("degraded_since", None)
 
-    for lane, (job_id, observed_last_run, profile) in ready_lanes.items():
+    # Only a releasing provider changes dispatch order: integrate gets its probe
+    # first when it has work. Other providers and ordinary ticks keep their order.
+    ordered_lanes = list(ready_lanes)
+    if "integrate" in jobs and provider_gate(jobs["integrate"]["provider"], provider_holds) == "probe":
+        ordered_lanes.sort(key=lambda lane: lane != "integrate")
+    for lane in ordered_lanes:
+        job_id, observed_last_run, profile = ready_lanes[lane]
         try:
+            provider = jobs.get(lane, {}).get("provider")
+            gate = provider_gate(provider, provider_holds)
+            if gate and gate != "probe":
+                lines.append(f"{lane}: {gate}")
+                continue
             fingerprint = None
             approval = None
             fail_open = False
@@ -995,6 +1130,8 @@ def main() -> int:
                         pending.discard(lane)
                     if recovery:
                         reason = "recovered after degraded period"
+                    elif gate == "probe" and eligible:
+                        reason = "provider-probe"
                     elif not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{64}", baseline):
                         reason = "no-baseline"
                     elif fingerprint != baseline:
@@ -1024,6 +1161,13 @@ def main() -> int:
             result = dispatch(job_id, lane, args.dry_run, exec_override, profile)
             suffix = " for re-mint" if linear_auth_failed and result.startswith("dispatched(") else ""
             lines.append(f"{lane}: {reason} -> {result}{suffix}")
+            if gate == "probe" and result.startswith("dispatched("):
+                # Also reserve in memory in DryRun: simulate exactly one probe,
+                # while retaining the existing no-write guarantee.
+                provider_holds[provider]["probe"] = {
+                    "lane": lane, "after": provider_holds[provider].get("observed_at"),
+                    "dispatched_at": now_utc().isoformat(),
+                }
             if not args.dry_run and result.startswith("dispatched(pid="):
                 if fail_open:
                     fail_open_dispatched[lane] = now_utc().isoformat()
@@ -1057,6 +1201,17 @@ def main() -> int:
                 lines.append(f"approval-wait: unknown ({error_reason(exc)})")
                 if isinstance(exc, urllib.error.HTTPError):
                     exc.close()
+
+    # Full provider inventory lets the watchdog distinguish an active probe from
+    # recovery even when every lane is in-flight. Only safe slugs/times leave here.
+    active_holds = []
+    for provider in sorted({j["provider"] for j in jobs.values()}):
+        hold = provider_holds.get(provider, {})
+        until = parse_ts(hold.get("until")) if isinstance(hold, dict) else None
+        if until:
+            active_holds.append(f"{provider} until {until.astimezone(timezone.utc).isoformat()}")
+    if active_holds or provider_holds:
+        lines.append("provider-holds: " + ",".join(active_holds or ["none"]))
 
     if job_map:
         state["recovery_pending"] = sorted(pending)
