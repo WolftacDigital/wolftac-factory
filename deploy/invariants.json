@@ -707,6 +707,36 @@
     ]
   },
   {
+    "id": "integrate-approval-first",
+    "description": "Integrate checks existing approvals before producing packs, without treating delivery checks as approval decisions.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*APPROVAL-FIRST:\\*\\*[\\s\\S]*before it produces[\\s\\S]*read-only pass[\\s\\S]*posts nothing[\\s\\S]*Own claims and waiting issues[\\s\\S]*delivery check"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*APPROVAL-FIRST:\\*\\*[\\s\\S]*before it produces[\\s\\S]*read-only pass[\\s\\S]*posts nothing[\\s\\S]*Own claims and waiting issues[\\s\\S]*delivery check"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*APPROVAL-FIRST:\\*\\*[\\s\\S]*before it produces[\\s\\S]*read-only pass[\\s\\S]*posts nothing[\\s\\S]*Own claims and waiting issues[\\s\\S]*delivery check"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "\\*\\*APPROVAL-FIRST:\\*\\*[\\s\\S]*before it produces[\\s\\S]*read-only pass[\\s\\S]*posts nothing[\\s\\S]*Own claims and waiting issues[\\s\\S]*delivery check"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*APPROVAL-FIRST:\\*\\*[\\s\\S]*before it produces[\\s\\S]*read-only pass[\\s\\S]*posts nothing[\\s\\S]*Own claims and waiting issues[\\s\\S]*delivery check"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "\\*\\*APPROVAL-FIRST:\\*\\*[\\s\\S]*before it produces[\\s\\S]*read-only pass[\\s\\S]*posts nothing[\\s\\S]*Own claims and waiting issues[\\s\\S]*delivery check"
+      }
+    ]
+  },
+  {
     "id": "integrate-discord-request-encoding",
     "description": "Integrate writes the Discord approval request to a UTF-8 body file, never message text in argv (2026-10-20 BAD+97 incident; WD-599).",
     "checks": [

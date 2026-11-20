@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+from datetime import datetime
 import json
 import os
 import sys
@@ -243,7 +244,7 @@ def cmd_queue(args):
         }
         first: 50
       ) {
-        nodes { %s %s }
+        nodes { %s %s createdAt history(last: 50) { nodes { createdAt toState { name } } } }
       }
     }
     """ % (ISSUE_FIELDS, COMMENT_FIELDS)
@@ -261,7 +262,17 @@ def cmd_queue(args):
 
         nodes = [n for n in nodes if in_lane(n)]
 
-    nodes.sort(key=lambda n: n["updatedAt"])  # oldest updated first
+    for node in nodes:
+        entered = [entry["createdAt"]
+                   for entry in (node.get("history") or {}).get("nodes", [])
+                   if (entry.get("toState") or {}).get("name") == args.state]
+        node["enteredStateAt"] = max(
+            entered, key=lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
+        ) if entered else node["createdAt"]
+    nodes.sort(key=lambda n: (
+        datetime.fromisoformat(n["enteredStateAt"].replace("Z", "+00:00")),
+        int(n["identifier"].rsplit("-", 1)[1]),
+    ))  # oldest entered first, numeric identifier on ties
     emit({"viewer": get_viewer(), "count": len(nodes), "issues": nodes})
 
 
@@ -397,7 +408,7 @@ def main():
 
     sub.add_parser("viewer", help="fetch the bot's own Linear identity")
 
-    p_queue = sub.add_parser("queue", help="list Factory Queue issues in a state")
+    p_queue = sub.add_parser("queue", help="list Factory Queue issues in a state, oldest entered first")
     p_queue.add_argument("--state", default="Approved")
     p_queue.add_argument("--lane", default=None)
 
