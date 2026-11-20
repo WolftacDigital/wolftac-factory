@@ -305,7 +305,7 @@ class PackagingTests(unittest.TestCase):
         expected = [
             (r"D:\Wolftac\Factory", "WolftacDigital/wolftac-factory"),
             (r"D:\Wolftac\atlas_raw_only", "WolftacDigital/atlas_raw_only"),
-            (r"C:\Users\logan_vwagmmf\OneDrive\Wolftac Digital\Codex\wolftac-crm", "WolftacDigital/wolftac-crm"),
+            (r"D:\Wolftac\wolftac-crm", "WolftacDigital/wolftac-crm"),
             (r"D:\Wolftac\wolftac-digital-site", "WolftacDigital/wolftac-digital-site"),
             (r"D:\Wolftac\peptide-vault", None),
             (r"D:\Wolftac\factory-console", "WolftacDigital/factory-console"),
