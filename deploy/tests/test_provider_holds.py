@@ -78,6 +78,78 @@ class ProviderGateTests(f.GatekeeperTests):
         self.assertNotIn("until", self.hold())
         self.assertGreaterEqual(self.spawn.call_count, 1)
 
+    def test_release_probe_delivery_failed_and_cancelled(self):
+        for status in ("delivery_failed", "cancelled"):
+            with self.subTest(status=status):
+                self.clock += timedelta(seconds=1)
+                reset = self.clock + timedelta(minutes=40)
+                self.usage_failure("integrate", reset=reset)
+                self.tick()
+                self.clock = reset
+                self.assertIn("integrate: provider-probe -> dispatched", self.tick())
+                self.success(status=status)
+                out = self.tick()
+                self.assertIn("provider-holds: none", out)
+                self.assertNotIn("until", self.hold())
+                self.assertNotIn("probe", self.hold())
+                self.assertEqual(self.hold()["step"], 60)
+                self.assertGreaterEqual(self.spawn.call_count, 1)
+                self.clock += timedelta(hours=3)
+                self.assertNotIn("provider-hold (", self.tick())
+
+    def test_idle_safety_net_outcome_releases_expired_hold(self):
+        self.issues = {state: [] for state in self.issues}
+        self.usage_failure()
+        self.tick()
+        until = g.parse_ts(self.hold()["until"])
+        # A success before the deadline resets escalation, not the active hold.
+        self.success("build")
+        self.tick()
+        self.assertEqual(g.parse_ts(self.hold()["until"]), until)
+        self.clock = until + timedelta(minutes=1)
+        self.success("build")
+        # Process it late: the event time, not the observing tick, proves recovery.
+        self.clock += timedelta(days=2)
+        self.assertIn("provider-holds: none", self.tick())
+        self.assertNotIn("until", self.hold())
+        self.assertNotIn("since", self.hold())
+        self.assertEqual(self.hold()["step"], 60)
+        self.spawn.assert_not_called()
+        self.assertIn("provider-holds: none", self.tick())  # Old failure stays consumed.
+
+    def test_expiry_alone_or_preexpiry_success_does_not_release(self):
+        self.issues = {state: [] for state in self.issues}
+        self.usage_failure()
+        self.tick()
+        until = g.parse_ts(self.hold()["until"])
+        self.success("build")
+        self.clock = until + timedelta(days=2)
+        self.tick()
+        self.assertEqual(g.parse_ts(self.hold()["until"]), until)
+        self.assertNotIn("probe", self.hold())
+        self.spawn.assert_not_called()
+
+    def test_sibling_success_does_not_release_reserved_probe(self):
+        self.usage_failure(reset=self.clock)
+        self.tick()
+        self.assertEqual(self.hold()["probe"]["lane"], "integrate")
+        self.success("build")
+        self.assertIn("awaiting probe", self.tick())
+        self.spawn.assert_not_called()
+        self.clock += timedelta(seconds=1)
+        self.usage_failure("integrate")
+        self.tick()
+        self.assertEqual(g.parse_ts(self.hold()["until"]) - self.clock, timedelta(minutes=60))
+        self.spawn.assert_not_called()
+
+    def test_newer_or_same_time_failure_wins_over_terminal_status(self):
+        for status in ("delivery_failed", "cancelled"):
+            self.usage_failure("integrate")
+            self.job("integrate")["last_status"] = status
+            self.assertTrue(g.provider_outcome(self.job("integrate"))[1])
+            self.job("integrate")["last_failure"]["at"] = (self.clock + timedelta(seconds=1)).isoformat()
+            self.assertTrue(g.provider_outcome(self.job("integrate"))[1])
+
     def test_ac2_ac4_escalation_cap_and_same_event_not_recounted(self):
         for minutes in (60, 120, 240, 480, 480):
             self.usage_failure("integrate")
@@ -278,6 +350,42 @@ class ProviderWatchdogTests(unittest.TestCase):
                              {k: g.parse_ts(v) for k, v in before.items()})
         self.inventory("provider-a until " + (self.start + timedelta(days=5)).isoformat())
         self.assertNotIn("new:", self.run_tick()[1])
+
+    def test_expired_inventory_recovers_after_idle_safety_net_outcome(self):
+        until = self.start - timedelta(days=2)
+        failed_at = until - timedelta(hours=1)
+        state = {"provider_holds": {"provider-a": {
+            "until": until.isoformat(), "since": failed_at.isoformat(),
+            "observed_at": failed_at.isoformat(), "step": 120}}}
+        self.inventory("provider-a until " + until.isoformat())
+        code, text = self.run_tick()
+        self.assertEqual(code, 1, text)  # Expiry alone is not proven recovery.
+        self.assertIn("new: ", text)
+        self.assertNotIn("recovered:", text)
+        self.run_tick(dry=False)
+        # No queued work or reserved probe. Feed the same retained-failure shape
+        # as a real safety-net completion through the production state reducer.
+        jobs = {"build": {"provider": "provider-a", "last_status": "ok",
+                          "last_run_at": (until + timedelta(minutes=1)).isoformat(),
+                          "last_failure": {"at": failed_at.isoformat(),
+                                           "detail": "HTTP 429 usage limit PRIVATE"}}}
+        with patch.object(g, "now_utc", return_value=self.clock):
+            holds = g.update_provider_holds(state, jobs)
+        active = [provider + " until " + hold["until"]
+                  for provider, hold in holds.items() if hold.get("until")]
+        self.assertEqual(active, [])
+        self.inventory(",".join(active) or "none")
+        self.clock += timedelta(seconds=1)
+        code, text = self.run_tick()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(text.count("recovered: "), 1)
+        self.assertNotIn("daily digest", text)
+        self.run_tick(dry=False)
+        self.clock += timedelta(days=1)
+        code, text = self.run_tick()
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("recovered:", text)
+        self.assertNotIn("daily digest", text)
 
     def test_failed_digest_does_not_advance_cadence(self):
         self.inventory()

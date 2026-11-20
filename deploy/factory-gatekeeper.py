@@ -340,7 +340,7 @@ def provider_outcome(job):
         if reset is None and (match := RESET_TIME.search(detail)):
             reset = parse_ts(match.group(1))
         return failed_at, limited, reset
-    if ran_at and status in ("ok", "success", "error", "interrupted"):
+    if ran_at and status in ("ok", "success", "error", "interrupted", "delivery_failed", "cancelled"):
         return ran_at, False, None
     return None
 
@@ -383,12 +383,20 @@ def update_provider_holds(state, jobs):
         else:
             hold["step"] = 60
             probe = hold.get("probe")
+            released = False
             if isinstance(probe, dict) and probe.get("lane") == lane:
                 after = parse_ts(probe.get("after"))
-                if after is None or stamp > after:
-                    hold.pop("until", None)
-                    hold.pop("since", None)
-                    hold.pop("probe", None)
+                released = after is None or stamp > after
+            elif not probe:
+                # A safety-net run can prove recovery without queue work to
+                # reserve a probe. Its outcome must be at/after the deadline;
+                # merely observing an older success after expiry is not proof.
+                until = parse_ts(hold.get("until"))
+                released = until is not None and stamp >= until
+            if released:
+                hold.pop("until", None)
+                hold.pop("since", None)
+                hold.pop("probe", None)
     return holds
 
 

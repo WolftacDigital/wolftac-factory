@@ -122,7 +122,9 @@ job metadata creates no new hold; legacy unpinned jobs retain the old behavior.
 Match `usage limit`, `usage-limit`, `HTTP 429`, `rate limit` or `rate-limit` in
 `last_failure.detail`, using `last_failure.at` as the failure identity. Raw error
 text is never stored or printed. A later `last_run_at` with a terminal status
-supersedes the retained historical failure.
+(`ok`, `success`, `error`, `interrupted`, `delivery_failed` or `cancelled`)
+supersedes the retained historical failure. A failure at or after that timestamp
+still wins; delivery failure and cancellation do not themselves indicate a usage limit.
 
 `provider_holds[provider]` stores `since`, `until`, the next no-reset duration
 `step`, a completed-outcome `observed_at` watermark, and an optional `probe`.
@@ -142,6 +144,11 @@ outcome from the probe lane, even after the ordinary in-flight TTL. A repeated
 usage limit renews the hold; another outcome releases it. This never ends a run.
 No observed probe outcome means the hold remains visible for operator attention,
 not repeated speculative launches. Dry-run simulates one probe but writes nothing.
+When no probe is reserved, a non-usage-limit outcome from any mapped lane on that
+provider at or after the deadline also releases the hold. This lets a safety-net
+run establish recovery even with empty queues. A pre-deadline outcome, even when
+read after expiry, only resets escalation; the passage of time alone is not proof
+of recovery. Once a probe is reserved, a sibling outcome cannot release it.
 Provider holds take precedence over dispatch triggers, including fail-open and
 re-mint; without a provider hold, WD-548/WD-578 decisions are unchanged.
 
@@ -152,6 +159,10 @@ one recovery on explicit clearance, and a separate digest at most once per 24
 hours. A provider-only hold does not use the shorter liveness nag cadence.
 Missing/invalid inventory preserves prior incidents rather than reporting false
 recovery. The existing sender/outbox and failed-delivery retry rules are reused.
+An expired inventory deadline can still represent an unconfirmed recovery probe;
+the watchdog does not infer recovery from the clock. A post-deadline safety-net
+outcome with no reserved probe clears the Gatekeeper inventory to `none`, ending
+the watchdog incident and daily digest with one recovery.
 `provider_hold_scopes` and `provider_hold_last_alert_at` are optional watchdog keys.
 
 The `hermes-cron.integrate` target policy now uses the already-listed Anthropic
