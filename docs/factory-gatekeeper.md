@@ -57,6 +57,46 @@ Repo reachability, final work selection and approval verification stay in skills
 Review/integrate eligibility and all existing fingerprint triggers are unchanged.
 The gatekeeper does not claim, comment or otherwise write to Linear or Discord.
 
+### Needs-you inventory (WD-628)
+
+Every normal tick independently reads all active WD `Factory Queue` issues,
+including Backlog and In Progress, and exhausts issue and comment pagination.
+Completed/canceled issues are excluded. This diagnostic still runs when every
+worker lane is in flight. It does not alter fingerprints, select work, or write
+to Linear. The pure `needs_you_status` projection emits, for example:
+
+```text
+needs-you: WD-1=5h(blocked-question),WD-2=8d(parked)
+```
+
+- `blocked-question`: a comment heading is its first nonblank line other than an
+  `**Agent:**` line. Ignore headings starting `BUILD SKIPPED:` or `SWEPT:`; the
+  newest remaining comment must have a heading starting `BLOCKED:`. Any newer
+  non-diagnostic comment clears this reason, regardless of author. Age starts at
+  the BLOCKED comment's `createdAt`.
+- `parked`: exactly the existing `not park_cleared(issue, comments)` test. Its
+  assignment/decision-record contract above is unchanged. Age starts at the
+  latest NEEDS HUMAN review. An issue may have both reasons.
+- Plan reviews are deliberately excluded. There is no worker-versus-human
+  classification for BLOCKED waits.
+
+Only validated issue IDs, ages and these two reason words are emitted. Whole
+days/hours/minutes use `d`/`h`/`m`; otherwise seconds (`s`) preserve exact 4-hour
+and 7-day threshold boundaries. Empty inventory prints `needs-you: none`.
+Unreadable/incomplete pages, malformed data or probe failure print
+`needs-you: unknown`, never partial results or comment/exception text. A 401
+obeys the existing token-wide build/review dispatch veto; other diagnostic
+failures do not stop worker dispatch. Audit-only runs omit this segment.
+
+The watchdog consumes this exact-age wire format from the newest output, adds
+over-4-hour findings through its existing alert path, and sends a separate current
+list at most once per 24 hours. Its human-facing ages use the largest floored unit
+(for example `241565s` becomes `2d`), without rounding the threshold decisions.
+Unknown/missing/invalid observations retain open incidents, not a stale daily list;
+only a valid inventory (including `none`) can establish that a wait has cleared.
+No schedule or live installation is changed by this feature. Fixture proof:
+`python -B -m unittest discover -s deploy/tests -p test_needs_you.py -v`.
+
 ### Fingerprint rule
 
 For each issue, canonical sorted JSON includes:
@@ -112,6 +152,69 @@ dry-runs record nothing. State is written to a same-directory
 file; output adds `state: save-failed (<ExceptionType>)`, never the exception text.
 The exit code remains 0. An interrupted JSON write cannot truncate the old
 in-flight markers. Dry-run creates no temporary file and writes no state.
+
+### Provider usage-limit holds (WD-630)
+
+Before dispatch, read each mapped job's pinned `provider` and completed outcome
+from its profile's `jobs.json`. There is no account lookup or credential access.
+Provider slugs must match `[a-z0-9][a-z0-9_-]{0,63}`. Missing, duplicate or unreadable
+job metadata creates no new hold; legacy unpinned jobs retain the old behavior.
+Match `usage limit`, `usage-limit`, `HTTP 429`, `rate limit` or `rate-limit` in
+`last_failure.detail`, using `last_failure.at` as the failure identity. Raw error
+text is never stored or printed. A later `last_run_at` with a terminal status
+(`ok`, `success`, `error`, `interrupted`, `delivery_failed` or `cancelled`)
+supersedes the retained historical failure. A failure at or after that timestamp
+still wins; delivery failure and cancellation do not themselves indicate a usage limit.
+
+`provider_holds[provider]` stores `since`, `until`, the next no-reset duration
+`step`, a completed-outcome `observed_at` watermark, and an optional `probe`.
+Each new consecutive failure without a reset holds for 60, 120, 240, then 480
+minutes, capped at 480. Re-reading the same failure does not extend the deadline
+or advance the step. A non-usage-limit completed outcome resets the step to 60.
+An explicit `last_failure.reset_at`, or a timezone-qualified ISO timestamp after
+`reset`, `resets`, or `reset_at` in the detail, takes precedence without using or
+advancing the step. Unparseable reset text falls back to the bounded escalation.
+
+While held, lanes on that provider print
+`<lane>: provider-hold (<provider> until <HH:MM>Z) -> skipped`.
+Other providers continue normally. At the deadline, exactly one ready lane probes
+the route, preferring integrate when it has work. A successful launch reserves
+that probe; a failed launch does not. The remaining lanes wait for a new completed
+outcome from the probe lane, even after the ordinary in-flight TTL. A repeated
+usage limit renews the hold; another outcome releases it. This never ends a run.
+No observed probe outcome means the hold remains visible for operator attention,
+not repeated speculative launches. Dry-run simulates one probe but writes nothing.
+When no probe is reserved, a non-usage-limit outcome from any mapped lane on that
+provider at or after the deadline also releases the hold. This lets a safety-net
+run establish recovery even with empty queues. A pre-deadline outcome, even when
+read after expiry, only resets escalation; the passage of time alone is not proof
+of recovery. Once a probe is reserved, a sibling outcome cannot release it.
+Provider holds take precedence over dispatch triggers, including fail-open and
+re-mint; without a provider hold, WD-548/WD-578 decisions are unchanged.
+
+The output also carries a complete safe `provider-holds:` inventory (provider and
+UTC reset timestamp, or `none`), including while a release probe is in-flight.
+The watchdog turns this into one stable finding per provider per cron directory,
+one recovery on explicit clearance, and a separate digest at most once per 24
+hours. A provider-only hold does not use the shorter liveness nag cadence.
+Missing/invalid inventory preserves prior incidents rather than reporting false
+recovery. The existing sender/outbox and failed-delivery retry rules are reused.
+An expired inventory deadline can still represent an unconfirmed recovery probe;
+the watchdog does not infer recovery from the clock. A post-deadline safety-net
+outcome with no reserved probe clears the Gatekeeper inventory to `none`, ending
+the watchdog incident and daily digest with one recovery.
+`provider_hold_scopes` and `provider_hold_last_alert_at` are optional watchdog keys.
+
+The `hermes-cron.integrate` target policy now uses the already-listed Anthropic
+route, separate from build's OpenAI Codex route. **Operator step:** Jonathan must
+choose/verify the account and pin integrate through `hermes -p integrator cron edit`,
+then deploy the merged scripts normally. This change does not apply that pin,
+create capacity, change fallback, change review's cross-vendor rule or touch a live
+schedule. Scheduled safety-net runs are outside Gatekeeper dispatch control.
+
+Offline proof: `python -B -m unittest discover -s deploy/tests -p test_provider_holds.py -v`.
+Fixtures patch HTTP, launch and clock, and execute the real watchdog with synthetic
+inputs, `-DryRun` and a scratch `-AlertOutbox`; no live delivery is acceptance proof.
 
 ### Repeated fail-open backoff (WD-578)
 
