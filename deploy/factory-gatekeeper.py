@@ -640,6 +640,97 @@ def run_audit(audit: dict, token, since=None, auth_failed=False) -> list[str]:
     return [audit_result(result, f"window {start.isoformat()}..{end.isoformat()}")]
 
 
+NEEDS_YOU_QUERY = """
+query($after: String) {
+  issues(first: 100, after: $after, filter: {
+    team: { key: { eq: "WD" } }
+    labels: { name: { eq: "Factory Queue" } }
+    state: { type: { nin: ["completed", "canceled"] } }
+  }) {
+    nodes {
+      identifier state { name type } assignee { id }
+      comments(first: 50, orderBy: createdAt) {
+        nodes { id createdAt body user { id } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
+
+def needs_you_issues(token: str) -> list[dict]:
+    """Read all active Factory Queue issues and complete comment histories.
+
+    Independent of lane eligibility/in-flight guards: parked In Progress and
+    Backlog work must not disappear from the operator's list. No partial results.
+    """
+    issues, after, seen = [], None, set()
+    while True:
+        page = linear_query(token, NEEDS_YOU_QUERY, {"after": after})["issues"]
+        for issue in page["nodes"]:
+            connection, comment_seen = issue["comments"], set()
+            comments = list(connection["nodes"])
+            while cursor := next_cursor(connection, comment_seen):
+                connection = linear_query(token, READY_COMMENTS_QUERY, {
+                    "id": issue["identifier"], "after": cursor,
+                })["issue"]["comments"]
+                comments.extend(connection["nodes"])
+            issues.append(dict(issue, ready_comments=comments))
+        after = next_cursor(page, seen)
+        if after is None:
+            return issues
+
+
+def comment_heading(body: str) -> str:
+    for line in body.splitlines():
+        line = line.strip()
+        if line and not line.removeprefix("- ").startswith("**Agent:**"):
+            return line
+    return ""
+
+
+def needs_you_status(issues: list[dict], now: datetime) -> str:
+    """Pure, identifier/age/reason-only projection. Park rules stay unchanged."""
+    waits = set()
+    for issue in issues:
+        state = issue["state"]
+        if state.get("type") in ("completed", "canceled") or state["name"] in ("Done", "Canceled"):
+            continue
+        identifier = issue["identifier"]
+        if not isinstance(identifier, str) or not re.fullmatch(r"WD-\d+", identifier):
+            raise ProbeError("Invalid needs-you identifier")
+        comments = issue.get("ready_comments", issue["comments"]["nodes"])
+        dated = []
+        for comment in comments:
+            stamp = parse_ts(comment.get("createdAt"))
+            if stamp is None:
+                raise ProbeError("Invalid needs-you timestamp")
+            dated.append((stamp, comment))
+        work = [(stamp, c) for stamp, c in dated
+                if not comment_heading(c.get("body") or "").startswith(("BUILD SKIPPED:", "SWEPT:"))]
+        reasons = []
+        if work:
+            stamp, latest = max(work, key=lambda pair: pair[0])
+            if comment_heading(latest.get("body") or "").startswith("BLOCKED:"):
+                reasons.append((stamp, "blocked-question"))
+        if not park_cleared(issue, comments):
+            stamp = max(stamp for stamp, c in dated
+                        if REVIEW_REPORT.search(c.get("body") or ""))
+            reasons.append((stamp, "parked"))
+        for stamp, reason in reasons:
+            seconds = max(0, int((now - stamp).total_seconds()))
+            # Preserve threshold precision: 4h + 1s must not round down to 4h.
+            age = (f"{seconds // 86400}d" if seconds and seconds % 86400 == 0 else
+                   f"{seconds // 3600}h" if seconds % 3600 == 0 else
+                   f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s")
+            waits.add((identifier, reason, age))
+    ordered = sorted(waits, key=lambda item: (int(item[0].split('-')[1]), item[1], item[2]))
+    return "needs-you: " + (",".join(f"{identifier}={age}({reason})"
+                                      for identifier, reason, age in ordered) or "none")
+
+
 def lane_fingerprint(issues: list[dict]) -> str:
     records = []
     for issue in issues:
@@ -901,6 +992,18 @@ def main() -> int:
             ready_lanes.pop(lane, None)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
+    # WD-628: complete the read-only operator probe before any dispatch, so a
+    # 401 here obeys the same token-wide veto as a lane's 401. Other failures
+    # cannot starve workers or leak remote comment/error text.
+    needs_you_line = "needs-you: unknown"
+    if not args.audit_only and token is not None and not linear_auth_failed:
+        try:
+            needs_you_line = needs_you_status(needs_you_issues(token), now_utc())
+        except Exception as exc:  # noqa: BLE001 — diagnostic only
+            if isinstance(exc, urllib.error.HTTPError):
+                linear_auth_failed |= exc.code == 401
+                exc.close()
+
     # A 401 is the existing re-mint path, not a fail-open tick (WD-548).
     degraded = degraded_worker or fail_open_reason is not None or (
         not linear_auth_failed and any(error is not None for _, _, error in probes.values()))
@@ -1026,6 +1129,8 @@ def main() -> int:
         lines.append("provider-holds: " + ",".join(active_holds or ["none"]))
     if job_map:
         state["recovery_pending"] = sorted(pending)
+    if not args.audit_only:
+        lines.append(needs_you_line)
     if not args.no_audit:
         try:
             audit_lines = run_audit(state["audit"], token, args.audit_since, linear_auth_failed)

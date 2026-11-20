@@ -88,6 +88,8 @@ class GatekeeperTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(g, "hermes_home", return_value=str(self.root)).start()
         patch.object(g, "now_utc", return_value=NOW).start()
+        # This suite isolates worker dispatch; WD-628 has its own paginated HTTP fixtures.
+        patch.object(g, "needs_you_issues", return_value=[]).start()
         self.http = patch.object(g.urllib.request, "urlopen", side_effect=self.open).start()
         self.spawn = patch.object(g.subprocess, "Popen", return_value=SimpleNamespace(pid=1234)).start()
         patch.object(g, "run_reader", side_effect=self.reader).start()

@@ -111,6 +111,45 @@ Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir`
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
 rather than guessing an interval.
 
+### Waiting on Jonathan (WD-628)
+
+The newest Gatekeeper output per cron directory may contain a `needs-you:`
+segment. Only the complete ID/age/reason grammar is accepted. Malformed,
+missing or `unknown` segments add no finding and no daily-list message, but
+retain previously open needs-you incidents (identity, first-seen time and text)
+until a valid inventory arrives. They never claim recovery or replay a stale
+list. A valid `none` clears those incidents through the existing recovery path.
+Old output files are never used as fallback. The only reasons are
+`blocked-question` and `parked`, as defined in `docs/factory-gatekeeper.md`.
+
+- Each item strictly older than 4 hours adds a `needs-you` finding to the
+  existing liveness alert path. Its incident key is ID plus reason, not age,
+  so increasing ages do not create a fresh outage every tick. Existing
+  transition, reminder, recovery and exit-code behavior applies.
+  Retained incidents keep liveness unhealthy during an unknown tick without
+  generating a new incident or a reminder from an unobserved wait alone.
+  Other liveness findings still transition independently.
+  Thresholds use exact wire seconds; findings and list lines floor the age to
+  its largest unit (`23d`, `2d`, `4h`, `3m`, `12s`). Thus `14401s` alerts as `4h`,
+  and a park at `604801s` displays `7d` **with** `(keep or drop?)`.
+- A separate `Factory needs you` message lists **every** current item, including
+  items below the alert threshold, through the existing `Send-DiscordAlert`.
+  `needs_you_last_digest_at` is the sole new optional state key; absent or invalid
+  means never sent. A successful list delivery advances it; less than 24 hours
+  since that instant suppresses another list. Exactly 24 hours is eligible.
+- Failed list delivery leaves that timestamp unchanged and returns the existing
+  delivery-failure exit code 3, allowing the next tick to retry the current list.
+  Empty lists send nothing and do not advance the timestamp.
+- Parked items strictly older than 7 days end with `(keep or drop?)`. BLOCKED
+  questions do not receive that suffix. No comment text or proposed decision is
+  included, and no Linear write, new sender or channel is introduced.
+
+`-DryRun` prints would-be findings/list delivery without sending or saving state.
+`-AlertOutbox` supports hermetic delivery/persistence fixtures. Run
+`python -B -m unittest discover -s deploy/tests -p test_needs_you.py -v` for the
+threshold, pagination, clearing, daily-cap and delivery-retry regressions. These
+tests do not prove live Discord delivery or authorize installation.
+
 ### Deploy drift (WD-348)
 
 Once per run, independent of the cron directories, the watchdog compares repo content

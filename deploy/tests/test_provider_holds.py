@@ -387,6 +387,63 @@ class ProviderWatchdogTests(unittest.TestCase):
         self.assertNotIn("recovered:", text)
         self.assertNotIn("daily digest", text)
 
+    def test_needs_you_and_provider_hold_recover_independently(self):
+        def inventory(provider, needs):
+            self.output.write_text(
+                "gatekeeper: build: idle; provider-holds: " + provider +
+                "; needs-you: " + needs + "; audit: clean\n")
+
+        held = "provider-a until " + (self.start + timedelta(days=4)).isoformat()
+        needs = "WD-123=5h(blocked-question)"
+        inventory(held, needs)
+        code, text = self.run_tick()
+        self.assertEqual(code, 1, text)
+        self.assertIn("UNHEALTHY: 2 finding(s)", text)
+        self.assertIn("Factory provider hold daily digest", text)
+        self.assertIn("Factory needs you", text)
+        self.run_tick(dry=False)
+        original = json.loads(self.state.read_text(encoding="utf-8-sig"))
+        self.assertEqual(len(original["open_findings"]), 2)
+        self.assertIsNotNone(original["provider_hold_last_alert_at"])
+        self.assertIsNotNone(original["needs_you_last_digest_at"])
+
+        self.clock += timedelta(hours=1)
+        inventory("none", "unknown")
+        code, text = self.run_tick()
+        self.assertEqual(code, 1, text)
+        self.assertIn("probe unavailable; 1 previously open finding(s) retained", text)
+        self.assertIn("recovered: [", text)
+        self.assertNotIn("recovered: needs-you:", text)
+        self.assertNotIn("daily digest", text)
+        self.run_tick(dry=False)
+        state = json.loads(self.state.read_text(encoding="utf-8-sig"))
+        self.assertEqual(set(state["open_findings"]), {"needs-you|WD-123|blocked-question"})
+        self.assertEqual(g.parse_ts(state["open_findings"]["needs-you|WD-123|blocked-question"]),
+                         g.parse_ts(original["open_findings"]["needs-you|WD-123|blocked-question"]))
+
+        inventory("none", "none")
+        code, text = self.run_tick()
+        self.assertEqual(code, 0, text)
+        self.assertIn("recovered: needs-you:", text)
+        self.run_tick(dry=False)
+        self.assertNotIn("recovered:", self.run_tick()[1])
+
+        # The opposite recovery order must retain the provider incident too.
+        inventory(held, needs)
+        self.run_tick(dry=False)
+        inventory(held, "none")
+        code, text = self.run_tick()
+        self.assertEqual(code, 1, text)
+        self.assertIn("UNHEALTHY: 1 finding(s)", text)
+        self.assertIn("recovered: needs-you:", text)
+        self.assertNotIn("recovered: [", text)
+        self.run_tick(dry=False)
+        self.clock = self.start + timedelta(hours=12)
+        code, text = self.run_tick()
+        self.assertEqual(code, 1, text)
+        self.assertNotIn("still unhealthy", text)
+        self.assertNotIn("daily digest", text)
+
     def test_failed_digest_does_not_advance_cadence(self):
         self.inventory()
         self.outbox.write_text("not a directory")
