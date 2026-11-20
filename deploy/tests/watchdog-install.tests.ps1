@@ -241,6 +241,43 @@ function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
 & {
     . $installer -OperatorUser 'FIXTURE\operator' -LibraryOnly
     $op = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+    # WD-645 AC-1/2: real pure ACL comparator, never a real ACL or folder.
+    function Acl-Rules([string]$Rights = 'ReadAndExecute, Synchronize') {
+        foreach ($sid in @('S-1-5-18', 'S-1-5-32-544', $op)) {
+            [pscustomobject]@{
+                IdentityReference = [pscustomobject]@{ Value = $sid }
+                FileSystemRights = [Security.AccessControl.FileSystemRights]$(if ($sid -eq $op) { $Rights } else { 'FullControl' })
+                AccessControlType = [Security.AccessControl.AccessControlType]::Allow
+                IsInherited = $false
+                InheritanceFlags = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+                PropagationFlags = [Security.AccessControl.PropagationFlags]::None
+            }
+        }
+    }
+    foreach ($rights in @('ReadAndExecute, Synchronize', 'ReadAndExecute')) {
+        Ok "WD-645 AC-1 operator $rights accepted" (Test-WdAclRules -Protected $true -Rules @(Acl-Rules $rights) -OperatorSid $op)
+    }
+    foreach ($fault in @('modify','fourth','duplicate','inherited','deny','unprotected','inheritance','propagation','admin-rights','unknown-sid','missing-rule','read-bit-missing','write-bit-added')) {
+        $rules = @(Acl-Rules); $protected = $true
+        switch ($fault) {
+            'modify' { $rules[2].FileSystemRights = [Security.AccessControl.FileSystemRights]'Modify, Synchronize' }
+            'fourth' { $rules += $rules[2] }
+            'duplicate' { $rules[2].IdentityReference.Value = 'S-1-5-18' }
+            'inherited' { $rules[2].IsInherited = $true }
+            'deny' { $rules[2].AccessControlType = [Security.AccessControl.AccessControlType]::Deny }
+            'unprotected' { $protected = $false }
+            'inheritance' { $rules[2].InheritanceFlags = [Security.AccessControl.InheritanceFlags]::ContainerInherit }
+            'propagation' { $rules[2].PropagationFlags = [Security.AccessControl.PropagationFlags]::InheritOnly }
+            'admin-rights' { $rules[1].FileSystemRights = [Security.AccessControl.FileSystemRights]::ReadAndExecute }
+            'unknown-sid' { $rules[2].IdentityReference.Value = 'S-1-5-21-1111111111-2222222222-3333333333-9999' }
+            'missing-rule' { $rules = $rules[0..1] }
+            'read-bit-missing' { $rules[2].FileSystemRights = $rules[2].FileSystemRights -band (-bnot [int][Security.AccessControl.FileSystemRights]::ReadData) }
+            'write-bit-added' { $rules[2].FileSystemRights = $rules[2].FileSystemRights -bor [Security.AccessControl.FileSystemRights]::WriteData }
+        }
+        Ok "WD-645 AC-2 rejects $fault" (-not (Test-WdAclRules -Protected $protected -Rules $rules -OperatorSid $op))
+    }
+    Ok 'WD-645 resolver accepts synthetic SID literally' ((Resolve-WdAccountSid $op) -ceq $op)
+    Ok 'WD-645 resolver fails closed on malformed SID and empty account' ($null -eq (Resolve-WdAccountSid 'S-1-bad') -and $null -eq (Resolve-WdAccountSid ''))
     $profileIo = [pscustomobject]@{ Profile = 'C:\Users\op'; Exists = $true; SeenSid = '' }
     $profileIo | Add-Member ScriptMethod ReadOperatorProfile { param($Sid) $this.SeenSid = $Sid; $this.Profile }
     $profileIo | Add-Member ScriptMethod ProfileExists { param($Path) $this.Exists }
@@ -486,8 +523,20 @@ function Stub-Io([hashtable]$State, [hashtable]$Hooks = @{}) {
     $stubDefinition = 'function Stub-Io {' + (Get-Command Stub-Io).ScriptBlock.ToString() + "}`n"
     $harness = @'
 param($Installer, $XmlInput, $Baseline, $StatePath, $ManifestPath, $InstallPath,
-      [string]$ExpectedLogon = 'S4U', [switch]$BadInstall)
+      [string]$ExpectedLogon = 'S4U', [switch]$BadInstall, [switch]$ResolveFixtureSid,
+      [switch]$OneUnresolved)
 . $Installer -OperatorUser 'FIXTURE\operator' -LibraryOnly -ExpectedLogon $ExpectedLogon
+function Resolve-WdAccountSid {
+    param([string]$Account)
+    if ($ResolveFixtureSid -and $Account -ieq 'FIXTURE\operator') {
+        return 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+    }
+    if ($Account -match '^S-1-') { return $Account }
+    if ($OneUnresolved -and $Account -ceq 'FIXTURE\operator') {
+        return 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+    }
+    return $null
+}
 $OperatorUser = 'FIXTURE\operator'
 $InstallDir = $InstallPath; $ExpectedManifest = $ManifestPath; $TaskXmlIn = $XmlInput
 $baselineXml = [xml][IO.File]::ReadAllText($Baseline)
@@ -528,6 +577,70 @@ $body = $blocks[0].Clauses[0].Item2.Extent.Text
         Ok "WD-641 AC-8 $mode default remains FAIL" ($vr.Code -eq 1 -and $vr.Out.Contains('FAIL logon type') -and -not $vr.Out.Contains('DEGRADED')) $vr.Out
         $vr = Run $verifyHarness ($verifyArgs + @('-XmlInput',$interactivePath,'-ExpectedLogon','Interactive','-BadInstall'))
         Ok "WD-641 AC-8 $mode other failures dominate degradation" ($vr.Code -eq 1 -and $vr.Out.Contains('FAIL install-dir ACL') -and $vr.Out.Contains('DEGRADED')) $vr.Out
+    }
+
+    # WD-645 AC-3..8: execute the production Verify block with synthetic OS facts.
+    function Verify-Xml645([string]$Name, [xml]$Xml, [object[]]$Extra = @()) {
+        $path = Join-Path $Scratch "wd645-$Name.xml"; $Xml.Save($path)
+        Run $verifyHarness ($verifyArgs + @('-XmlInput',$path) + $Extra)
+    }
+    foreach ($identity in @($op, 'S-1-5-21-1111111111-2222222222-3333333333-9999', 'S-1-5-18')) {
+        $x = [xml]$doc.OuterXml; $x.Task.Principals.Principal.UserId = $identity
+        $v = Verify-Xml645 "sid-$identity" $x @('-ResolveFixtureSid')
+        $expected = if ($identity -eq $op) { 'PASS' } else { 'FAIL' }
+        $code = if ($identity -eq $op) { 0 } else { 1 }
+        Ok "WD-645 AC-3 $identity principal $expected" ($v.Code -eq $code -and $v.Out.Contains("$expected task principal")) $v.Out
+    }
+    $x = [xml]$doc.OuterXml; $x.Task.Principals.Principal.UserId = 'fixture\OPERATOR'
+    $v = Verify-Xml645 'unresolved-case' $x
+    Ok 'WD-645 neither SID resolves: case-insensitive fallback' ($v.Code -eq 0 -and $v.Out.Contains('PASS task principal')) $v.Out
+    $v = Verify-Xml645 'one-unresolved' $x @('-OneUnresolved')
+    Ok 'WD-645 one SID unresolved: no string fallback' ($v.Code -eq 1 -and $v.Out.Contains('FAIL task principal')) $v.Out
+    $x = [xml]$doc.OuterXml
+    [void]$x.Task.Principals.AppendChild($x.Task.Principals.Principal.CloneNode($true))
+    $v = Verify-Xml645 'two-principals' $x
+    Ok 'WD-645 multiple principals refused' ($v.Code -eq 1 -and $v.Out.Contains('FAIL task principal')) $v.Out
+    foreach ($level in @('absent','HighestAvailable','')) {
+        $x = [xml]$doc.OuterXml
+        if ($level -eq 'absent') { [void]$x.Task.Principals.Principal.RemoveChild($x.Task.Principals.Principal.SelectSingleNode('*[local-name()="RunLevel"]')) }
+        else { $x.Task.Principals.Principal.RunLevel = $level }
+        $v = Verify-Xml645 "level-$level" $x
+        $expected = if ($level -eq 'absent') { 'PASS' } else { 'FAIL' }
+        $code = if ($level -eq 'absent') { 0 } else { 1 }
+        Ok "WD-645 AC-4 runlevel [$level] $expected" ($v.Code -eq $code -and $v.Out.Contains("$expected run level")) $v.Out
+    }
+    $fallback = [xml]$doc.OuterXml
+    $fallback.Task.Principals.Principal.UserId = $op
+    $fallback.Task.Principals.Principal.LogonType = 'InteractiveToken'
+    [void]$fallback.Task.Principals.Principal.RemoveChild($fallback.Task.Principals.Principal.SelectSingleNode('*[local-name()="RunLevel"]'))
+    $fallback.Task.Actions.Exec.Command = Join-Path $env:SystemRoot 'System32\conhost.exe'
+    $fallback.Task.Actions.Exec.Arguments = '--headless "' + $pwsh + '" ' + $doc.Task.Actions.Exec.Arguments
+    $v = Verify-Xml645 'live-shaped' $fallback @('-ResolveFixtureSid','-ExpectedLogon','Interactive')
+    $nonPass = @($v.Out -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notmatch '^PASS ' })
+    Ok 'WD-645 AC-5/7 live-shaped fixture exit 6, exactly one DEGRADED, all other lines PASS' ($v.Code -eq 6 -and $v.Out.Contains('PASS action path') -and $v.Out.Contains('PASS expected manifest') -and $nonPass.Count -eq 1 -and $nonPass[0] -ceq 'DEGRADED task logon Interactive (signed-in only; does not run after a reboot until sign-in)') $v.Out
+    $v = Verify-Xml645 'wrapper-default' $fallback @('-ResolveFixtureSid')
+    Ok 'WD-645 AC-5 wrapper rejected without ExpectedLogon' ($v.Code -eq 1 -and $v.Out.Contains('FAIL action path')) $v.Out
+    $x = [xml]$fallback.OuterXml; $x.Task.Principals.Principal.LogonType = 'S4U'
+    $v = Verify-Xml645 'wrapper-s4u' $x @('-ResolveFixtureSid')
+    Ok 'WD-645 S4U wrapper remains rejected' ($v.Code -eq 1 -and $v.Out.Contains('FAIL action path') -and $v.Out.Contains('PASS logon type')) $v.Out
+    $x = [xml]$fallback.OuterXml; $x.Task.Actions.Exec.Command = $x.Task.Actions.Exec.Command.ToUpperInvariant()
+    $v = Verify-Xml645 'wrapper-path-case' $x @('-ResolveFixtureSid','-ExpectedLogon','Interactive')
+    Ok 'WD-645 wrapper system path comparison is case-insensitive' ($v.Code -eq 6 -and $v.Out.Contains('PASS action path')) $v.Out
+    foreach ($fault in @('outside','before','after','different-pwsh','altered-plan','reordered','double-space','switch-case','extra-action')) {
+        $x = [xml]$fallback.OuterXml
+        switch ($fault) {
+            'outside' { $x.Task.Actions.Exec.Command = 'Q:\outside\conhost.exe' }
+            'before' { $x.Task.Actions.Exec.Arguments = '--extra ' + $x.Task.Actions.Exec.Arguments }
+            'after' { $x.Task.Actions.Exec.Arguments = $x.Task.Actions.Exec.Arguments.Replace('--headless ', '--headless --extra ') }
+            'different-pwsh' { $x.Task.Actions.Exec.Arguments = $x.Task.Actions.Exec.Arguments.Replace($pwsh, 'Q:\other\pwsh.exe') }
+            'altered-plan' { $x.Task.Actions.Exec.Arguments = $x.Task.Actions.Exec.Arguments + 'x' }
+            'reordered' { $x.Task.Actions.Exec.Arguments = '"' + $pwsh + '" --headless ' + $doc.Task.Actions.Exec.Arguments }
+            'double-space' { $x.Task.Actions.Exec.Arguments = $x.Task.Actions.Exec.Arguments.Replace('--headless ', '--headless  ') }
+            'switch-case' { $x.Task.Actions.Exec.Arguments = $x.Task.Actions.Exec.Arguments.Replace('--headless', '--HEADLESS') }
+            'extra-action' { [void]$x.Task.Actions.AppendChild($x.Task.Actions.Exec.CloneNode($true)) }
+        }
+        $v = Verify-Xml645 "wrapper-$fault" $x @('-ResolveFixtureSid','-ExpectedLogon','Interactive')
+        Ok "WD-645 AC-6 rejects wrapper $fault" ($v.Code -eq 1 -and $v.Out.Contains('FAIL action path')) $v.Out
     }
 
     # Real-handle reader on scratch only (read-only; no ACL change): reparse, identity

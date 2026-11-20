@@ -57,6 +57,46 @@ Repo reachability, final work selection and approval verification stay in skills
 Review/integrate eligibility and all existing fingerprint triggers are unchanged.
 The gatekeeper does not claim, comment or otherwise write to Linear or Discord.
 
+### Needs-you inventory (WD-628)
+
+Every normal tick independently reads all active WD `Factory Queue` issues,
+including Backlog and In Progress, and exhausts issue and comment pagination.
+Completed/canceled issues are excluded. This diagnostic still runs when every
+worker lane is in flight. It does not alter fingerprints, select work, or write
+to Linear. The pure `needs_you_status` projection emits, for example:
+
+```text
+needs-you: WD-1=5h(blocked-question),WD-2=8d(parked)
+```
+
+- `blocked-question`: a comment heading is its first nonblank line other than an
+  `**Agent:**` line. Ignore headings starting `BUILD SKIPPED:` or `SWEPT:`; the
+  newest remaining comment must have a heading starting `BLOCKED:`. Any newer
+  non-diagnostic comment clears this reason, regardless of author. Age starts at
+  the BLOCKED comment's `createdAt`.
+- `parked`: exactly the existing `not park_cleared(issue, comments)` test. Its
+  assignment/decision-record contract above is unchanged. Age starts at the
+  latest NEEDS HUMAN review. An issue may have both reasons.
+- Plan reviews are deliberately excluded. There is no worker-versus-human
+  classification for BLOCKED waits.
+
+Only validated issue IDs, ages and these two reason words are emitted. Whole
+days/hours/minutes use `d`/`h`/`m`; otherwise seconds (`s`) preserve exact 4-hour
+and 7-day threshold boundaries. Empty inventory prints `needs-you: none`.
+Unreadable/incomplete pages, malformed data or probe failure print
+`needs-you: unknown`, never partial results or comment/exception text. A 401
+obeys the existing token-wide build/review dispatch veto; other diagnostic
+failures do not stop worker dispatch. Audit-only runs omit this segment.
+
+The watchdog consumes this exact-age wire format from the newest output, adds
+over-4-hour findings through its existing alert path, and sends a separate current
+list at most once per 24 hours. Its human-facing ages use the largest floored unit
+(for example `241565s` becomes `2d`), without rounding the threshold decisions.
+Unknown/missing/invalid observations retain open incidents, not a stale daily list;
+only a valid inventory (including `none`) can establish that a wait has cleared.
+No schedule or live installation is changed by this feature. Fixture proof:
+`python -B -m unittest discover -s deploy/tests -p test_needs_you.py -v`.
+
 ### Fingerprint rule
 
 For each issue, canonical sorted JSON includes:
@@ -87,7 +127,8 @@ After the in-flight guard:
 | Equal fingerprint, eligible build work, last successful launch at least 15m ago | `stale-eligible (<n> ready, oldest <ISSUE-ID> waiting <m>m) -> dispatched(pid=...)` |
 | Fingerprint equal | `unchanged (skip)`; integrate first checks Discord through R1 |
 | Linear HTTP 401 on any ready lane | Skip build/review; dispatch integrate only for re-mint (subject to in-flight guard) |
-| Other Linear probe or env failure | Loud `FAIL-OPEN` dispatch for that lane |
+| Other Linear probe or env failure, no recent fail-open launch | Loud `FAIL-OPEN` dispatch for that lane |
+| Other Linear probe or env failure, successful fail-open launch less than 120m ago | `FAIL-OPEN ... -> backoff until <UTC timestamp>`, no launch |
 
 The baseline is recorded **at successful dispatch**, not when a run is later
 confirmed. A human's change during a run therefore causes another dispatch.
@@ -102,6 +143,39 @@ baseline. Top-level `approval_dispatched` maps issue identifiers to Discord mess
 IDs (WD-546). Older Slack timestamps there never match a Discord ID, so they need no
 migration. Missing/unknown keys need no migration; the old script ignores the
 new keys. Do not confuse a dispatch with a completed worker run.
+
+`fail_open_dispatched[lane]` is a separate optional ISO-8601 UTC timestamp of the
+last successful fail-open launch. Missing means no backoff; failed launches and
+dry-runs record nothing. State is written to a same-directory
+`.gatekeeper-state.*.tmp` file, flushed and `fsync`ed, then atomically replaced with
+`os.replace`. An `OSError` preserves the previous state and cleans up the temporary
+file; output adds `state: save-failed (<ExceptionType>)`, never the exception text.
+The exit code remains 0. An interrupted JSON write cannot truncate the old
+in-flight markers. Dry-run creates no temporary file and writes no state.
+
+### Repeated fail-open backoff (WD-578)
+
+`FAIL_OPEN_BACKOFF_MINUTES = 120` limits repeated non-401 probe/env failures per
+lane. After the unchanged 90-minute in-flight guard, a lane that would fail open
+checks its last successful fail-open launch. Before 120 minutes have elapsed it
+prints the same failure reason followed by `-> backoff until <timestamp>` and
+does not launch or advance that lane's dispatch timestamps. Exactly 120 minutes
+is due. Completion of a worker clears its in-flight marker, not this backoff.
+
+A healthy lane probe clears its backoff record even if the lane then reports
+idle, unchanged, or `discord-check-failed`, or its normal launch fails. A lane
+held in-flight is not probed and retains its record. The next outage may dispatch
+immediately after a healthy probe. The existing `degraded_since`, worker-status
+checks and `recovered after degraded period` behavior remain separate and unchanged.
+The Linear 401 veto and integrate `for re-mint` dispatch are never backoff-limited;
+the existing in-flight guard still applies. Discord failures still do not dispatch.
+
+The [watchdog's `gatekeeper-degraded` check](watchdog.md) reports when the newest
+three Gatekeeper outputs all contain at least one case-sensitive marker:
+`FAIL-OPEN`, `discord-check-failed`, or `LANE-ERROR`. Backoff lines retain
+`FAIL-OPEN` so persistent outages remain visible. The historical
+`slack-check-failed` marker is not counted. Findings name markers only, not raw
+output, and use the existing alert and recovery path rather than a new sender.
 
 ### Stale eligible work and outage recovery (WD-620)
 
@@ -275,10 +349,14 @@ probe for that lane, regardless of queue changes. As before, a changed job
 fingerprint. After 90 minutes without a run, `no-run-observed` clears both marker
 and fingerprint, making a non-empty lane dispatch on the same tick. A malformed
 marker also cannot wedge a lane indefinitely. The guard applies to fail-open
-paths as well. The watchdog reads scheduler liveness, not these decision strings.
+paths as well. The watchdog checks scheduler liveness and the repeated degraded
+markers described above; it does not interpret dispatches as completed runs.
 
 `LINEAR_FACTORY_BOT_TOKEN` is read from the Hermes `.env` **file**, never argv or
-process environment (the scheduler sanitizes subprocess environments). The
+process environment (the scheduler sanitizes subprocess environments). Surrounding
+single or double quotes are stripped from the value after whitespace trimming,
+matching `linear_bot.py`; an empty quoted value is still missing/empty and fails
+open. Token values never appear in diagnostics. The
 Gatekeeper reads no Discord credential; only R1 resolves Harper's, internally. No
 token is written to output, state or logs.
 

@@ -99,6 +99,8 @@ When ticking acceptance checkboxes after a remote-ref maintenance PASS, preserve
 
 If this profile's Linear MCP wrapper only supports full-description replacement and the shell has `LINEAR_API_KEY` available, use a small internal GraphQL helper instead of hand-rewriting from model context: query `issue(id:) { id description }`, replace only the intended `- [ ]` acceptance lines with `- [x]`, call `issueUpdate(id:, input:{description: ...})`, and read the issue back through MCP. Never print the API key; print only counts/status.
 
+Factory repo full suite on this Windows host: keep the Hermes-CLI plugin validate/doctor tests out of the run (they can trigger Hermes dependency-environment setup). Point `LOCALAPPDATA` at scratch and build a PATH without Hermes. Do not just `grep -v hermes` the PATH: the default `python` lives under `%LOCALAPPDATA%\hermes\installs\...`, and `WindowsApps` holds both a `hermes` alias and the `pwsh` alias. Drop entries matching `hermes|WindowsApps`, then append the standalone `%LOCALAPPDATA%\hermes\tools\python-3.14.*` directory and the real `$PSHOME`. Confirm `shutil.which('hermes')` is None and that pwsh, python and git resolve. Expect exactly 3 skips: the 2 plugin CLI checks and the opt-in real-cron test. For negative-mutation proof while the suite runs in the worktree, mutate a throwaway copy instead: `git archive HEAD` extracted with `%SystemRoot%\System32\tar.exe` (MSYS `tar` misreads `C:` paths), then `git init`/`add`/`commit` it, because `watchdog-install.tests.ps1` itself runs `git archive` and throws outside a repo. That suite is fail-fast, so read the first `FAIL <name>` from the thrown exception rather than a RESULT line. The run takes about 9 minutes, so use `terminal(background=true)` plus `process_manage wait`.
+
 When the full test command fails due unrelated suite collection/tooling failures but the feature-targeted tests pass, do not automatically fail the issue. Reproduce the same full command on a clean `origin/main` detached worktree. If the identical failure exists on main and all changed-scope tests/build/lint/typecheck pass, record the baseline proof in the review report and treat it as non-blocking, with a Suggestions item for a separate issue.
 
 ## Autonomous-run override
@@ -117,6 +119,36 @@ every task" rule):
   offer merge options outside this skill's own approval gate.
 
 ## Procedure
+
+**REVIEW-NEVER-SILENT** (applies throughout the procedure after a verified claim;
+pickup and claim-race rules remain unchanged):
+
+1. **No human auth.** Never authenticate as a human. Do not use a password manager,
+   a saved-login or vault tool (for example `browser_vault`), a login form, a live
+   `.env` value, or any credential the spec does not name. A spec may define a
+   credential-free test session; use only that, never invent an authentication bypass.
+2. **Time-box commands.** Run any command expected to take more than about 2 minutes
+   (installs, builds, test suites, dev servers) as a background process with an explicit
+   limit, and poll its output. Record the start time and bound tool waits to the
+   remaining limit; do not hold one blocking call longer than the tool allows. After
+   a timeout, try once more with a narrower command. If it fails again, treat it as
+   a blocker. Do not keep retrying or wait for a human in an unattended run.
+3. **Stop with a report.** On a blocker, or when the run nears its turn or time
+   budget, stop new work. Post one `REVIEW INTERRUPTED` comment with **Agent**,
+   **Criteria verified**, **Stopped step / observed signal**, **Branch / worktree
+   state**, and **Next action** sections. Name the exact step and observed status,
+   never credential values. Restore only the claim changes this run made, preserving
+   pre-existing fields and never clearing another worker's delegate. Keep the issue
+   in `In Review` and read the state and claim fields back. A run that has claimed
+   an issue may end only with a verdict report or a REVIEW INTERRUPTED report. For
+   the existing waiting-on-CI path, include the waiting note in that one interruption
+   report, not a second comment; keep the CI gate and its no-verdict outcome unchanged.
+   A hard process crash remains covered by the existing stale-claim sweep.
+4. **An interruption is not a verdict.** Never record an environment blocker as
+   FAIL or NEEDS HUMAN. A FAIL needs a defect in the work; a NEEDS HUMAN needs a
+   product decision. An ordinary failing test still follows the existing defect
+   path. Never reuse partial results as a PASS. The four verdicts and their finding
+   tags are unchanged; this rule makes an unfinished exit visible.
 
 1. **Pick up work.** List issues: team `Wolftac Digital`, state `In Review`, label
    `Factory Queue`, oldest first. If invoked with an argument, treat it as a lane
