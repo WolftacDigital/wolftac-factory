@@ -60,6 +60,11 @@ DEFAULT_JOB_MAP = {
     "integrate": ("Approved", "4e7a4d9c5fa4", "integrator"),
 }
 LANE_FILTERS = {"build": "agentic", "build-crm": "Wolftac CRM v2"}
+RESIDUAL_LANE = "build-residual"
+RESIDUAL_JOB_NAME = "Wolftac Factory Build Worker - residual (Mason)"
+RESIDUAL_PROFILE = "builder"
+RESIDUAL_STATE = "Todo"
+RESIDUAL_EXTRA_EXCLUDES = ("OMAS ATLAS", "manual-lane")
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 INFLIGHT_TTL_MINUTES = 90
 FAIL_OPEN_BACKOFF_MINUTES = 120
@@ -558,6 +563,66 @@ def lane_matches(issue: dict, word: str) -> bool:
     )
 
 
+def residual_excludes() -> list[str]:
+    terms = [LANE_FILTERS[lane] for lane, entry in DEFAULT_JOB_MAP.items()
+             if entry[0] == RESIDUAL_STATE and lane in LANE_FILTERS]
+    terms.extend(RESIDUAL_EXTRA_EXCLUDES)
+    if not terms or any(not isinstance(term, str) or not term or term != term.strip()
+                        or ";" in term or "`" in term for term in terms):
+        raise ValueError("invalid exclude list")
+    return terms
+
+
+def residual_argument() -> str:
+    return "residual: " + "; ".join(residual_excludes())
+
+
+def parse_residual_argument(text: str) -> list[str]:
+    text = text.strip()
+    if text.casefold() == "residual":
+        text = "residual:"
+    if not text.casefold().startswith("residual:"):
+        raise ValueError("invalid residual lane argument")
+    terms = [term.strip() for term in text[len("residual:"):].split(";")]
+    if not all(terms):
+        raise ValueError("invalid residual lane argument")
+    return terms
+
+
+def is_spec(issue: dict) -> bool:
+    description = issue.get("description")
+    if not isinstance(description, str):
+        return False
+    return next((line.lstrip().startswith("**Repo:**")
+                 for line in description.splitlines() if line.strip()), False)
+
+
+def residual_matches(issue: dict, excludes: list[str]) -> bool:
+    return is_spec(issue) and not any(lane_matches(issue, term) for term in excludes)
+
+
+def resolve_residual_job(jobs_path: str) -> tuple[str | None, str | None]:
+    try:
+        with open(jobs_path, encoding="utf-8") as fh:
+            jobs = json.load(fh).get("jobs", [])
+        if not isinstance(jobs, list) or any(not isinstance(job, dict) for job in jobs):
+            raise ValueError("invalid jobs")
+        matches = [job for job in jobs if job.get("name") == RESIDUAL_JOB_NAME]
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None, "LANE-ERROR (jobs file unreadable)"
+    if not matches:
+        return None, "no-job (skip)"
+    if len(matches) != 1:
+        return None, "LANE-ERROR (job name not unique)"
+    job = matches[0]
+    if job.get("enabled") is False or job.get("state") == "paused":
+        return None, "job-disabled (skip)"
+    job_id = job.get("id")
+    if not isinstance(job_id, str) or not job_id:
+        return None, "LANE-ERROR (job id missing)"
+    return job_id, None
+
+
 def audit_since(value: str) -> datetime:
     """Reject ambiguous local dates without echoing arbitrary CLI input."""
     try:
@@ -912,11 +977,25 @@ def main() -> int:
     parser.add_argument("--audit-only", action="store_true", help="audit without probing or dispatching lanes")
     parser.add_argument("--audit-since", type=audit_since, help="force audit from a timezone-qualified ISO-8601 timestamp")
     args = parser.parse_args()
-    job_map = json.loads(args.job_map) if args.job_map else DEFAULT_JOB_MAP
+    job_map = json.loads(args.job_map) if args.job_map else dict(DEFAULT_JOB_MAP)
     if args.audit_only:
         job_map = {}
     exec_override = json.loads(args.exec_override) if args.exec_override else None
     home = hermes_home()
+    residual_note = None
+    excludes = []
+    if not args.audit_only and (not args.job_map or RESIDUAL_LANE in job_map):
+        try:
+            excludes = residual_excludes()
+        except ValueError:
+            residual_note = "LANE-ERROR (invalid exclude list)"
+            job_map.pop(RESIDUAL_LANE, None)
+        else:
+            if not args.job_map:
+                job_id, residual_note = resolve_residual_job(
+                    args.jobs_path or profile_jobs_path(home, RESIDUAL_PROFILE))
+                if job_id is not None:
+                    job_map[RESIDUAL_LANE] = (RESIDUAL_STATE, job_id, RESIDUAL_PROFILE)
     env_path = args.env_path or os.path.join(home, ".env")
     state_path = args.state_path or os.path.join(home, "cron", "gatekeeper-state.json")
     state = load_state(state_path)
@@ -985,6 +1064,8 @@ def main() -> int:
                 try:
                     if lane in LANE_FILTERS:
                         issues = [issue for issue in issues if lane_matches(issue, LANE_FILTERS[lane])]
+                    elif lane == RESIDUAL_LANE:
+                        issues = [issue for issue in issues if residual_matches(issue, excludes)]
                     probes[lane] = (issues, lane_fingerprint(issues), None)
                 except Exception as exc:  # noqa: BLE001 — isolate probe failure
                     probes[lane] = (None, None, error_reason(exc))
@@ -1117,6 +1198,8 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 — lane isolation is the whole point
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
+    if residual_note is not None:
+        lines.append(f"{RESIDUAL_LANE}: {residual_note}")
     # Full provider inventory lets the watchdog distinguish an active probe from
     # recovery even when every lane is in-flight. Only safe slugs/times leave here.
     active_holds = []

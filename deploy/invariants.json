@@ -1,5 +1,31 @@
 [
   {
+    "id": "residual-lane-rule",
+    "description": "Residual build pickup excludes other lanes and silently skips non-specs.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-build/SKILL.md",
+        "pattern": "\\*\\*RESIDUAL-LANE:\\*\\*[\\s\\S]{0,2000}?split\\s+on\\s+`;`[\\s\\S]{0,2000}?invalid\\s+residual\\s+lane\\s+argument[\\s\\S]{0,2000}?first\\s+non-empty\\s+line[\\s\\S]{0,400}?`\\*\\*Repo:\\*\\*`[\\s\\S]{0,600}?SILENTLY[\\s\\S]{0,2000}?stale-claim\\s+sweep"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-build/SKILL.md",
+        "pattern": "\\*\\*RESIDUAL-LANE:\\*\\*[\\s\\S]{0,2000}?split\\s+on\\s+`;`[\\s\\S]{0,2000}?invalid\\s+residual\\s+lane\\s+argument[\\s\\S]{0,2000}?first\\s+non-empty\\s+line[\\s\\S]{0,400}?`\\*\\*Repo:\\*\\*`[\\s\\S]{0,600}?SILENTLY[\\s\\S]{0,2000}?stale-claim\\s+sweep"
+      },
+      {
+        "file": "ports/codex/wolftac-build.md",
+        "pattern": "\\*\\*RESIDUAL-LANE:\\*\\*[\\s\\S]{0,2000}?split\\s+on\\s+`;`[\\s\\S]{0,2000}?invalid\\s+residual\\s+lane\\s+argument[\\s\\S]{0,2000}?first\\s+non-empty\\s+line[\\s\\S]{0,400}?`\\*\\*Repo:\\*\\*`[\\s\\S]{0,600}?SILENTLY[\\s\\S]{0,2000}?stale-claim\\s+sweep"
+      },
+      {
+        "file": "ports/hermes/wolftac-build/SKILL.md",
+        "pattern": "\\*\\*RESIDUAL-LANE:\\*\\*[\\s\\S]{0,2000}?split\\s+on\\s+`;`[\\s\\S]{0,2000}?invalid\\s+residual\\s+lane\\s+argument[\\s\\S]{0,2000}?first\\s+non-empty\\s+line[\\s\\S]{0,400}?`\\*\\*Repo:\\*\\*`[\\s\\S]{0,600}?SILENTLY[\\s\\S]{0,2000}?stale-claim\\s+sweep"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-build/SKILL.md",
+        "pattern": "\\*\\*RESIDUAL-LANE:\\*\\*[\\s\\S]{0,2000}?split\\s+on\\s+`;`[\\s\\S]{0,2000}?invalid\\s+residual\\s+lane\\s+argument[\\s\\S]{0,2000}?first\\s+non-empty\\s+line[\\s\\S]{0,400}?`\\*\\*Repo:\\*\\*`[\\s\\S]{0,600}?SILENTLY[\\s\\S]{0,2000}?stale-claim\\s+sweep"
+      }
+    ]
+  },
+  {
     "id": "review-never-silent",
     "description": "Every review surface forbids human authentication, time-boxes commands and reports interruption without a false verdict.",
     "checks": [

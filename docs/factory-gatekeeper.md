@@ -31,9 +31,33 @@ and probe failures between its ready lanes. Build lanes then filter that result:
 `build` uses `agentic`; `build-crm` uses `Wolftac CRM v2`. A filter matches a
 case-insensitive substring of the project name or any label name; a missing
 project contributes no match. An issue matching both filters belongs to both
-fingerprints. Issues matching neither are not dispatched to a build job (NG-2);
-suggest /wolftac-spec for a catch-all lane. Review, integrate and custom
-`--job-map` lane names absent from `LANE_FILTERS` are unfiltered.
+fingerprints. The residual build lane selects only specs matching none of the
+other build filters plus `OMAS ATLAS` and `manual-lane`. Its single exclude source
+is `residual_excludes()`; `residual_argument()` renders
+`residual: agentic; Wolftac CRM v2; OMAS ATLAS; manual-lane`. A spec's first
+non-empty description line, ignoring leading spaces, starts with `**Repo:**`.
+Residual workers silently skip non-specs without a comment or state change,
+including during their stale-claim sweep. Empty lists or terms are invalid and
+claim nothing. Put the lane argument inside backticks in job prompts so sentence
+punctuation is not part of an exclude term. Positive lanes keep their Repo rule.
+Review, integrate and custom `--job-map` lane names other than `build-residual`
+and those in `LANE_FILTERS` remain unfiltered.
+
+The residual job is resolved each tick by the exact name
+`Wolftac Factory Build Worker - residual (Mason)` in the builder jobs file, using
+only `name`, `id`, `enabled` and `state`, never prompt text. Its stable notes are
+`build-residual: no-job (skip)`, `build-residual: job-disabled (skip)`,
+`build-residual: LANE-ERROR (job name not unique)` and
+`build-residual: LANE-ERROR (jobs file unreadable)`. Missing IDs report
+`LANE-ERROR (job id missing)`; invalid exclude constants report
+`LANE-ERROR (invalid exclude list)`. These cases add no residual dispatch or new
+lane state. Other lanes remain unchanged. An explicit `--job-map` disables name
+resolution; a `build-residual` entry still uses the same residual filter.
+The shared Todo fetch, fingerprints, in-flight guard, confirmation, idle behavior,
+401 skip and non-401 fail-open path are reused. No live job is created here:
+WD-586 supplies the operator-only creation step after merge. The residual job is
+not added to `DEFAULT_JOB_MAP` or the four safety-net targets. Timed stale retries
+remain scoped to the two positive lanes; the post-probe rules are unchanged.
 Fingerprints remain **superset** lane lists. Timed build retries additionally
 require Todo, no latest `BLOCKED:` comment, no unresolved NEEDS-HUMAN park, and
 every blocker state **type** `completed` or `canceled` (custom state names work).
@@ -350,6 +374,7 @@ Each lane's job lives in its own Hermes profile, one bot per stage:
 |---|---|---|---|
 | build | Todo | `9b7b5987bcd6` | `builder` (Mason) |
 | build-crm | Todo | `1dd429fe03b2` | `builder` (Mason) |
+| build-residual | Todo | found by name "Wolftac Factory Build Worker - residual (Mason)" | `builder` (Mason) |
 | review | In Review | `8e5c37a23b91` | `reviewer` (Quinn) |
 | integrate | Approved | `4e7a4d9c5fa4` | `integrator` (Harper) |
 
