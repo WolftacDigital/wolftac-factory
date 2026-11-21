@@ -563,6 +563,53 @@ class WatchdogTests(unittest.TestCase):
                 self.assertIn("DRIFT CLEAN:", text)
                 self.assertIn("LEARN CLEAN:", text)
 
+    def test_no_pack_finding_fixed_vocabulary_and_privacy(self):
+        for reason in ('unknown', 'repo-not-allowed', 'precondition-failed', 'integrate-paused'):
+            segment = f'WD-1=3h({reason})'
+            self.output('no-pack.txt', f'gatekeeper: integrate: unchanged (skip); approval-no-pack: {segment}; needs-you: none\n'
+                        + 'PACK-BODY-SENTINEL ' + FAKES[0])
+            result, text = self.run_watchdog()
+            self.assertEqual(result, 1, text)
+            self.assertEqual(findings(text), [f'- [{self.cron}] approval-no-pack: {segment}'])
+            self.assertNotIn('PACK-BODY-SENTINEL', text)
+            self.assertRegex(text, r'FAIL\s+approval-wait\s')
+        self.output('no-pack.txt', 'approval-no-pack: WD-1=3h(unknown),WD-2=62h(repo-not-allowed)')
+        result, text = self.run_watchdog()
+        self.assertEqual(result, 1, text)
+        self.assertEqual(findings(text), [f'- [{self.cron}] approval-no-pack: WD-1=3h(unknown),WD-2=62h(repo-not-allowed)'])
+
+    def test_no_pack_unknown_lookback_then_ok_recovers(self):
+        self.output('older.txt', 'approval-no-pack: WD-1=3h(unknown)', age=3600)
+        self.output('newer.txt', 'approval-wait: unknown (integrate lane not probed)')
+        result, text = self.run_watchdog()
+        self.assertEqual(result, 1, text)
+        self.assertEqual(len(findings(text)), 1)
+        self.output('newer.txt', 'approval-wait: ok (1 approved)')
+        result, text = self.run_watchdog()
+        self.assertEqual(result, 0, text)
+        self.assertEqual(findings(text), [])
+        self.output('older.txt', 'approval-no-pack: WD-1=3h(unknown)', age=25200)
+        self.output('newer.txt', 'approval-wait: unknown (integrate lane not probed)')
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+
+    def test_no_pack_rejects_malformed_reason_and_partial_lists(self):
+        for payload in ('WD-1=3h(PACK-BODY-SENTINEL)', 'WD-1=3h(unknown)PACK-BODY-SENTINEL',
+                        'WD-1=3h(unknown),PACK-BODY-SENTINEL', 'WD-1=-3h(unknown)',
+                        'WD-1=3d(unknown)', 'WD-1=3h(Unknown)'):
+            self.output('tick.txt', 'approval-no-pack: ' + payload)
+            result, text = self.run_watchdog()
+            self.assertEqual(result, 0, text)
+            self.assertEqual(findings(text), [])
+            self.assertNotIn('PACK-BODY-SENTINEL', text)
+
+    def test_no_pack_composes_with_existing_pack_findings(self):
+        self.output('tick.txt', 'approval-stale: WD-2=3d; approval-lane-down: WD-3=2h; '
+                    'approval-no-pack: WD-1=3h(unknown)')
+        result, text = self.run_watchdog()
+        self.assertEqual(result, 1, text)
+        self.assertEqual(len(findings(text)), 3)
+        self.assertEqual(sum('approval-no-pack:' in line for line in findings(text)), 1)
+
     def test_approval_findings_and_ok(self):
         stale = f"- [{self.cron}] approval-wait: proof pack older than 24h with the issue still Approved: WD-354 (15d)"
         down = f"- [{self.cron}] approval-lane-down: newest proof pack says the approval request was not delivered; Jonathan has not been asked: WD-348 (3d)"

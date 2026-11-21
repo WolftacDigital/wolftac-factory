@@ -1051,6 +1051,156 @@ class GatekeeperTests(unittest.TestCase):
         for value in ("R3A-BODY-SENTINEL", LINEAR, DISCORD):
             self.assertNotIn(value, artifacts)
 
+    # WD-626: real diagnostic path with fake HTTP, no live credential or sender.
+    def no_pack_fixture(self, hours=3):
+        row = issue("WD-1", "Approved")
+        row.update(updatedAt=NOW.isoformat(), createdAt=(NOW - timedelta(days=100)).isoformat())
+        row["comments"] = connection([])
+        self.issues["Approved"] = [row]
+        self.history_pages = {None: connection([
+            {"createdAt": (NOW - timedelta(hours=hours)).isoformat(), "toState": {"name": "Approved"}}
+        ])}
+        original = self.open
+
+        def history_http(request, timeout):
+            data = json.loads(request.data)
+            if data["query"] != g.APPROVAL_HISTORY_QUERY:
+                return original(request, timeout)
+            self.requests.append(request)
+            self.assertEqual(timeout, 20)
+            self.assertEqual(request.full_url, "https://api.linear.app/graphql")
+            self.assertNotIn("mutation", data["query"].lower())
+            page = self.history_pages[data["variables"]["after"]]
+            if isinstance(page, Exception):
+                raise page
+            return io.StringIO(json.dumps({"data": {"issue": {"history": page}}}))
+
+        self.http.side_effect = history_http
+        self.baseline()
+        return row
+
+    def test_no_pack_transition_age_and_boundary(self):
+        for hours, expected in ((1, False), (2, True), (3, True), (62, True)):
+            row = self.no_pack_fixture(hours)
+            before = copy.deepcopy(row)
+            out = self.approval_tick()
+            self.assertEqual("approval-no-pack:" in out, expected)
+            if expected:
+                self.assertIn(f"approval-no-pack: WD-1={hours}h(unknown)", out)
+            self.assertEqual(row, before)
+            self.spawn.assert_not_called()
+
+    def test_no_pack_reason_precedence_and_sanitization(self):
+        row = self.no_pack_fixture()
+        allowed, denied = self.root / "allowed", self.root / "denied"
+        policy = self.root / "allowlist.json"
+        self.write(policy, {"version": 1, "repos": [{"path": str(allowed), "github": None}]})
+        jobs = json.loads(self.jobs.read_text())
+        for job in jobs["jobs"]:
+            if job["id"] == g.DEFAULT_JOB_MAP["integrate"][1]:
+                job["enabled"] = False
+        self.write(self.jobs, jobs)
+        row["comments"] = connection([comment("**Agent:** fixture\n\nPRECONDITION: " + LINEAR + DISCORD)])
+        row["description"] = f"**Repo:** `fixture/repo` (`{denied}`) | **Priority:** High"
+        with patch.dict(os.environ, {"FACTORY_REPO_ALLOWLIST": str(policy)}):
+            self.assertEqual(g.approval_repo_allowed(str(denied)), 3)
+            self.assertEqual(g.approval_repo_allowed(str(allowed)), 0)
+            for path, comments, reason in (
+                    (denied, row["comments"], "repo-not-allowed"),
+                    (allowed, row["comments"], "precondition-failed"),
+                    (allowed, connection([]), "integrate-paused")):
+                row["description"] = f"**Repo:** `fixture/repo` (`{path}`)"
+                row["comments"] = comments
+                self.baseline()
+                out = self.approval_tick()
+                self.assertIn(f"approval-no-pack: WD-1=3h({reason})", out)
+                for secret in (LINEAR, DISCORD, str(path)):
+                    self.assertNotIn(secret, out)
+            policy.write_text("invalid", encoding="utf-8")
+            self.assertEqual(g.approval_repo_allowed(str(denied)), 4)
+            self.assertEqual(g.no_pack_reason(row, False), "unknown")
+        self.assertFalse(g.integrator_disabled(self.root / "absent.json", "x"))
+        self.assertFalse(g.integrator_disabled(self.jobs, "wrong-id"))
+        self.assertIsNone(g.approval_repo_path("**Repo:** `fixture/repo`\nElsewhere: `/secret`"))
+        self.assertEqual(g.approval_repo_path("**Repo:** `D:\\Wolftac\\Factory`"), "D:\\Wolftac\\Factory")
+        self.spawn.assert_not_called()
+
+    def test_no_pack_newest_integrate_comment_not_newest_arbitrary_comment(self):
+        row = self.no_pack_fixture()
+        row["comments"] = connection([
+            comment("PRECONDITION: old", (NOW - timedelta(hours=5)).isoformat()),
+            comment("INTEGRATION REPORT\nchecks continuing", (NOW - timedelta(hours=4)).isoformat()),
+            comment("random PRECONDITION mention", (NOW - timedelta(hours=1)).isoformat()),
+        ])
+        self.assertEqual(g.no_pack_reason(row, False), "unknown")
+        row["comments"]["nodes"].append(comment("PRECONDITION: current", NOW.isoformat()))
+        self.assertEqual(g.no_pack_reason(row, False), "precondition-failed")
+
+    def test_no_pack_bounce_history_paging_and_fresh_pack(self):
+        row = self.no_pack_fixture()
+        self.history_pages = {
+            None: connection([{"createdAt": (NOW - timedelta(hours=5)).isoformat(), "toState": {"name": "Todo"}}], "older"),
+            "older": connection([
+                {"createdAt": (NOW - timedelta(days=10)).isoformat(), "toState": {"name": "Approved"}},
+                {"createdAt": (NOW - timedelta(hours=3)).isoformat(), "toState": {"name": "Approved"}},
+            ]),
+        }
+        row["comments"] = connection([comment("MERGE PROOF PACK", (NOW - timedelta(days=9)).isoformat())])
+        self.baseline()
+        self.assertIn("approval-no-pack: WD-1=3h(unknown)", self.approval_tick())
+        for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"):
+            row["comments"]["nodes"].append(comment(marker, (NOW - timedelta(hours=1)).isoformat()))
+            self.baseline()
+            self.assertNotIn("approval-no-pack:", self.approval_tick())
+            row["comments"]["nodes"].pop()
+        row["comments"] = connection([comment("churn")], "older")
+        self.comment_pages[("WD-1", "older")] = connection([comment("MERGE PROOF PACK", (NOW - timedelta(hours=1)).isoformat())])
+        self.baseline()
+        self.assertNotIn("approval-no-pack:", self.approval_tick())
+
+    def test_no_pack_unreadable_history_uses_updated_unknown(self):
+        row = self.no_pack_fixture()
+        row["updatedAt"] = (NOW - timedelta(hours=4)).isoformat()
+        row["comments"] = connection([comment("PRECONDITION: " + LINEAR)])
+        for page in (OSError(LINEAR), connection([]), connection([], "repeat"),
+                     connection([{"createdAt": "bad", "toState": {"name": "Approved"}}])):
+            self.history_pages = {None: page, "repeat": connection([], "repeat")}
+            self.baseline()
+            out = self.approval_tick()
+            self.assertIn("approval-no-pack: WD-1=4h(unknown)", out)
+            self.assertNotIn(LINEAR, out)
+        self.history_pages = {None: connection([], "0"), **{str(n): connection([], str(n+1)) for n in range(10)}}
+        self.baseline()
+        self.assertIn("approval-no-pack: WD-1=4h(unknown)", self.approval_tick())
+        self.assertEqual(sum(json.loads(r.data)["query"] == g.APPROVAL_HISTORY_QUERY for r in self.requests), 10)
+
+    def test_no_pack_incomplete_comments_cannot_claim_absence(self):
+        row = self.no_pack_fixture()
+        row["comments"] = connection([], "0")
+        self.comment_pages = {("WD-1", str(n)): connection([comment()], str(n+1)) for n in range(10)}
+        self.baseline()
+        out = self.approval_tick()
+        self.assertIn("approval-wait: unknown (approval comments incomplete)", out)
+        self.assertNotIn("approval-no-pack:", out)
+
+    def test_no_pack_diagnostics_do_not_change_dispatch_or_state(self):
+        row = self.no_pack_fixture()
+        self.baseline()
+        before = self.state.read_bytes()
+        with patch.object(g, "approval_issues", side_effect=lambda token, rows, *args: rows):
+            plain = self.approval_tick()
+            plain_state = self.state.read_bytes()
+            plain_calls = copy.deepcopy(self.spawn.call_args_list)
+        self.state.write_bytes(before)
+        enriched = self.approval_tick()
+        self.assertEqual(enriched.split("; approval-")[0], plain.split("; approval-")[0])
+        self.assertEqual(self.state.read_bytes(), plain_state)
+        self.assertEqual(self.spawn.call_args_list, plain_calls)
+        self.assertIn("approval-no-pack:", enriched)
+        snapshot = self.state.read_bytes()
+        self.assertIn("approval-no-pack:", self.approval_tick("--dry-run"))
+        self.assertEqual(self.state.read_bytes(), snapshot)
+
     def test_bad_profile_in_job_map_is_a_lane_error(self):
         out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
         self.assertIn("build: LANE-ERROR (", out)

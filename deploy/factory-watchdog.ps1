@@ -442,7 +442,7 @@ function Test-GatekeeperApprovalWait([string]$Dir, $Jobs) {
             foreach ($file in $files) {
                 if ($file.LastWriteTimeUtc -lt $cutoff) { continue }
                 $output = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
-                if ($output -cnotmatch 'approval-wait: ok|approval-stale: |approval-lane-down: ') { continue }
+                if ($output -cnotmatch 'approval-wait: ok|approval-stale: |approval-lane-down: |approval-no-pack: ') { continue }
                 $evaluated = $true
                 $failed = $false
                 foreach ($kind in @('approval-stale', 'approval-lane-down')) {
@@ -457,8 +457,14 @@ function Test-GatekeeperApprovalWait([string]$Dir, $Jobs) {
                         $failed = $true
                     }
                 }
+                $missingItem = '[A-Z]+-\d+=\d+h\((?:repo-not-allowed|precondition-failed|integrate-paused|unknown)\)'
+                if ($output -cmatch ('(?:^|; |\r?\n)approval-no-pack: (' + $missingItem + '(?:,' + $missingItem + ')*)(?=;|\r?$|\n)')) {
+                    # Fixed vocabulary plus identifiers/ages only. No raw source text.
+                    Add-Finding "[$Dir] approval-no-pack: $($Matches[1])"
+                    $failed = $true
+                }
                 if ($failed) {
-                    Add-Report $Dir 'approval-wait' 'FAIL' 'stale or lane-down proof pack'
+                    Add-Report $Dir 'approval-wait' 'FAIL' 'stale, lane-down or missing proof pack'
                 } elseif ($output -cmatch 'approval-wait: ok') {
                     Add-Report $Dir 'approval-wait' 'ok' 'evaluated approval status is ok'
                 } else {

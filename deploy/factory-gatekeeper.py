@@ -41,8 +41,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
+import ntpath
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -875,8 +878,106 @@ def approval_packs(comments: list[dict]) -> list[dict]:
             for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"))]
 
 
-def approval_issues(token: str, issues: list[dict]) -> list[dict]:
-    """Page only missing packs, without mutating dispatch/fingerprint inputs."""
+APPROVAL_HISTORY_QUERY = """
+query($id: String!, $after: String) {
+  issue(id: $id) {
+    history(first: 100, after: $after, orderBy: createdAt) {
+      nodes { createdAt toState { name } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+
+def latest_approved_at(token: str, identifier: str):
+    """Read the latest Approved transition; incomplete/unreadable history is unknown."""
+    try:
+        cursor, seen, transitions = None, set(), []
+        for _ in range(10):
+            page = linear_query(token, APPROVAL_HISTORY_QUERY, {
+                "id": identifier, "after": cursor,
+            })["issue"]["history"]
+            for row in page["nodes"]:
+                if (row.get("toState") or {}).get("name") == "Approved":
+                    at = parse_ts(row.get("createdAt"))
+                    if at is None:
+                        return None
+                    transitions.append(at)
+            cursor = next_cursor(page, seen)
+            if cursor is None:
+                return max(transitions, default=None)
+    except Exception as exc:  # diagnostics only; never expose response/exception text
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
+    return None
+
+
+def approval_repo_path(description: str):
+    """Only an absolute path in the Repo header, never the owner/name or other prose."""
+    for line in description.splitlines():
+        match = re.match(r"^\s*\**Repo:\**\s*(.*)$", line)
+        if not match:
+            continue
+        header = match[1].split("|")[0]
+        candidates = re.findall(r"`([^`]+)`", header) or [header.strip()]
+        paths = [path for path in candidates if os.path.isabs(path) or ntpath.isabs(path)]
+        return paths[0] if len(paths) == 1 else None
+    return None
+
+
+def approval_repo_allowed(repo: str):
+    """Call the gate runner's check-repo function; no child, redactor or credentials."""
+    candidates = [Path(__file__).resolve().parent.parent / "canonical/wolftac-integrate/scripts/run_gate.py",
+                  Path(hermes_home()) / "profiles/integrator/skills/wolftac-integrate/scripts/run_gate.py",
+                  Path(hermes_home()) / "skills/wolftac-integrate/scripts/run_gate.py"]
+    for script in candidates:
+        if not script.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location("approval_run_gate", script)
+        if spec is None or spec.loader is None:
+            continue
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        return runner.repo_allowed(repo, os.environ)
+    return None
+
+
+def integrator_disabled(jobs_path, job_id) -> bool:
+    if not jobs_path or not job_id:
+        return False
+    try:
+        with open(jobs_path, encoding="utf-8-sig") as fh:
+            jobs = json.load(fh)["jobs"]
+        return any(job.get("id") == job_id and job.get("enabled") is False for job in jobs)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
+def no_pack_reason(issue: dict, disabled: bool) -> str:
+    """Fixed reason vocabulary in spec order; never emit untrusted content."""
+    repo = approval_repo_path(issue.get("description") or "")
+    if repo:
+        try:
+            if approval_repo_allowed(repo) == 3:
+                return "repo-not-allowed"
+        except Exception:  # missing helper or unreadable policy is not a denial
+            pass
+    integrate_comments = [c for c in issue["comments"]["nodes"]
+                          if re.search(REPORT_HEADER + r"(?:INTEGRATION REPORT|INTEGRATION DEFECT REPORT|"
+                                       r"INTEGRATE\b[^\n]*|PRECONDITION\b[^\n]*|MERGE PROOF PACK|LANDING PROOF PACK)",
+                                       c.get("body") or "")]
+    if integrate_comments:
+        latest = max(integrate_comments, key=lambda c: parse_ts(c.get("createdAt"))
+                     or datetime.min.replace(tzinfo=timezone.utc))
+        if "PRECONDITION" in (latest.get("body") or ""):
+            return "precondition-failed"
+    return "integrate-paused" if disabled else "unknown"
+
+
+def approval_issues(token: str, issues: list[dict], jobs_path=None, job_id=None) -> list[dict]:
+    """Enrich only diagnostic copies, after dispatch; no fingerprint/state changes."""
+    disabled = integrator_disabled(jobs_path, job_id)
     result = []
     for issue in issues:
         connection = issue["comments"]
@@ -892,18 +993,35 @@ def approval_issues(token: str, issues: list[dict]) -> list[dict]:
                 "id": issue["identifier"], "after": cursor,
             })["issue"]["comments"]
             comments.extend(connection["nodes"])
-        result.append({**issue, "comments": {"nodes": comments}})
+        enriched = {**issue, "comments": {"nodes": comments}}
+        approved_at = latest_approved_at(token, issue["identifier"])
+        if (not approval_packs(comments) and connection.get("pageInfo", {}).get("hasNextPage")
+                and (approved_at or parse_ts(issue.get("updatedAt")))):
+            raise ProbeError("approval comments incomplete")
+        enriched["_approved_at"] = approved_at or parse_ts(issue.get("updatedAt"))
+        enriched["_no_pack_reason"] = no_pack_reason(enriched, disabled) if approved_at else "unknown"
+        result.append(enriched)
     return result
 
 
 def approval_status(issues: list[dict], now: datetime) -> list[str]:
-    """Pure approval diagnostics: identifiers/ages only, never pack contents."""
-    stale, down = [], []
+    """Pure approval diagnostics: identifiers/ages/fixed reasons, never pack contents."""
+    stale, down, missing = [], [], []
     for issue in sorted(issues, key=lambda row: row["identifier"]):
         identifier = issue["identifier"]
         if not re.fullmatch(r"[A-Z]+-\d+", identifier):
             continue
         packs = approval_packs(issue["comments"]["nodes"])
+        approved_at = issue.get("_approved_at")
+        if approved_at is not None:
+            packs = [pack for pack in packs
+                     if (parse_ts(pack.get("createdAt")) or datetime.min.replace(tzinfo=timezone.utc)) > approved_at]
+            if not packs and now - approved_at >= timedelta(hours=2):
+                hours = int((now - approved_at).total_seconds() // 3600)
+                reason = issue.get("_no_pack_reason", "unknown")
+                if reason not in {"repo-not-allowed", "precondition-failed", "integrate-paused", "unknown"}:
+                    reason = "unknown"
+                missing.append(f"{identifier}={hours}h({reason})")
         if not packs:
             continue
         pack = max(packs, key=lambda c: c["createdAt"])
@@ -922,6 +1040,8 @@ def approval_status(issues: list[dict], now: datetime) -> list[str]:
         segments.append("approval-stale: " + ",".join(stale))
     if down:
         segments.append("approval-lane-down: " + ",".join(down))
+    if missing:
+        segments.append("approval-no-pack: " + ",".join(missing))
     return segments or [f"approval-wait: ok ({len(issues)} approved)"]
 
 
@@ -1196,7 +1316,9 @@ def main() -> int:
             lines.append("approval-wait: unknown (integrate lane not probed)")
         else:
             try:
-                lines.extend(approval_status(approval_issues(token, probe[0]), now_utc()))
+                _, integrate_id, integrate_profile = lane_entry(job_map["integrate"])
+                integrate_jobs = args.jobs_path or profile_jobs_path(home, integrate_profile)
+                lines.extend(approval_status(approval_issues(token, probe[0], integrate_jobs, integrate_id), now_utc()))
             except Exception as exc:  # noqa: BLE001 — diagnostics cannot affect dispatch
                 lines.append(f"approval-wait: unknown ({error_reason(exc)})")
                 if isinstance(exc, urllib.error.HTTPError):
