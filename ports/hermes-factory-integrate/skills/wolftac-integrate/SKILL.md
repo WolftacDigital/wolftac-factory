@@ -133,7 +133,7 @@ Gate runner exits (separate from `linear_bot.py` exit codes):
 - **124:** gate timed out; use `PRECONDITION:` with `timed out after <N> s`, keep `Approved`.
 
 - `viewer` — the bot's own identity (the id every approval author is checked against)
-- `queue` — Factory Queue in a state, oldest updated first, optional lane filter
+- `queue` — Factory Queue in a state, oldest entered first, optional lane filter
 - `issue` — spec description + all comments + delegate/assignee/labels/project
 - `comment` — body on stdin via `--body-file -`, never on the command line
 - `claim` — delegate := bot, with read-back; **exit 2 = lost claim race**
@@ -193,7 +193,7 @@ the WSL VM recycles between commands).
 ## Procedure
 
 1. **Pick up work.** List issues with `linear_bot.py queue --state Approved` — team
-   `Wolftac Digital`, label `Factory Queue`, oldest updated first (the helper applies
+   `Wolftac Digital`, label `Factory Queue`, oldest entered first (the helper applies
    all three). If invoked with an argument, pass it as `--lane <arg>`; the helper
    matches it case-insensitively against the issue's Linear project name and labels.
    Read one issue in full with `linear_bot.py issue <ID>`. Skip — SILENTLY,
@@ -215,6 +215,25 @@ the WSL VM recycles between commands).
    and the NEEDS-HUMAN park assigns one deliberately; never sweep it, never clear it,
    and never read it as a competing claim. Worker claims live in `delegate` only.
    Nothing → "Factory queue: nothing awaiting integration", stop cleanly.
+
+   **APPROVAL-FIRST:** On every tick, before it produces any new proof pack or refresh, make one
+   read-only pass over eligible candidates in queue order (oldest entered first),
+   after the check-repo and skip rules above. Preserve foreign-claim, PRECONDITION
+   waiting and branchless (d) rules; this pass does not make skipped work eligible.
+   For each candidate whose newest proof pack links a newest Discord request,
+   read its current PR head and run the verifier exactly as in step 6, from a
+   verified Factory checkout, with that head and the newest proof-pack URL.
+   The pass posts nothing and changes no state. The first candidate returning
+   `APPROVED` (exit 0) is this tick's issue: after the read-only pass, claim it
+   under step 2 if it is not already your own claim, then go straight to step 6.
+   Step 6 re-runs the verifier before acting; all its gates, including Default-head
+   equality and failure paths, still apply. An `api-error` skips that candidate
+   for this pass only and is listed in the run output. Only when no candidate
+   verifies APPROVED does the existing selection below run (packs, refreshes,
+   WAITING). Stop after that selected issue's action; never batch merges.
+   Queue order uses `enteredStateAt`, not `updatedAt`: comments, proof packs,
+   delivery replies, claims, delegate writes, assignee changes, controller notes
+   and relation writes (including issue-mention auto-links) do not re-sort it.
 
    **Own claims and waiting issues (WD-371).** Never sweep a delegate claim whose
    `delegate.id` equals your own bot viewer id: it is your own earlier claim, not a
@@ -380,6 +399,14 @@ the WSL VM recycles between commands).
    Read the pack and the reply back with `linear_bot.py issue <ID>`. Discord
    read-back uses R1 once it is installed (WD-546 OP-1); until then the send result's
    message id is the delivery evidence, and the reply must say so.
+
+   **Producing-tick delivery check:** The tick that posts a request records only
+   delivery evidence: the send result's message id and permalink. It may run the
+   verifier once as a parse and delivery check, labelled `delivery check` in the
+   existing delivery reply, with no extra comment. A step-5 read-back verdict is
+   never the approval decision for that request, on this tick or any later one.
+   Do not establish an approval position on the producing tick. Only a new verifier
+   run on a later tick under step 1 APPROVAL-FIRST or step 6 decides approval.
 
    Notification lanes are notify-only, and workers never react to the request — the
    approval artifact must come from Jonathan himself. Keep state `Approved`. Stop.
