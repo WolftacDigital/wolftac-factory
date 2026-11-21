@@ -1,0 +1,2109 @@
+"""WD-618 primitive tests. All state is synthetic harness-owned scratch.
+
+M2 guardian/IPC, M3 observation, M4 recover/adopt and M5 integration are PENDING.
+No test here asserts whole-criterion or deployed lease acceptance.
+"""
+import ctypes
+import ast
+import dataclasses
+import json
+import os
+from pathlib import Path
+import queue
+import re
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from unittest import mock
+from typing import Any
+import uuid
+import venv
+
+ROOT = Path(__file__).resolve().parents[2]
+ENTRY = ROOT / "deploy/tests/lease_fixtures/test_entry.py"
+LEASE = ROOT / "deploy/lease.py"
+FP = "a" * 64
+
+
+def scratch_root(environ):
+    """Require an explicit harness-owned long path, not Python's temp fallback."""
+    value = next((environ[key] for key in ("TEMP", "TMP", "TMPDIR") if environ.get(key)), None)
+    if not value or not Path(value).is_absolute() or re.search(r"~[0-9]", value):
+        raise AssertionError("BLOCKED fixture root: explicit full-path TEMP/TMP/TMPDIR required")
+    root = Path(value).resolve(strict=True)
+    if not root.is_dir():
+        raise AssertionError("BLOCKED fixture root: not a directory")
+    return root
+
+
+class OwnedSubst:
+    """A test mapping receipt; cleanup never deletes an unverified definition."""
+    def __init__(self, drive, target, env):
+        self.drive, self.target, self.env = drive, Path(target).resolve(), env
+        self.executable = str(Path(env["SYSTEMROOT"]) / "System32/subst.exe")
+        self.created_definition = None
+
+    @staticmethod
+    def unused_drive():
+        mask = ctypes.WinDLL("kernel32", use_last_error=True).GetLogicalDrives()
+        if not mask:
+            raise AssertionError("BLOCKED subst: GetLogicalDrives failed")
+        for i in range(25, 3, -1):
+            if not mask & (1 << i):
+                return chr(65 + i) + ":"
+        raise AssertionError("BLOCKED subst: no unused drive")
+
+    def definition(self):
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        query = k.QueryDosDeviceW
+        query.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        query.restype = ctypes.c_uint32
+        buf = ctypes.create_unicode_buffer(32768)
+        if not query(self.drive, buf, len(buf)):
+            if ctypes.get_last_error() == 2:
+                return None
+            raise AssertionError("BLOCKED subst: cannot verify current target")
+        return buf.value
+
+    def create(self):
+        if self.definition() is not None:
+            raise AssertionError("BLOCKED subst: occupied letter")
+        result = subprocess.run([self.executable, self.drive, str(self.target)], env=self.env,
+                                capture_output=True, timeout=20)
+        if result.returncode:
+            raise AssertionError(f"BLOCKED subst: creation failed ({result.returncode})")
+        expected = "\\??\\" + str(self.target)
+        actual = self.definition()
+        if actual != expected:
+            raise AssertionError(f"BLOCKED subst: created target mismatch {actual!r} != {expected!r}")
+        self.created_definition = actual
+        print(f"SUBST CREATED {self.drive} => {actual}", flush=True)
+
+    def cleanup(self):
+        if self.created_definition is None:
+            return "NOT-OWNED"
+        actual = self.definition()
+        if actual != self.created_definition:
+            raise AssertionError(f"BLOCKED subst: target replaced; preserved {self.drive} => {actual!r}")
+        result = subprocess.run([self.executable, self.drive, "/D"], env=self.env,
+                                capture_output=True, timeout=20)
+        if result.returncode or self.definition() is not None:
+            raise AssertionError("BLOCKED subst: owned cleanup failed")
+        self.created_definition = None
+        return "REMOVED-OWNED"
+
+
+class FixtureProcess:
+    def __init__(self, config, env, directory):
+        self.config = directory / (uuid.uuid4().hex + ".json")
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        self.process = subprocess.Popen([getattr(sys, "_base_executable"), "-B", str(ENTRY), str(self.config)],
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                        env=env, cwd=directory)
+        self.spawned_pid = self.process.pid
+        self.messages = queue.Queue()
+        self.stderr = []
+        self.reader = threading.Thread(target=self.read, daemon=True)
+        self.errors = threading.Thread(target=self.read_errors, daemon=True)
+        self.reader.start()
+        self.errors.start()
+
+    def read(self):
+        assert self.process.stdout is not None
+        for line in self.process.stdout:
+            self.messages.put(line)
+        self.messages.put(None)
+
+    def read_errors(self):
+        assert self.process.stderr is not None
+        self.stderr.append(self.process.stderr.read())
+
+    def receive(self):
+        try:
+            line = self.messages.get(timeout=30)
+        except queue.Empty as exc:
+            raise AssertionError("fixture response timeout") from exc
+        if line is None:
+            self.process.wait(timeout=10)
+            self.errors.join(timeout=10)
+            raise AssertionError(f"fixture {self.spawned_pid} exited {self.process.returncode}: {''.join(self.stderr)}")
+        return json.loads(line)
+
+    def send(self, value):
+        assert self.process.stdin is not None
+        self.process.stdin.write(value + "\n")
+        self.process.stdin.flush()
+
+    def terminate_owned(self):
+        assert self.process.pid == self.spawned_pid
+        assert self.spawned_pid != os.getpid()
+        if self.process.poll() is None:
+            self.process.terminate()  # Only this exact Popen-owned non-agent fixture.
+        self.process.wait(timeout=15)
+
+    def close(self):
+        if self.process.poll() is None:
+            try:
+                self.send("exit")
+                self.process.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                self.terminate_owned()
+        self.reader.join(timeout=5)
+        self.errors.join(timeout=5)
+        for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+            assert stream is not None
+            stream.close()
+        assert self.process.poll() is not None
+
+
+@unittest.skipUnless(os.name == "nt", "Windows identity/locking/process fixtures; NOT RUN on non-Windows")
+class M1Case(unittest.TestCase):
+    def setUp(self):
+        base = scratch_root(os.environ)
+        self.temp = tempfile.TemporaryDirectory(prefix="wd618-m1-", dir=base)
+        self.scratch = Path(self.temp.name).resolve()
+        self.assertTrue(self.scratch.is_relative_to(base))
+        self.state = self.scratch / "state"
+        self.worktree = self.scratch / "Worktree Long Identity Name"
+        self.worktree.mkdir()
+        (self.worktree / ".git").mkdir()
+        self.branch = "fixture-branch"
+        self.children = []
+        self.env = {key: os.environ[key] for key in
+                    ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "SYSTEMDRIVE")
+                    if key in os.environ}
+        for name in ("TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+            self.env[name] = str(self.scratch)
+        self.env["PYTHONDONTWRITEBYTECODE"] = "1"
+        self.addCleanup(self.cleanup)
+
+    def cleanup(self):
+        for child in reversed(self.children):
+            child.close()
+        self.assertTrue(all(c.process.poll() is not None for c in self.children))
+        self.assertTrue(self.scratch.is_relative_to(scratch_root(os.environ)))
+        for path in self.scratch.rglob("*"):
+            self.assertTrue(path.resolve().is_relative_to(self.scratch), str(path))
+        self.temp.cleanup()
+
+    def spawn(self, action="owner", **changes):
+        config = dict(action=action, root=str(self.state), worktree=str(self.worktree), branch=self.branch)
+        config.update(changes)
+        child = FixtureProcess(config, self.env, self.scratch)
+        self.children.append(child)
+        return child
+
+    def call(self, action, **changes):
+        child = self.spawn(action, **changes)
+        value = child.receive()
+        code = child.process.wait(timeout=30)
+        self.assertIn(code, (0, 2, 3, 5, 6, 7), ''.join(child.stderr))
+        return value
+
+    def probe(self, result, mode=None, **changes):
+        value = self.call("probe", **changes)
+        self.assertEqual(value["result"], result, value)
+        if mode is not None:
+            self.assertEqual(value["mode"], mode)
+        return value
+
+    def paths(self):
+        identities = self.call("identity")
+        return self.state / identities["wt"], self.state / identities["br"]
+
+    def second_worktree(self):
+        second = self.scratch / "Second worktree"
+        second.mkdir()
+        admin = self.worktree / ".git/worktrees/second"
+        admin.mkdir(parents=True)
+        (second / ".git").write_text("gitdir: " + str(admin) + "\n", encoding="utf-8")
+        (admin / "commondir").write_text("../..\n", encoding="utf-8")
+        return str(second)
+
+    def snapshot(self):
+        return {str(p.relative_to(self.state)): p.read_bytes()
+                for p in self.state.rglob("*") if p.is_file()}
+
+
+class TestM1Locks(M1Case):
+    def test_m1_ac1_barrier_lock(self):
+        self.race("LOCKED")
+
+    def test_m1_ac1_barrier_a2(self):
+        self.race("A2")
+
+    def race(self, barrier):
+        first = self.spawn(barrier=barrier)
+        self.assertEqual(first.receive()["barrier"], barrier)
+        self.assertEqual(self.call("owner")["result"], "HELD")
+        first.send("continue")
+        self.assertEqual(first.receive()["result"], "GRANTED")
+        first.send("release")
+        self.assertEqual(first.receive()["result"], "DONE")
+        self.assertEqual(first.process.wait(timeout=10), 0)
+
+    def test_m1_ac1_fifty_stress_races(self):
+        for iteration in range(50):
+            with self.subTest(iteration=iteration):
+                root = str(self.scratch / f"race-{iteration}")
+                a, b = self.spawn(root=root), self.spawn(root=root)
+                results = [a.receive(), b.receive()]
+                self.assertEqual(sorted(r["result"] for r in results), ["GRANTED", "HELD"])
+                owner = (a, b)[next(i for i, r in enumerate(results) if r["result"] == "GRANTED")]
+                owner.send("release")
+                self.assertEqual(owner.receive()["result"], "DONE")
+                for child in (a, b):
+                    self.assertEqual(child.process.wait(timeout=10), 0)
+                    child.close()
+                self.children = [c for c in self.children if c not in (a, b)]
+
+    def test_m1_ac2_delayed_old_release(self):
+        first = self.spawn()
+        one = first.receive()
+        first.send("release")
+        self.assertEqual(first.receive()["result"], "DONE")
+        self.assertEqual(first.process.wait(timeout=10), 0)
+        second = self.spawn()
+        two = second.receive()
+        self.assertEqual(two["gen"], one["gen"] + 1)
+        second.send("snapshot")
+        before = second.receive()["records"]
+        second.send("stale-release")
+        self.assertEqual(second.receive()["result"], "REJECTED")
+        second.send("snapshot")
+        self.assertEqual(second.receive()["records"], before)
+        self.probe("HELD")
+        second.send("snapshot")
+        self.assertEqual(second.receive()["records"], before)
+
+    def test_m1_branch_busy_releases_worktree_lock(self):
+        first = self.spawn()
+        self.assertEqual(first.receive()["result"], "GRANTED")
+        second = self.second_worktree()
+        self.probe("HELD", worktree=second)
+        other = self.spawn("lock-only", worktree=second, branch="different")
+        self.assertEqual(other.receive()["result"], "OK")
+
+    def test_m1_publication_requires_both_locks(self):
+        self.assertEqual(self.call("unlock-probe")["result"], "REJECTED")
+        self.assertFalse(any(self.state.rglob("state.json")))
+
+
+class TestM1Publication(M1Case):
+    def crash(self, step, action, expected, mode=None):
+        owner = self.spawn(action, barrier=step)
+        row = owner.receive()
+        self.assertEqual(row["barrier"], step)
+        self.assertEqual(row["pid"], owner.spawned_pid)
+        owner.terminate_owned()
+        self.probe(expected, mode)
+
+    def test_m1_ac10_crash_a1(self):
+        self.crash("A1", "owner", "OPERATOR-BLOCKED")
+
+    def test_m1_ac10_crash_a2(self):
+        self.crash("A2", "owner", "ORPHANED")
+
+    def test_m1_ac10_crash_a3(self):
+        self.crash("A3", "owner", "ORPHANED")
+
+    def test_m1_ac10_crash_r1(self):
+        self.crash("R1", "released", "GRANTED", "write")
+
+    def test_m1_ac10_crash_rc1(self):
+        self.crash("RC1", "restrict", "ORPHANED")
+
+    def test_m1_ac10_crash_rc2(self):
+        self.crash("RC2", "restrict", "GRANTED", "read-only")
+
+    def test_m1_ac10_crash_ad1(self):
+        self.crash("AD1", "adopt", "GRANTED", "write")
+
+    def test_m1_ac10_one_branch_two_worktrees(self):
+        other = self.second_worktree()
+        owner = self.spawn()
+        self.assertEqual(owner.receive()["result"], "GRANTED")
+        self.probe("HELD", worktree=other)
+        owner.terminate_owned()
+        self.probe("ORPHANED", worktree=other)
+
+    def test_m1_ac10_restriction_across_worktrees(self):
+        other = self.second_worktree()
+        self.assertEqual(self.call("restrict")["result"], "DONE")
+        self.probe("GRANTED", "read-only", worktree=other)
+        wt, br = self.paths()
+        (br / "state.json").unlink()
+        self.probe("GRANTED", "read-only", worktree=other)
+        self.assertEqual(json.loads((wt / "state.json").read_text())["restriction"]["kind"], "adoption-required")
+
+    def test_m1_ac10_deleted_branch_record_orphan(self):
+        owner = self.spawn()
+        self.assertEqual(owner.receive()["result"], "GRANTED")
+        owner.terminate_owned()
+        _, br = self.paths()
+        (br / "state.json").unlink()
+        self.probe("ORPHANED", worktree=self.second_worktree())
+
+    def test_m1_ac9_forged_lifecycles(self):
+        for lifecycle, recover, adopt in (
+                ("FREE", "REJECTED", "REJECTED"),
+                ("RELEASED", "REJECTED", "REJECTED"),
+                ("GRANTED", "REJECTED", "HELD"),
+                ("ORPHANED", "OK", "REJECTED"),
+                ("UNKNOWN", "UNKNOWN", "REJECTED")):
+            with self.subTest(lifecycle=lifecycle):
+                result = self.call("prechecks", lifecycle=lifecycle)
+                self.assertEqual(result, dict(recover=recover, adopt=adopt, unchanged=True))
+
+    def test_m1_ac9_earlier_evidence(self):
+        for values in ({"evidence_sha": "c" * 64}, {"evidence_gen": 0}):
+            with self.subTest(values=values):
+                result = self.call("prechecks", lifecycle="RELEASED", restricted=True, **values)
+                self.assertEqual(result, dict(recover="REJECTED", adopt="REJECTED", unchanged=True))
+
+
+class TestM1Pending(M1Case):
+    def test_m1_abandoned_a1_pointer_cleared_only_after_drain(self):
+        result = self.call("abandoned-a1")
+        self.assertEqual(result["result"], "DONE")
+        self.probe("GRANTED", "write")
+        _, br = self.paths()
+        self.assertEqual(json.loads((br / "state.json").read_text())["bound_to"], {})
+
+    def test_m1_pending_live_owner(self):
+        owner = self.spawn("journal")
+        self.assertEqual(owner.receive()["result"], "OK")
+        self.probe("HELD")
+
+    def test_m1_pending_dead_owner_same_and_other_worktree(self):
+        other = self.second_worktree()
+        owner = self.spawn("journal")
+        self.assertEqual(owner.receive()["result"], "OK")
+        owner.terminate_owned()
+        self.probe("OPERATOR-BLOCKED")
+        self.probe("OPERATOR-BLOCKED", worktree=other)
+
+    def test_m1_pending_recover_and_adopt_journals(self):
+        for kind in ("recover", "adopt"):
+            with self.subTest(kind=kind):
+                root = str(self.scratch / kind)
+                owner = self.spawn("journal", root=root, op=kind, terminal=True)
+                owner.receive()
+                self.probe("HELD", root=root)
+                owner.terminate_owned()
+                self.probe("OPERATOR-BLOCKED", root=root)
+
+    def test_m1_pending_partial_journal(self):
+        owner = self.spawn("journal")
+        journal = Path(owner.receive()["path"])
+        owner.terminate_owned()
+        journal.write_bytes(b'{"event":')
+        self.probe("UNKNOWN")
+
+    def test_m1_pending_unreadable_journal(self):
+        owner = self.spawn("journal")
+        journal = Path(owner.receive()["path"])
+        owner.terminate_owned()
+        journal.unlink()
+        journal.mkdir()  # A real unreadable-as-file path, not a mocked JSON parse.
+        self.probe("UNKNOWN")
+
+    def test_m1_generation_never_reused_and_explicit_terminal(self):
+        result = self.call("generations")
+        self.assertEqual((result["one"], result["two"]), (1, 2))
+        self.assertEqual(result["refused"], "FAILED-STORAGE")
+        lines = [json.loads(line) for line in result["terminal"].splitlines()]
+        self.assertEqual(lines[-1]["event"], "TXN-ABANDONED-DRAINED")
+        self.assertTrue(lines[-1]["evidence"]["drained"])
+
+
+class TestM1Storage(M1Case):
+    def test_m1_deleted_published_authority_is_unknown(self):
+        self.assertEqual(self.call("released")["result"], "DONE")
+        wt, _ = self.paths()
+        (wt / "state.json").unlink()
+        self.probe("UNKNOWN")
+
+    def test_m1_ac18_late_live_owner_clock_shifts(self):
+        for shift in (0, -86400, 86400):
+            with self.subTest(shift=shift):
+                owner = self.spawn(root=str(self.scratch / str(shift)), old_heartbeat=True, clock_shift=shift)
+                self.assertEqual(owner.receive()["result"], "GRANTED")
+                self.probe("HELD", root=str(self.scratch / str(shift)), clock_shift=-shift)
+
+    def test_m1_ac19_truncated_state(self):
+        self.assertEqual(self.call("released")["result"], "DONE")
+        wt, _ = self.paths()
+        (wt / "state.json").write_bytes(b'{"lifecycle":')
+        self.probe("UNKNOWN")
+
+    def test_m1_ac19_truncated_branch(self):
+        self.assertEqual(self.call("released")["result"], "DONE")
+        _, br = self.paths()
+        (br / "state.json").write_bytes(b'{"bound_to":')
+        self.probe("UNKNOWN")
+
+    def test_m1_ac19_truncated_heartbeat(self):
+        self.assertEqual(self.call("released")["result"], "DONE")
+        wt, _ = self.paths()
+        (wt / "gen-1/heartbeat.json").write_bytes(b'{"ts":')
+        self.probe("UNKNOWN")
+
+    def test_m1_ac19_stray_temp_ignored(self):
+        self.assertEqual(self.call("released")["result"], "DONE")
+        wt, _ = self.paths()
+        (wt / "state.json.tmp-stray").write_bytes(b'not JSON')
+        self.probe("GRANTED", "write")
+
+    def test_m1_ac19_pid_creation_and_access_denied(self):
+        owner = self.spawn()
+        identity = owner.receive()["identity"]
+        self.assertEqual(self.call("liveness", identity=identity)["result"], "alive")
+        reused = dict(identity, ctime=identity["ctime"] + 1)
+        self.assertEqual(self.call("liveness", identity=reused)["result"], "dead")
+        self.assertEqual(self.call("liveness", identity=identity, denied=True)["result"], "UNKNOWN")
+        owner.terminate_owned()
+        self.assertEqual(self.call("liveness", identity=identity)["result"], "dead")
+
+    def test_m1_strict_schema_and_duplicate_keys(self):
+        self.assertEqual(self.call("released")["result"], "DONE")
+        wt, _ = self.paths()
+        path = wt / "state.json"
+        original = path.read_text()
+        parsed = json.loads(original)
+        for malformed in (dict(parsed, surprise=1), dict(parsed, gen=True),
+                          dict(parsed, guardian={"pid": 1}), dict(parsed, lifecycle="RECOVERED")):
+            path.write_text(json.dumps(malformed), encoding="utf-8")
+            self.probe("UNKNOWN")
+        path.write_text(original.replace('"gen":1', '"gen":1,"gen":1'), encoding="utf-8")
+        self.probe("UNKNOWN")
+
+    def test_m1_failed_storage_never_grants(self):
+        result = self.call("owner", fail="state-write")
+        self.assertEqual(result["result"], "FAILED-STORAGE")
+        self.probe("OPERATOR-BLOCKED")
+
+
+class TestM1Identity(M1Case):
+    def junction(self, path, target):
+        result = subprocess.run([self.env["COMSPEC"], "/d", "/c", "mklink", "/J", str(path), str(target)],
+                                env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.addCleanup(lambda: os.rmdir(path) if os.path.lexists(path) else None)
+
+    def owner(self):
+        owner = self.spawn()
+        self.assertEqual(owner.receive()["result"], "GRANTED")
+        return owner
+
+    def test_m1_ac15_alias_ancestor_junction(self):
+        alias = self.scratch / "alias-ancestor-junction"
+        self.junction(alias, self.scratch)
+        self.owner()
+        self.probe("HELD", worktree=str(alias / self.worktree.name))
+
+    def test_m1_ac15_alias_8dot3(self):
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        f = k.GetShortPathNameW
+        f.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        f.restype = ctypes.c_uint32
+        buf = ctypes.create_unicode_buffer(32768)
+        self.assertGreater(f(str(self.worktree), buf, len(buf)), 0, "BLOCKED alias-8dot3: API failed")
+        self.assertNotEqual(Path(buf.value).name.lower(), self.worktree.name.lower(),
+                            "BLOCKED alias-8dot3: short names unavailable on C:")
+        self.owner()
+        self.probe("HELD", worktree=buf.value)
+
+    def test_m1_ac15_alias_drive_subst(self):
+        mapping = OwnedSubst(OwnedSubst.unused_drive(), self.scratch, self.env)
+        try:
+            mapping.create()
+            self.owner()
+            self.probe("HELD", worktree=mapping.drive + "\\" + self.worktree.name)
+        finally:
+            self.assertEqual(mapping.cleanup(), "REMOVED-OWNED")
+        self.assertIsNone(mapping.definition())
+
+    def test_m1_subst_occupied_and_failed_create_remove_nothing(self):
+        owner = OwnedSubst(OwnedSubst.unused_drive(), self.scratch, self.env)
+        owner.create()
+        try:
+            occupied = OwnedSubst(owner.drive, self.worktree, self.env)
+            with self.assertRaisesRegex(AssertionError, "occupied letter"):
+                occupied.create()
+            self.assertEqual(occupied.cleanup(), "NOT-OWNED")
+            self.assertEqual(owner.definition(), owner.created_definition)
+        finally:
+            self.assertEqual(owner.cleanup(), "REMOVED-OWNED")
+        failed = OwnedSubst(owner.drive, self.scratch / "does-not-exist", self.env)
+        with self.assertRaisesRegex(AssertionError, "creation failed"):
+            failed.create()
+        self.assertEqual(failed.cleanup(), "NOT-OWNED")
+        self.assertIsNone(failed.definition())
+
+    def test_m1_subst_replaced_target_is_preserved_and_reported(self):
+        original = OwnedSubst(OwnedSubst.unused_drive(), self.scratch, self.env)
+        original.create()
+        # A second test-owned actor removes only the verified original mapping.
+        replacer = OwnedSubst(original.drive, self.scratch, self.env)
+        replacer.created_definition = original.created_definition
+        self.assertEqual(replacer.cleanup(), "REMOVED-OWNED")
+        replacement = OwnedSubst(original.drive, self.worktree, self.env)
+        replacement.create()
+        try:
+            with self.assertRaisesRegex(AssertionError, "target replaced; preserved") as caught:
+                original.cleanup()
+            print(str(caught.exception), flush=True)
+            self.assertEqual(replacement.definition(), replacement.created_definition)
+            self.assertTrue(Path(replacement.drive + "\\").is_dir())
+        finally:
+            self.assertEqual(replacement.cleanup(), "REMOVED-OWNED")
+        self.assertIsNone(replacement.definition())
+
+    def test_m1_fixture_root_is_explicit_and_confined(self):
+        self.assertTrue(self.scratch.is_relative_to(scratch_root(os.environ)))
+        for env in ({}, {"TEMP": "relative"}, {"TMP": "C:/SHORT~1/scratch"}):
+            with self.subTest(env=env), self.assertRaisesRegex(AssertionError, "explicit full-path"):
+                scratch_root(env)
+        for key in ("TEMP", "TMP", "TMPDIR"):
+            self.assertEqual(scratch_root({key: str(self.scratch)}), self.scratch)
+
+    def test_m1_ac15_root_is_reparse(self):
+        alias = self.scratch / "root-is-reparse"
+        self.junction(alias, self.worktree)
+        self.owner()
+        self.probe("UNKNOWN", worktree=str(alias))
+
+    def test_m1_ac15_different_branch_same_worktree(self):
+        self.owner()
+        self.probe("HELD", branch="different-branch")
+
+
+class TestM1Entry(M1Case):
+    def test_m1_fixed_result_lines_and_codes(self):
+        rows = {
+            0: "OK GRANTED DONE CANCELLED NOT-ADMITTED", 2: "HELD",
+            3: "LEASE-LOST REJECTED", 4: "FOREIGN-WRITE",
+            5: "ORPHANED OPERATOR-BLOCKED BUSY BATCH-OPEN RUNNING",
+            6: "UNKNOWN UNKNOWN-EFFECT UNSUPPORTED-CONTEXT TEST-OVERRIDE-REJECTED FAILED-STORAGE",
+            7: "ADOPTION-REQUIRED",
+        }
+        for code, names in rows.items():
+            for name in names.split():
+                with self.subTest(result=name):
+                    config = self.scratch / "emit.json"
+                    config.write_text(json.dumps({"action": "emit-result", "result": name}))
+                    result = subprocess.run([getattr(sys, "_base_executable"), "-B", str(ENTRY), str(config)],
+                                            env=self.env, cwd=self.scratch, capture_output=True,
+                                            text=True, timeout=20)
+                    self.assertEqual(result.returncode, code, result.stderr)
+                    self.assertEqual(result.stdout, name + "\n")
+
+    def invoke(self, verb, extra=None):
+        env = dict(self.env)
+        env.update(extra or {})
+        before = {str(p): p.read_bytes() for p in self.scratch.rglob("*") if p.is_file()}
+        result = subprocess.run([sys.executable, "-B", str(LEASE), verb, "--resource", str(self.state)],
+                                cwd=self.scratch, env=env, capture_output=True, text=True, timeout=20)
+        after = {str(p): p.read_bytes() for p in self.scratch.rglob("*") if p.is_file()}
+        self.assertEqual(before, after)
+        self.assertEqual(result.returncode, 6, result.stderr)
+        return result.stdout.strip()
+
+    def test_m1_inert_incomplete_all_verbs(self):
+        for verb in ("hold", "acquire", "gate", "begin-native", "end-native", "exec", "release", "status", "cancel", "recover", "adopt", "unknown"):
+            with self.subTest(verb=verb):
+                self.assertEqual(self.invoke(verb), "UNKNOWN")
+        self.assertFalse(self.state.exists())
+
+    def test_m1_normal_entry_refuses_overrides(self):
+        for name in ("LEASE_TEST_BOOT_ID", "LEASE_TEST_FAIL", "LEASE_TEST_BARRIERS", "LEASE_TEST_UNKNOWN"):
+            with self.subTest(name=name):
+                self.assertEqual(self.invoke("recover", {name: ""}), "TEST-OVERRIDE-REJECTED")
+        self.assertFalse(self.state.exists())
+
+    def test_m1_normal_entry_fake_boot_preserves_orphan(self):
+        owner = self.spawn()
+        self.assertEqual(owner.receive()["result"], "GRANTED")
+        owner.terminate_owned()
+        self.probe("ORPHANED")
+        self.assertEqual(self.invoke("recover", {"LEASE_TEST_BOOT_ID": "99"}), "TEST-OVERRIDE-REJECTED")
+        self.probe("ORPHANED")
+
+
+class TestM1PlatformRefusal(unittest.TestCase):
+    """Unskipped Linux proof; Windows simulation is explicitly not Linux proof."""
+    def setUp(self):
+        harness = dict(os.environ)
+        # GitHub supplies its session-owned scratch as RUNNER_TEMP, not TMPDIR.
+        # Make that explicit for this test harness, without a system-temp fallback.
+        if os.name != "nt" and not any(harness.get(k) for k in ("TEMP", "TMP", "TMPDIR")):
+            harness["TMPDIR"] = harness.get("RUNNER_TEMP", "")
+        base = scratch_root(harness)
+        self.temp = tempfile.TemporaryDirectory(prefix="wd618-platform-", dir=base)
+        self.addCleanup(self.temp.cleanup)
+        self.scratch = Path(self.temp.name).resolve()
+        self.assertTrue(self.scratch.is_relative_to(base))
+        self.env = {k: os.environ[k] for k in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT")
+                    if k in os.environ}
+        for key in ("TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+            self.env[key] = str(self.scratch)
+
+    def invoke(self, path, override=False, instrument=False):
+        env = dict(self.env)
+        if override:
+            env["LEASE_TEST_BOOT_ID"] = "99"
+        args = [getattr(sys, "_base_executable", sys.executable), "-I", "-S", "-B"]
+        if instrument or os.name == "nt":
+            # Installed in the actual child before main, never a parent-only trace.
+            code = '''
+import os, runpy, sys, types
+module = runpy.run_path(sys.argv[1], run_name="lease_platform_probe")
+if os.name == "nt":
+    module["main"].__globals__["os"] = types.SimpleNamespace(name="posix", environ=os.environ)
+effects = []
+def audit(event, args):
+    writing = event == "open" and ((isinstance(args[1], str) and any(c in args[1] for c in "wax+")) or
+                                  (isinstance(args[2], int) and args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC)))
+    if writing or event.startswith(("subprocess.", "winreg.", "msvcrt.", "os.spawn", "os.exec", "os.fork")) or event in (
+            "os.mkdir", "os.remove", "os.rename", "os.rmdir", "os.system", "ctypes.dlopen"):
+        effects.append(event)
+        raise AssertionError("protected effect: " + event)
+sys.addaudithook(audit)
+result = module["main"](["hold", "--resource", sys.argv[2]])
+print("EFFECT-AUDIT loaded=true effects=" + str(len(effects)), file=sys.stderr)
+sys.exit(result)
+'''
+            args += ["-c", code, str(path), str(self.scratch / "state")]
+        else:
+            args += [str(path), "hold", "--resource", str(self.scratch / "state")]
+        before = {str(p.relative_to(self.scratch)): p.read_bytes() if p.is_file() else None
+                  for p in self.scratch.rglob("*")}
+        result = subprocess.run(args, env=env, cwd=self.scratch, capture_output=True, text=True, timeout=20)
+        after = {str(p.relative_to(self.scratch)): p.read_bytes() if p.is_file() else None
+                 for p in self.scratch.rglob("*")}
+        self.assertEqual(before, after, "normal entry wrote protected state")
+        self.assertEqual(result.returncode, 6, result.stderr)
+        if instrument or os.name == "nt":
+            self.assertEqual(result.stderr, "EFFECT-AUDIT loaded=true effects=0\n")
+        else:
+            self.assertEqual(result.stderr, "")
+        return result
+
+    def assert_unsupported(self, result):
+        self.assertEqual(result.stdout, "UNSUPPORTED-CONTEXT\n")
+        self.assertEqual(result.returncode, 6)
+
+    def test_m1_non_windows_cli_exact_refusal_no_effects(self):
+        self.assert_unsupported(self.invoke(LEASE))
+        self.assert_unsupported(self.invoke(LEASE, instrument=True))
+        self.assertFalse(any(self.scratch.iterdir()))
+
+    def test_m1_non_windows_unknown6_negative_control(self):
+        source = LEASE.read_text(encoding="utf-8")
+        guard = '    if os.name != "nt":\n        return emit("UNSUPPORTED-CONTEXT")\n'
+        self.assertEqual(source.count(guard), 1)
+        mutant = self.scratch / "lease_without_platform_guard.py"
+        mutant.write_text(source.replace(guard, ""), encoding="utf-8", newline="\n")
+        result = self.invoke(mutant)
+        self.assertEqual(result.stdout, "UNKNOWN\n")
+        with self.assertRaisesRegex(AssertionError, "UNSUPPORTED-CONTEXT"):
+            self.assert_unsupported(result)
+
+    def test_m1_non_windows_override_refusal_precedes_platform(self):
+        self.assertEqual(self.invoke(LEASE, override=True).stdout, "TEST-OVERRIDE-REJECTED\n")
+        self.assertFalse(any(self.scratch.iterdir()))
+
+
+@unittest.skipUnless(os.name == "nt", "Windows M2a fixtures; NOT RUN on non-Windows")
+class M2aCase(unittest.TestCase):
+    def setUp(self):
+        from deploy import lease
+        self.lease = lease
+        self.temp = tempfile.TemporaryDirectory(prefix="wd618-m2a-", dir=scratch_root(os.environ))
+        self.scratch = Path(self.temp.name).resolve()
+        self.assertTrue(self.scratch.is_relative_to(scratch_root(os.environ)))
+        self.addCleanup(self.temp.cleanup)
+        self.boot = mock.Mock()
+        self.boot.read.return_value = 10
+        self.deps = lease.Deps(self.boot, lease.NoBarrier(), lease.NoFailure(),
+                               lease.NoAudit(), lease.ProcessApi(), time.time)
+        self.env = {key: os.environ[key] for key in
+                    ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "SYSTEMDRIVE")
+                    if key in os.environ}
+        for key in ("TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+            self.env[key] = str(self.scratch)
+        self.api: Any = lease.ProcApi()  # Methods gain fixture-only recording spies.
+        self.deps = dataclasses.replace(self.deps, process=self.api)
+        self.fixture_children = []
+        self.addCleanup(self.drain_fixture_children)
+
+    def drain_fixture_children(self):
+        for api, child, pid in self.fixture_children:
+            self.assertEqual(child.pid, pid)
+            self.assertNotEqual(pid, os.getpid())
+            if child.closed:
+                continue
+            if api.wait(child, 0) is None:
+                # Test exception NG-8(a), not production D9. Original handles only.
+                k = self.lease._kernel()
+                k.GetProcessId.argtypes = [ctypes.c_void_p]
+                k.GetProcessId.restype = ctypes.c_uint32
+                self.assertEqual(k.GetProcessId(child.process_handle), pid)
+                k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+                k.TerminateProcess.restype = ctypes.c_int
+                self.assertTrue(k.TerminateProcess(child.process_handle, 91))
+            self.assertIsNotNone(api.wait(child, 15000))
+            api.close_child(child)
+        self.assertTrue(all(child.closed for _, child, _ in self.fixture_children))
+
+    def argv(self, marker="marker", release="release"):
+        return [getattr(sys, "_base_executable"), "-B", str(ENTRY.with_name("m2a_child.py")),
+                str(self.scratch), marker, release]
+
+    def child(self, api=None):
+        api = api or self.api
+        child = api.create_suspended(self.argv(), str(self.scratch), self.env)
+        self.fixture_children.append((api, child, child.pid))
+        return child
+
+    def job(self):
+        job = self.lease.Job.create(self.deps)
+        self.addCleanup(job.close)
+        return job
+
+    def await_file(self, name):
+        path = self.scratch / name
+        deadline = time.monotonic() + 15
+        while not path.exists():
+            self.assertLess(time.monotonic(), deadline, "fixture marker timeout: " + name)
+            time.sleep(0.01)
+        return path
+
+    def ledger(self, deps=None, directory=None):
+        ledger = self.lease.Ledger.create(directory or self.scratch, deps or self.deps)
+        self.addCleanup(ledger.close)
+        return ledger
+
+    def unknown(self, function, *args):
+        with self.assertRaises(self.lease.LeaseError) as caught:
+            function(*args)
+        self.assertEqual(caught.exception.result, "UNKNOWN")
+
+
+class TestM2aLedger(M2aCase):
+    def test_m2a_ledger_seq_fsync_strict_read(self):
+        ledger = self.ledger()
+        assert ledger._stream is not None
+        with mock.patch.object(self.lease.os, "fsync", wraps=os.fsync) as sync:
+            self.assertEqual(ledger.append("one", "exec", "ADMITTED"), 1)
+            self.assertEqual(ledger.append("one", "exec", "LAUNCH-ATTEMPTED"), 2)
+            self.assertEqual(sync.call_count, 2)
+            self.assertEqual(sync.call_args.args, (ledger._stream.fileno(),))
+        self.assertEqual(ledger.phase("one"), "LAUNCH-ATTEMPTED")
+        reader = self.lease.Ledger.open_existing(ledger.path, self.deps)
+        self.assertEqual(reader.phase("one"), "LAUNCH-ATTEMPTED")
+        self.assertEqual([r["seq"] for r in reader.entries()], [1, 2])
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            reader.append("two", "exec", "ADMITTED")
+        ledger.close()
+        original = ledger.path.read_bytes()
+        for bad in (b'{}\n', b'not-json\n', original.replace(b'LAUNCH-ATTEMPTED', b'BAD-PHASE')):
+            with self.subTest(bad=bad):
+                ledger.path.write_bytes(bad)
+                self.unknown(reader.entries)
+
+    def test_m2a_ledger_truncated_last_line_unknown(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        ledger.close()
+        with ledger.path.open("ab") as stream:
+            stream.write(b'{"seq":2,"phase":"RESUME-ATTEMPTED"')
+        self.unknown(self.lease.Ledger.open_existing, ledger.path, self.deps)
+
+    def test_m2a_ledger_nonincreasing_seq_unknown(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        ledger.close()
+        row = json.loads(ledger.path.read_bytes())
+        for seq in (1, 0, 3, None, True):
+            with self.subTest(seq=seq):
+                other = dict(row, seq=seq)
+                ledger.path.write_text(json.dumps(row) + "\n" + json.dumps(other) + "\n", newline="\n")
+                self.unknown(ledger.entries)
+        del row["seq"]
+        ledger.path.write_text(json.dumps(row) + "\n", newline="\n")
+        self.unknown(ledger.entries)
+
+    def test_m2a_ledger_append_failure_latches_failed_storage(self):
+        for source in ("injection", "fsync", "flush", "write"):
+            with self.subTest(source=source):
+                directory = self.scratch / source
+                directory.mkdir()
+                fail = mock.Mock()
+                fail.check.side_effect = OSError("injected") if source == "injection" else None
+                ledger = self.ledger(dataclasses.replace(self.deps, fail=fail), directory)
+                if source in ("flush", "write"):
+                    stream = mock.Mock(wraps=ledger._stream)
+                    getattr(stream, source).side_effect = OSError(source)
+                    ledger._stream = stream
+                with mock.patch.object(self.lease.os, "fsync", side_effect=OSError("fsync") if source == "fsync" else None):
+                    with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+                        ledger.append("one", "exec", "ADMITTED")
+                self.assertTrue(ledger.failed)
+                self.assertIsNone(ledger.phase("one"))
+                self.assertEqual(ledger._seq, 0)
+                with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+                    ledger.append("one", "exec", "ADMITTED")
+
+    def test_m2a_ledger_records_admission_boot_id(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        self.boot.read.return_value = 11
+        ledger.append("one", "exec", "LAUNCH-ATTEMPTED")
+        ledger.append("two", "exec", "ADMITTED")
+        self.assertEqual([r["boot_id"] for r in ledger.entries()], [10, 10, 11])
+        self.boot.read.side_effect = OSError("unreadable boot")
+        before = ledger.path.read_bytes()
+        self.unknown(ledger.append, "three", "exec", "ADMITTED")
+        self.assertEqual(ledger.path.read_bytes(), before)
+        self.assertIsNone(ledger.phase("three"))
+
+    def test_m2a_ledger_never_reopens_existing(self):
+        ledger = self.ledger()
+        ledger.append("one", "exec", "ADMITTED")
+        ledger.close()
+        before = ledger.path.read_bytes()
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            self.lease.Ledger.create(self.scratch, self.deps)
+        self.assertEqual(ledger.path.read_bytes(), before)
+
+
+class TestM2aJob(M2aCase):
+    def test_m2a_job_flags_no_breakaway_no_kill_on_close(self):
+        job = self.job()
+        self.assertEqual(job.flags() & 0x3800, 0)
+        self.assertEqual(job.active(), 0)
+        self.assertEqual(job.members(), [])
+        child = self.child()
+        self.assertGreater(child.ctime, 0)
+        self.assertIsNone(self.api.wait(child, 0))
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.assign(job, child)
+        self.assertTrue(job.contains(child))
+        self.assertEqual(job.active(), 1)
+        self.assertEqual(job.members(), [self.lease.ProcIdentity(child.pid, child.ctime)])
+        self.assertEqual(self.api.resume(child), 1)
+        self.assertEqual(json.loads(self.await_file("marker").read_text())["pid"], child.pid)
+        (self.scratch / "release").touch()
+        self.assertEqual(self.api.wait(child, 15000), 0)
+        self.assertEqual(job.active(), 0)
+
+    def test_m2a_job_close_terminates_nothing(self):
+        job = self.job()
+        child = self.child()
+        self.api.assign(job, child)
+        self.assertTrue(job.contains(child))
+        self.assertEqual(self.api.resume(child), 1)
+        self.assertEqual(json.loads(self.await_file("marker").read_text())["pid"], child.pid)
+        job.close()
+        self.assertIsNone(self.api.wait(child, 200))
+        self.assertEqual(self.api.creation_time(child.pid), child.ctime)
+        (self.scratch / "release").touch()
+        self.assertEqual(self.api.wait(child, 15000), 0)
+
+
+class PhaseBarrier:
+    def __init__(self, phase):
+        self.phase = phase
+        self.entered, self.leave = threading.Event(), threading.Event()
+
+    def reach(self, phase):
+        if phase == self.phase:
+            self.entered.set()
+            if not self.leave.wait(30):
+                raise AssertionError("fixture barrier timeout: " + phase)
+
+
+class M2aExecutorCase(M2aCase):
+    def executor(self, fail_at=(), barrier=None, argv=None):
+        fail = mock.Mock()
+        def check(name):
+            if name in fail_at:
+                raise OSError("injected " + name)
+        fail.check.side_effect = check
+        deps = dataclasses.replace(self.deps, fail=fail, barrier=barrier or self.lease.NoBarrier())
+        original_create = self.api.create_suspended
+        def create(*args):
+            child = original_create(*args)
+            self.fixture_children.append((self.api, child, child.pid))
+            return child
+        self.api.create_suspended = mock.Mock(side_effect=create)
+        self.api.resume = mock.Mock(wraps=self.api.resume)
+        self.api.terminate_unrun = mock.Mock(wraps=self.api.terminate_unrun)
+        ledger = self.ledger(deps)
+        executor = self.lease.Executor(ledger, self.job(), deps, threading.Lock())
+        self.assertEqual(executor.admit("op", argv or self.argv(), str(self.scratch), self.env), "ADMITTED")
+        return executor
+
+    def start(self, executor, barrier):
+        results = []
+        def run():
+            try:
+                results.append(executor.run("op"))
+            except BaseException as exc:
+                results.append(exc)
+        thread = threading.Thread(target=run)
+        def cleanup():
+            barrier.leave.set()
+            (self.scratch / "release").touch()
+            (self.scratch / "grand-release").touch()
+            thread.join(20)
+            self.assertFalse(thread.is_alive(), "fixture executor did not drain")
+        self.addCleanup(cleanup)
+        thread.start()
+        self.assertTrue(barrier.entered.wait(15), results)
+        return thread, results
+
+    def finish(self, thread, results, barrier):
+        barrier.leave.set()
+        thread.join(20)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], self.lease.Outcome)
+        return results[0]
+
+    def phases(self, executor):
+        return [row["phase"] for row in executor.ledger.entries()]
+
+class TestM2aExecutor(M2aExecutorCase):
+    def test_m2a_failed_cancel_never_continues_to_resume(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        self.api.terminate_unrun.side_effect = self.lease.LeaseError("UNKNOWN")
+        self.assertEqual(executor.cancel("op").result, "UNKNOWN")
+        self.assertEqual(self.finish(thread, results, barrier).result, "UNKNOWN")
+        self.api.resume.assert_not_called()
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.assertIsNone(self.api.wait(self.fixture_children[0][1], 0))
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_resume_attempted_refuses_d9_before_os_resume(self):
+        barrier = PhaseBarrier("RESUME-ATTEMPTED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        record = executor._ops["op"]
+        with executor.phase_mutex:
+            record.cleanup_reason = "cancel"
+            with self.assertRaisesRegex(self.lease.LeaseError, "REJECTED"):
+                self.api.terminate_unrun(record.child, record)
+        self.assertEqual(executor.cancel("op").result, "RUNNING")
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.resume.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+
+    def test_m2a_create_failure_launch_failed_nothing_ran(self):
+        executor = self.executor(argv=[str(self.scratch / "missing.exe")])
+        result = executor.run("op")
+        self.assertEqual(result.phase, "LAUNCH-FAILED")
+        self.assertEqual(executor.open_ops(), [])
+        self.assertEqual(self.phases(executor), ["ADMITTED", "LAUNCH-ATTEMPTED", "LAUNCH-FAILED"])
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.resume.assert_not_called()
+        self.api.terminate_unrun.assert_not_called()
+
+    def test_m2a_assign_failed_d9_terminated_unrun_marker_absent(self):
+        executor = self.executor(fail_at={"assign"})
+        self.assertEqual(executor.run("op").result, "CANCELLED")
+        self.assertEqual(self.phases(executor), ["ADMITTED", "LAUNCH-ATTEMPTED", "LAUNCHED-SUSPENDED",
+                                                "ASSIGN-FAILED", "TERMINATED-UNRUN", "CANCELLED"])
+        self.api.terminate_unrun.assert_called_once()
+        child = self.fixture_children[0][1]
+        self.assertEqual(self.api.wait(child, 0), 1)
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.resume.assert_not_called()
+        self.assertEqual(executor.open_ops(), [])
+
+    def test_m2a_resume_attempted_append_fail_no_resume_d9(self):
+        executor = self.executor(fail_at={"append:RESUME-ATTEMPTED"})
+        self.assertEqual(executor.run("op").result, "FAILED-STORAGE")
+        self.api.resume.assert_not_called()
+        self.api.terminate_unrun.assert_called_once()
+        self.assertEqual(self.api.wait(self.fixture_children[0][1], 0), 1)
+        self.assertFalse((self.scratch / "marker").exists())
+        self.assertNotIn("RESUME-ATTEMPTED", self.phases(executor))
+        self.assertEqual(executor.status("op").result, "UNKNOWN")
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.assertTrue(executor.ledger.failed)
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            executor.admit("next", self.argv(), str(self.scratch), self.env)
+
+    def test_m2a_terminated_unrun_append_fail_op_open_status_unknown(self):
+        executor = self.executor(fail_at={"assign", "append:TERMINATED-UNRUN"})
+        self.assertEqual(executor.run("op").result, "FAILED-STORAGE")
+        self.api.terminate_unrun.assert_called_once()
+        self.assertEqual(self.api.wait(self.fixture_children[0][1], 0), 1)
+        self.assertEqual(executor.ledger.phase("op"), "ASSIGN-FAILED")
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.assertEqual(executor.status("op").result, "UNKNOWN")
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_truncated_resume_attempted_recovered_unknown_no_d9(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        recovered = self.scratch / "recovered.jsonl"
+        recovered.write_bytes(executor.ledger.path.read_bytes() + b'{"phase":"RESUME-ATTEMPTED"')
+        reader = self.lease.Ledger(recovered, self.deps)
+        self.assertEqual(self.lease.classify_recovered(reader), "UNKNOWN")
+        self.assertEqual(self.lease.classify_recovered(reader, executor), "UNKNOWN")
+        self.api.terminate_unrun.assert_not_called()
+        self.assertIsNone(self.api.wait(self.fixture_children[0][1], 0))
+        # The original live executor, not recovery, drains normally after proof.
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+        self.api.terminate_unrun.assert_not_called()
+
+    def test_m2a_after_os_resume_before_resumed_marker_appears_cancel_running(self):
+        barrier = PhaseBarrier("after-os-resume")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        child = self.fixture_children[0][1]
+        self.assertEqual(json.loads(self.await_file("marker").read_text())["pid"], child.pid)
+        self.assertEqual(executor.ledger.phase("op"), "RESUME-ATTEMPTED")
+        self.assertEqual(executor.cancel("op").result, "RUNNING")
+        self.assertEqual(executor.status("op").result, "RUNNING")
+        self.assertEqual(executor.open_ops(), ["op"])
+        self.api.terminate_unrun.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+        self.assertEqual(executor.open_ops(), [])
+
+    def test_m2a_resume_uncertain_no_cleanup_normal_drain(self):
+        barrier = PhaseBarrier("RESUME-UNCERTAIN")
+        executor = self.executor(barrier=barrier)
+        original_resume = self.api.resume
+        def uncertain(child):
+            self.assertEqual(original_resume(child), 1)  # Real OS effect, uncertain reported result.
+            return 0xffffffff
+        self.api.resume = mock.Mock(side_effect=uncertain)
+        thread, results = self.start(executor, barrier)
+        self.await_file("marker")
+        self.assertEqual(executor.cancel("op").result, "RUNNING")
+        self.api.terminate_unrun.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+        self.assertEqual(self.phases(executor)[-3:], ["RESUME-UNCERTAIN", "EXITED", "DRAINED"])
+
+    def test_m2a_old_generation_suspended_child_no_termination_operator_blocked(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        reader = self.lease.Ledger.open_existing(executor.ledger.path, self.deps)
+        later = self.scratch / "later-generation"
+        later.mkdir()
+        new_executor = self.lease.Executor(self.ledger(directory=later), executor.job,
+                                           self.deps, threading.Lock())
+        self.assertEqual(self.lease.classify_recovered(reader, new_executor), "OPERATOR-BLOCKED")
+        self.assertEqual(new_executor.cancel("op").result, "REJECTED")
+        self.assertIsNone(self.api.wait(self.fixture_children[0][1], 0))
+        self.assertFalse((self.scratch / "marker").exists())
+        self.api.terminate_unrun.assert_not_called()
+        (self.scratch / "release").touch()
+        self.assertEqual(self.finish(thread, results, barrier).result, "DONE")
+
+    def test_m2a_pre_create_cancel_launch_cancelled_no_terminate_call(self):
+        barrier = PhaseBarrier("LAUNCH-ATTEMPTED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        self.assertEqual(executor.status("op").result, "RUNNING")
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(executor.status("op").result, "CANCELLED")
+        self.assertEqual(self.finish(thread, results, barrier).result, "CANCELLED")
+        self.assertEqual(self.phases(executor)[-2:], ["LAUNCH-CANCELLED", "CANCELLED"])
+        self.api.create_suspended.assert_not_called()
+        self.api.terminate_unrun.assert_not_called()
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_d9_refuses_pid_and_foreign_child(self):
+        barrier = PhaseBarrier("LAUNCHED-SUSPENDED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        child = self.fixture_children[0][1]
+        foreign_api = self.lease.ProcApi()
+        foreign = self.child(foreign_api)
+        record = executor._ops["op"]
+        with executor.phase_mutex:
+            record.cleanup_reason = "cancel"
+            for wrong in (child.pid, foreign, dataclasses.replace(child)):
+                with self.assertRaisesRegex(self.lease.LeaseError, "REJECTED"):
+                    self.api.terminate_unrun(wrong, record)
+        self.assertIsNone(self.api.wait(child, 0))
+        self.assertIsNone(foreign_api.wait(foreign, 0))
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(self.api.wait(child, 0), 1)
+        self.assertFalse((self.scratch / "marker").exists())
+        self.assertEqual(self.finish(thread, results, barrier).result, "CANCELLED")
+        # Foreign child cleanup belongs solely to its test creator, never D9.
+
+    def test_m2a_cancel_admitted_no_create(self):
+        executor = self.executor()
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(executor.run("op").result, "CANCELLED")
+        self.api.create_suspended.assert_not_called()
+
+    def test_m2a_cancel_assigned_d9(self):
+        barrier = PhaseBarrier("ASSIGNED")
+        executor = self.executor(barrier=barrier)
+        thread, results = self.start(executor, barrier)
+        self.assertEqual(executor.cancel("op").result, "CANCELLED")
+        self.assertEqual(self.finish(thread, results, barrier).result, "CANCELLED")
+        self.api.resume.assert_not_called()
+        self.api.terminate_unrun.assert_called_once()
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_m2a_static_terminateprocess_only_in_d9_no_taskkill_os_kill(self):
+        source = LEASE.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        occurrences = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "TerminateProcess"]
+        self.assertTrue(occurrences)
+        for node in occurrences:
+            owner = [f.name for f in functions if f.end_lineno is not None and f.lineno <= node.lineno <= f.end_lineno]
+            self.assertEqual(owner, ["terminate_unrun"])
+        self.assertNotIn("taskkill", source.lower())
+        self.assertFalse(any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                             and n.value.id == "os" and n.attr == "kill" for n in ast.walk(tree)))
+        d9 = next(n for n in functions if n.name == "terminate_unrun")
+        self.assertEqual([a.arg for a in d9.args.args], ["self", "child", "proof"])
+        segment = ast.get_source_segment(source, d9)
+        assert segment is not None
+        self.assertIn('"RESUME-ATTEMPTED" in proof.phases', segment)
+
+
+class TestM2aContainment(M2aExecutorCase):
+    def containment(self, mode, executable):
+        barrier = PhaseBarrier("EXITED")
+        executor = self.executor(barrier=barrier, argv=self.argv() + [mode, str(executable)])
+        thread, results = self.start(executor, barrier)
+        receipt = json.loads(self.await_file("marker").read_text())
+        child = self.fixture_children[0][1]
+        self.assertEqual(receipt["parent"], child.pid)
+        self.assertEqual(self.api.wait(child, 0), 0)
+        self.assertEqual(executor.ledger.phase("op"), "EXITED")
+        if receipt["result"] == "REFUSED":
+            self.assertEqual(mode, "breakaway")
+            self.assertEqual(receipt["winerror"], 5)
+            self.assertFalse((self.scratch / "grand-marker").exists())
+            self.assertEqual(executor.job.active(), 0)
+        else:
+            self.assertEqual(receipt["result"], "SPAWNED")
+            grand = json.loads(self.await_file("grand-marker").read_text())
+            members = executor.job.members()
+            pids = {m.pid for m in members}
+            self.assertIn(receipt["pid"], pids)
+            self.assertIn(grand["pid"], pids)  # Includes venv redirector's actual interpreter.
+            self.assertNotEqual(grand["pid"], child.pid)
+            for pid in {receipt["pid"], grand["pid"]}:
+                k = self.lease._kernel()
+                k.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+                k.OpenProcess.restype = ctypes.c_void_p
+                handle = k.OpenProcess(0x1000, False, pid)
+                self.assertTrue(handle)
+                try:
+                    ctime = self.api.creation_time(pid)
+                    assert ctime is not None
+                    probe = self.lease.Child(handle, 0, pid, ctime)
+                    self.assertTrue(executor.job.contains(probe))
+                finally:
+                    k.CloseHandle(handle)
+            self.assertGreater(executor.job.active(), 0)
+            barrier.leave.set()
+            thread.join(0.2)
+            self.assertTrue(thread.is_alive(), "DRAINED before descendant cessation")
+            self.assertEqual(executor.status("op").phase, "EXITED")
+            self.assertEqual(executor.open_ops(), ["op"])
+            self.assertNotIn("DRAINED", self.phases(executor))
+            (self.scratch / "grand-release").touch()
+        outcome = self.finish(thread, results, barrier)
+        self.assertEqual(outcome.result, "DONE")
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertEqual(executor.job.active(), 0)
+        self.assertEqual(executor.job.members(), [])
+        self.api.terminate_unrun.assert_not_called()
+        print(f"AC17 mode={mode} executable={executable} result={receipt['result']} drained=0", flush=True)
+
+    def test_m2a_grandchild_breakaway_direct_refused_or_in_job(self):
+        self.containment("breakaway", getattr(sys, "_base_executable"))
+
+    def test_m2a_grandchild_breakaway_venv_refused_or_in_job(self):
+        directory = self.scratch / "fixture-venv"
+        venv.EnvBuilder(with_pip=False).create(directory)
+        executable = directory / "Scripts/python.exe"
+        self.assertTrue(executable.is_file())
+        self.assertNotEqual(executable.resolve(), Path(getattr(sys, "_base_executable")).resolve())
+        self.containment("breakaway", executable)
+
+    def test_m2a_drained_waits_for_grandchild_exit(self):
+        self.containment("descendant", getattr(sys, "_base_executable"))
+
+
+@unittest.skipUnless(os.name == "nt", "Windows M2b fixtures; NOT RUN on non-Windows")
+class TestM2bStartup(M2aCase):
+    """Real startup contexts; grants/operational hold integration still pending."""
+    def setUp(self):
+        super().setUp()
+        for role in ("guardian", "caller", "parent"):
+            (self.scratch / (role + "-config.json")).write_text(json.dumps({
+                "action": "m2b-" + role, "fixture_root": str(self.scratch)}), encoding="utf-8")
+        self.context_children = []
+        self.addCleanup(self.drain_context)
+
+    def drain_context(self):
+        (self.scratch / "continue").touch()
+        for process, pid in reversed(self.context_children):
+            self.assertEqual(process.pid, pid)
+            self.assertNotEqual(pid, os.getpid())
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.terminate()  # Exact Popen-owned fixture only, asserted above.
+                process.wait(timeout=15)
+        # Descendant receipts are from our fixture launches, never PID searches.
+        receipt = self.scratch / "caller-result.json"
+        if receipt.exists():
+            value = json.loads(receipt.read_text())
+            if "guardian" in value:
+                identity = self.lease.ProcIdentity(**value["guardian"])
+                deadline = time.monotonic() + 15
+                while self.lease.liveness(identity, self.api) == "alive":
+                    self.assertLess(time.monotonic(), deadline, "fixture guardian did not exit")
+                    time.sleep(0.01)
+                self.assertEqual(self.lease.liveness(identity, self.api), "dead")
+
+    def launch(self, role="guardian", executable=None):
+        if executable is None:
+            process = self.lease.spawn_guardian([str(self.scratch / (role + "-config.json"))],
+                                                cwd=self.scratch, env=self.env, entry=ENTRY)
+        else:
+            process = subprocess.Popen([str(executable), "-I", "-S", "-B", str(ENTRY),
+                                        str(self.scratch / (role + "-config.json"))],
+                                       cwd=self.scratch, env=self.env,
+                                       creationflags=self.lease.GUARDIAN_FLAGS,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+        self.context_children.append((process, process.pid))
+        return process
+
+    def receipt(self, name):
+        path = self.await_file(name + ".json")
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except PermissionError:
+                # Windows may expose the destination during the rename's brief
+                # sharing lock. Retry only that OS sharing error, never malformed
+                # JSON or a failed assertion, and retain a bounded hard failure.
+                self.assertLess(time.monotonic(), deadline, "fixture receipt sharing timeout")
+                time.sleep(0.01)
+
+    def caller_job(self, flags=0):
+        # The caller fixture only may have kill-on-close. Never a guardian job.
+        self.assertIn(flags, (0, 0x800 | 0x2000))
+        job = self.lease.Job.create(self.deps)
+        self.addCleanup(job.close)
+        if flags:
+            limits = self.lease._JobExtendedLimit()
+            limits.basic.flags = flags
+            k = self.lease._kernel()
+            k.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                                  ctypes.c_void_p, ctypes.c_uint32]
+            k.SetInformationJobObject.restype = ctypes.c_int
+            self.assertTrue(k.SetInformationJobObject(job.handle, 9, ctypes.byref(limits),
+                                                       ctypes.sizeof(limits)))
+            self.assertEqual(job._query(9, self.lease._JobExtendedLimit()).basic.flags, flags)
+        argv = [getattr(sys, "_base_executable"), "-I", "-S", "-B", str(ENTRY),
+                str(self.scratch / "caller-config.json")]
+        child = self.api.create_suspended(argv, str(self.scratch), self.env)
+        self.fixture_children.append((self.api, child, child.pid))
+        self.api.assign(job, child)
+        self.assertTrue(job.contains(child))
+        self.assertEqual(self.api.resume(child), 1)
+        return job, child
+
+    def test_m2b_start_base_self_check_no_authority(self):
+        child = self.launch()
+        ready = self.receipt("ready")
+        self.assertEqual(ready["pid"], child.pid)
+        self.assertEqual(ready["barrier"], "guardian-started")
+        self.assertGreater(ready["ctime"], 0)
+        self.assertIsNone(child.poll())
+        self.assertFalse((self.scratch / ".leases").exists())
+        (self.scratch / "continue").touch()
+        self.assertEqual(child.wait(timeout=15), 6)
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNKNOWN")
+
+    def test_m2b_ac16_context_no_breakaway_refused_nothing_written(self):
+        job, child = self.caller_job()
+        value = self.receipt("caller-result")
+        self.assertEqual(value, {"result": "UNSUPPORTED-CONTEXT", "pid": child.pid})
+        self.assertEqual(self.api.wait(child, 15000), 6)
+        self.assertEqual(job.active(), 0)
+        self.assertFalse((self.scratch / "ready.json").exists())
+        self.assertFalse((self.scratch / "guardian-result.json").exists())
+        self.assertFalse((self.scratch / ".leases").exists())
+
+    def test_m2b_ac16_context_venv_self_check_refuses(self):
+        directory = self.scratch / "fixture-venv"
+        venv.EnvBuilder(with_pip=False).create(directory)
+        executable = directory / "Scripts/python.exe"
+        self.assertNotEqual(executable.resolve(), Path(getattr(sys, "_base_executable")).resolve())
+        child = self.launch(executable=executable)
+        self.assertEqual(child.wait(timeout=15), 6)
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNSUPPORTED-CONTEXT")
+        self.assertFalse((self.scratch / "ready.json").exists())
+        self.assertFalse((self.scratch / ".leases").exists())
+
+    def test_m2b_ac16_context_base_survives_caller_job_close(self):
+        job, caller = self.caller_job(0x800 | 0x2000)
+        receipt = self.receipt("caller-result")
+        ready = self.receipt("ready")
+        self.assertEqual(receipt["caller"]["pid"], caller.pid)
+        self.assertEqual(ready["pid"], receipt["guardian"]["pid"])
+        self.assertEqual(ready["ctime"], receipt["guardian"]["ctime"])
+        self.assertTrue(job.contains(caller))
+        self.assertEqual(job.members(), [self.lease.ProcIdentity(caller.pid, caller.ctime)])
+        # Only our asserted fixture caller is in this kill-on-close job.
+        job.close()
+        self.assertIsNotNone(self.api.wait(caller, 15000))
+        identity = self.lease.ProcIdentity(**receipt["guardian"])
+        self.assertEqual(self.lease.liveness(identity, self.api), "alive")
+        self.assertFalse((self.scratch / "guardian-result.json").exists())
+        (self.scratch / "continue").touch()
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNKNOWN")
+
+    def test_m2b_ac16_context_base_survives_caller_and_parent_termination(self):
+        parent = self.launch("parent")
+        parent_receipt = self.receipt("parent-result")
+        caller_receipt = self.receipt("caller-result")
+        ready = self.receipt("ready")
+        self.assertEqual(parent_receipt["parent"]["pid"], parent.pid)
+        self.assertEqual(parent_receipt["caller"], caller_receipt["caller"])
+        self.assertEqual(ready["pid"], caller_receipt["guardian"]["pid"])
+        # Terminate only the child identified by this parent's own launch receipt.
+        caller = caller_receipt["caller"]
+        self.assertEqual(self.api.creation_time(caller["pid"]), caller["ctime"])
+        self.assertNotIn(caller["pid"], (os.getpid(), parent.pid, ready["pid"]))
+        k = self.lease._kernel()
+        k.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        k.OpenProcess.restype = ctypes.c_void_p
+        handle = k.OpenProcess(0x101001, False, caller["pid"])
+        self.assertTrue(handle)
+        try:
+            k.GetProcessId.argtypes = [ctypes.c_void_p]
+            k.GetProcessId.restype = ctypes.c_uint32
+            self.assertEqual(k.GetProcessId(handle), caller["pid"])
+            # Kill the parent first so it cannot exit naturally after the caller.
+            self.assertEqual(parent.pid, parent_receipt["parent"]["pid"])
+            parent.terminate()
+            parent.wait(timeout=15)
+            k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            k.TerminateProcess.restype = ctypes.c_int
+            self.assertTrue(k.TerminateProcess(handle, 92))
+            k.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            k.WaitForSingleObject.restype = ctypes.c_uint32
+            self.assertEqual(k.WaitForSingleObject(handle, 15000), 0)
+        finally:
+            k.CloseHandle(handle)
+        identity = self.lease.ProcIdentity(**caller_receipt["guardian"])
+        self.assertEqual(self.lease.liveness(identity, self.api), "alive")
+        self.assertFalse((self.scratch / "guardian-result.json").exists())
+        (self.scratch / "continue").touch()
+        self.assertEqual(self.receipt("guardian-result")["result"], "UNKNOWN")
+
+    def test_m2b_start_flags_and_base_interpreter(self):
+        with mock.patch.object(self.lease.subprocess, "Popen", wraps=subprocess.Popen) as start:
+            child = self.launch()
+        argv = start.call_args.args[0]
+        self.assertEqual(argv[:4], [getattr(sys, "_base_executable"), "-I", "-S", "-B"])
+        self.assertEqual(start.call_args.kwargs["creationflags"],
+                         subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP |
+                         subprocess.CREATE_BREAKAWAY_FROM_JOB)
+        self.receipt("ready")
+        (self.scratch / "continue").touch()
+        self.assertEqual(child.wait(timeout=15), 6)
+
+
+    def test_m2b_incomplete_commands_and_recovery_never_grant(self):
+        for command in ("hold", "gate", "begin-native", "end-native", "exec",
+                        "status", "cancel", "release", "recover", "adopt"):
+            with self.subTest(command=command):
+                result = subprocess.run([getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                         str(LEASE), command], cwd=self.scratch, env=self.env,
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (6, "UNKNOWN\n", ""))
+        self.assertFalse((self.scratch / ".leases").exists())
+
+
+@unittest.skipUnless(os.name == "nt", "Windows M2b fixtures; NOT RUN on non-Windows")
+class TestM2bHeartbeat(M2aCase):
+    def heartbeat(self, deps=None):
+        deps = deps or self.deps
+        root = self.scratch / ".leases"
+        pair = self.lease.acquire_pair(self.lease.ResourceDir(root, "wt-1-1"),
+                                       self.lease.ResourceDir(root, "br-" + "a" * 64), deps)
+        self.assertIsInstance(pair, self.lease.Pair)
+        assert isinstance(pair, self.lease.Pair)
+        self.addCleanup(pair.close)
+        gen = self.lease.next_gen(pair)
+        self.lease.txn_open(pair, gen, "fixture-branch")
+        ledger = self.ledger(deps, pair.wt.path / f"gen-{gen}")
+        job, obs = self.job(), self.job()
+        mutex = threading.Lock()
+        beat = self.lease.GuardianHeartbeat(pair, gen, 10, ledger, job, obs, mutex)
+        return beat
+
+    def test_m2b_heartbeat_real_jobs_members_ledger_and_open_ops(self):
+        beat = self.heartbeat()
+        child = self.child()
+        observation = self.child()
+        self.api.assign(beat.job, child)
+        self.api.assign(beat.observation_job, observation)
+        with beat.phase_mutex:
+            beat.ledger.append("native", "native", "NATIVE-OPEN")
+            beat.ledger.append("obs", "observe", "OBSERVE", parent="grant gen 1")
+            beat.ledger.append("done", "exec", "LAUNCH-FAILED")
+        self.assertTrue(beat.tick())
+        value = self.lease.StateStore(beat.pair).read(beat.path, "heartbeat")
+        assert value is not None
+        self.assertEqual(value["ledger_seq"], 3)
+        self.assertEqual(value["boot_id"], 10)
+        self.assertEqual(value["job_active"], 1)
+        self.assertEqual(value["obs_active"], 1)
+        self.assertEqual(value["open_ops"], ["native", "obs"])
+        self.assertEqual(value["members"], [{"pid": child.pid, "ctime": child.ctime},
+                                           {"pid": observation.pid, "ctime": observation.ctime}])
+        # These are test-created suspended fixtures, not admitted guardian ops.
+        self.assertFalse((beat.pair.wt.path / "state.json").exists())
+        self.assertIsNone(self.api.wait(child, 0))
+        self.assertIsNone(self.api.wait(observation, 0))
+
+    def test_m2b_heartbeat_sixty_seconds_monotonic_wall_clock_not_authority(self):
+        clock = mock.Mock(return_value=1000.0)
+        beat = self.heartbeat(dataclasses.replace(self.deps, clock=clock))
+        with mock.patch.object(self.lease.time, "monotonic", return_value=100.0) as monotonic:
+            self.assertTrue(beat.tick())
+            original = beat.path.read_bytes()
+            for shift in (-86400, 86400):
+                clock.return_value = 1000.0 + shift
+                monotonic.return_value = 159.999
+                self.assertFalse(beat.tick())
+                self.assertEqual(beat.path.read_bytes(), original)
+            monotonic.return_value = 160.0
+            self.assertTrue(beat.tick())
+            self.assertEqual(json.loads(beat.path.read_bytes())["ts"], 87400.0)
+        self.assertFalse((beat.pair.wt.path / "state.json").exists())
+
+    def test_m2b_heartbeat_truncated_ledger_unknown_no_replacement(self):
+        beat = self.heartbeat()
+        beat.ledger.append("exec", "exec", "ADMITTED")
+        with beat.ledger.path.open("ab") as stream:
+            stream.write(b'{"seq":2')
+        self.unknown(beat.tick)
+        self.assertTrue(beat.failed)
+        self.assertFalse(beat.path.exists())
+        self.unknown(beat.tick)
+
+    def test_m2b_heartbeat_storage_failure_latches_unknown(self):
+        fail = mock.Mock()
+        beat = self.heartbeat(dataclasses.replace(self.deps, fail=fail))
+        fail.check.side_effect = OSError("fixture heartbeat storage fault")
+        self.unknown(beat.tick)
+        fail.check.side_effect = None
+        self.unknown(beat.tick)
+        self.assertFalse(beat.path.exists())
+
+    def test_m2b_heartbeat_failed_ledger_refuses_before_next_tick(self):
+        beat = self.heartbeat()
+        self.assertTrue(beat.tick())
+        original = beat.path.read_bytes()
+        beat.ledger.failed = True
+        self.unknown(beat.tick)
+        self.assertTrue(beat.failed)
+        self.assertEqual(beat.path.read_bytes(), original)
+
+    def test_m2b_heartbeat_ledger_sequence_mismatch_unknown(self):
+        beat = self.heartbeat()
+        beat.ledger.append("exec", "exec", "ADMITTED")
+        # Valid JSON is insufficient: the durable sequence must match the writer.
+        beat.ledger.path.write_bytes(b"")
+        self.unknown(beat.tick)
+        self.assertFalse(beat.path.exists())
+
+    def test_m2b_heartbeat_shared_mutex_serializes_snapshot(self):
+        beat = self.heartbeat()
+        started = threading.Event()
+        results = []
+        def tick():
+            started.set()
+            results.append(beat.tick())
+        with beat.phase_mutex:
+            thread = threading.Thread(target=tick)
+            thread.start()
+            self.assertTrue(started.wait(10))
+            self.assertFalse(beat.path.exists())
+            beat.ledger.append("native", "native", "NATIVE-OPEN")
+        thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results, [True])
+        self.assertEqual(json.loads(beat.path.read_bytes())["open_ops"], ["native"])
+
+
+@unittest.skipUnless(os.name == "nt", "Windows S1 fixtures; NOT RUN on non-Windows")
+class TestS1GitPolicy(M2aCase):
+    def test_s1_git_policy_allowlist_and_exit_table(self):
+        import shutil
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        assert git is not None
+        repo = self.scratch / "repo"
+        repo.mkdir()
+        hooks = self.scratch / "hooks"
+        hooks.mkdir()
+        config = self.scratch / "global"
+        config.touch()
+        poisoned = dict(self.env, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="alias.attack",
+                        GIT_CONFIG_VALUE_0="!exit 99", GIT_DIR="wrong", GIT_INDEX_FILE="wrong")
+        commands = [("rev-parse", "HEAD"), ("rev-parse", "refs/heads/main"),
+                    ("symbolic-ref", "HEAD"), ("ls-files", "--stage", "-z"),
+                    ("check-ignore", "-z", "--stdin", "--no-index")]
+        env = {}
+        for argv in commands:
+            command, env, valid = self.lease._git_policy(argv, poisoned, hooks, config)
+            self.assertEqual(valid, (0, 1) if argv[0] == "check-ignore" else (0,))
+            self.assertTrue(all(env[k] == v for k, v in self.lease.SAFE_GIT_ENV.items()))
+            self.assertEqual(env["GIT_CONFIG_GLOBAL"], str(config))
+            self.assertNotIn("GIT_CONFIG_COUNT", env)
+            self.assertNotIn("GIT_DIR", env)
+            self.assertNotIn("GIT_INDEX_FILE", env)
+            self.assertEqual(command[-len(argv):], list(argv))
+        # Real process/repo control for the allowlisted, synthetic environment.
+        result = subprocess.run([git, "init", "-b", "main", str(repo)], env=env,
+                                cwd=self.scratch, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((repo / ".git/HEAD").is_file())
+        for argv in (("diff", "HEAD"), ("status",), ("rev-parse", "--git-dir"),
+                     ("rev-parse", "refs/heads/main:payload")):
+            self.unknown(self.lease._git_policy, argv, poisoned, hooks, config)
+
+    def test_s1_git_no_observation_context_no_launch(self):
+        with self.assertRaisesRegex(self.lease.LeaseError, "UNKNOWN"):
+            self.lease.run_git(["rev-parse", "HEAD"], self.scratch, runner=None,
+                               parent="grant gen 1", git=str(self.scratch / "missing.exe"),
+                               env=self.env, scratch=self.scratch)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+
+@unittest.skipUnless(os.name == "nt", "Windows S1 fixtures; NOT RUN on non-Windows")
+class S1Case(M2aCase):
+    def setUp(self):
+        super().setUp()
+        import shutil
+        launcher = shutil.which("git")
+        assert launcher is not None
+        self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(self.scratch / "empty-global"),
+                        GIT_TERMINAL_PROMPT="0", GIT_CONFIG_SYSTEM=str(self.scratch / "empty-global"))
+        (self.scratch / "empty-global").touch()
+        result = subprocess.run([launcher, "--exec-path"], env=self.env,
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # cmd/git.exe may be a redirector, an unexpected observation descendant.
+        self.git = Path(result.stdout.strip()).parents[1] / "bin/git.exe"
+        self.assertTrue(self.git.is_file(), str(self.git))
+        self.repo = self.scratch / "repo"
+        self.repo.mkdir()
+        self.setup_git("init", "-b", "fixture-branch")
+        self.setup_git("config", "user.name", "Synthetic Fixture")
+        self.setup_git("config", "user.email", "fixture@example.invalid")
+        self.setup_git("config", "core.autocrlf", "false")
+        (self.repo / "tracked.txt").write_bytes(b"initial\n")
+        self.setup_git("add", "tracked.txt")
+        self.setup_git("commit", "-m", "synthetic initial")
+        self.runner: Any = None
+
+    def setup_git(self, *args, input=None, expected=0):
+        result = subprocess.run([str(self.git), *args], env=self.env, cwd=self.repo,
+                                input=input, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, expected, result.stderr)
+        return result.stdout
+
+    def observation(self, barrier=None, fail_at=None):
+        self.assertIsNone(self.runner)
+        fail = mock.Mock()
+        def check(name):
+            if name == fail_at:
+                raise OSError("fixture injected " + name)
+        fail.check.side_effect = check
+        deps = dataclasses.replace(self.deps, fail=fail, barrier=barrier or self.lease.NoBarrier())
+        original = self.api.create_suspended
+        def create(*args, **kwargs):
+            child = original(*args, **kwargs)
+            self.fixture_children.append((self.api, child, child.pid))
+            return child
+        self.api.create_suspended = create
+        self.runner = self.lease.ObservationRunner(self.ledger(deps), self.job(), self.api, deps, threading.Lock())
+        def check_drained():
+            self.assertEqual(self.runner.job.active(), 0)
+            self.assertEqual(self.runner.job.members(), [])
+            self.assertEqual(self.runner._streams, {})
+        self.addCleanup(check_drained)
+        return self.runner
+
+    def run_git(self, argv, cwd=None, *, stdin=b""):
+        if self.runner is None:
+            self.observation()
+        return self.lease.run_git(argv, cwd or self.repo, runner=self.runner,
+                                  parent="grant gen 1", git=self.git, env=self.env,
+                                  scratch=self.scratch, stdin=stdin)
+
+    def start_observation(self, barrier, argv):
+        runner = self.observation(barrier)
+        results = []
+        def run():
+            try:
+                results.append(runner.run("gate request 1", argv, self.scratch, self.env))
+            except BaseException as exc:
+                results.append(exc)
+        thread = threading.Thread(target=run)
+        def cleanup():
+            barrier.leave.set()
+            (self.scratch / "release").touch()
+            (self.scratch / "grand-release").touch()
+            thread.join(20)
+            self.assertFalse(thread.is_alive())
+        self.addCleanup(cleanup)
+        thread.start()
+        self.assertTrue(barrier.entered.wait(15), results)
+        return runner, thread, results
+
+
+class TestS1Observation(S1Case):
+    def test_s1_ac11_obs_drain_obs_active_zero(self):
+        expected = self.setup_git("rev-parse", "HEAD")
+        code, data = self.run_git(["rev-parse", "HEAD"])
+        self.assertEqual((code, data), (0, expected))
+        self.assertEqual(self.runner.job.active(), 0)
+        self.assertEqual(self.runner.open_entries(), [])
+        rows = self.runner.journal.entries()
+        self.assertEqual([r["phase"] for r in rows], ["OBSERVE", "LAUNCH-ATTEMPTED", "LAUNCHED-SUSPENDED",
+                         "ASSIGNED", "RESUME-ATTEMPTED", "RESUMED", "EXITED", "DRAINED"])
+        self.assertTrue(all(r["kind"] == "observe" for r in rows))
+        self.assertEqual(rows[0]["parent"], "grant gen 1")
+        self.assertEqual(rows[0]["obs_id"], rows[0]["op_id"])
+        self.assertEqual(rows[-1]["obs_active"], 0)
+        self.assertEqual(self.runner.job.total(), 1)
+
+    def test_s1_obs_journal_before_launch(self):
+        barrier = PhaseBarrier("OBSERVE")
+        runner, thread, results = self.start_observation(barrier, self.argv())
+        rows = runner.journal.entries()
+        self.assertEqual([r["phase"] for r in rows], ["OBSERVE"])
+        self.assertEqual(runner.job.total(), 0)
+        self.assertEqual(self.fixture_children, [])
+        self.assertFalse((self.scratch / "marker").exists())
+        (self.scratch / "release").touch()
+        barrier.leave.set()
+        thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(results[0], self.lease.ObsResult)
+
+    def test_s1_obs_failed_journal_append_no_launch(self):
+        runner = self.observation(fail_at="append:OBSERVE")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FAILED-STORAGE"):
+            runner.run("grant gen 1", self.argv(), self.scratch, self.env)
+        self.assertEqual(self.fixture_children, [])
+        self.assertEqual(runner.job.total(), 0)
+        self.assertTrue(runner.journal.failed)
+        self.assertFalse((self.scratch / "marker").exists())
+
+    def test_s1_ac11_extra_descendant_unknown_open_until_exit(self):
+        barrier = PhaseBarrier("EXITED")
+        runner, thread, results = self.start_observation(
+            barrier, self.argv() + ["descendant", getattr(sys, "_base_executable")])
+        receipt = json.loads(self.await_file("marker").read_text())
+        grand = json.loads(self.await_file("grand-marker").read_text())
+        self.assertEqual(receipt["parent"], self.fixture_children[0][2])
+        self.assertEqual(receipt["pid"], grand["pid"])
+        self.assertIn(grand["pid"], [m.pid for m in runner.job.members()])
+        obs_id = runner.journal.entries()[0]["obs_id"]
+        self.assertEqual(runner.status(obs_id).result, "UNKNOWN")
+        self.assertEqual(runner.open_entries(), [obs_id])
+        with self.assertRaisesRegex(self.lease.LeaseError, "BUSY"):
+            runner.run("other", self.argv(), self.scratch, self.env)
+        barrier.leave.set()
+        thread.join(0.15)
+        self.assertTrue(thread.is_alive())
+        self.assertNotIn("DRAINED", [r["phase"] for r in runner.journal.entries()])
+        (self.scratch / "grand-release").touch()
+        thread.join(15)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(str(results[0]), "UNKNOWN")
+        self.assertEqual(runner.open_entries(), [])
+        self.assertEqual(runner.job.active(), 0)
+        self.assertTrue(runner.journal.entries()[-1]["unexpected_descendant"])
+
+    def test_s1_obs_capture_bytes_stdin_large_stdout(self):
+        runner = self.observation()
+        data = b"\x00\xff\r\n" * 100000
+        result = runner.run("checkpoint", [getattr(sys, "_base_executable"), "-I", "-S", "-B", "-c",
+                            "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()); sys.exit(17)"],
+                            self.scratch, self.env, stdin=data)
+        self.assertEqual((result.exit_code, result.stdout), (17, data))
+        self.assertEqual(runner.open_entries(), [])
+
+    def test_s1_obs_no_direct_subprocess_outside_runner(self):
+        tree = ast.parse(LEASE.read_text(encoding="utf-8"))
+        functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess":
+                    if node.func.attr in ("Popen", "run", "call", "check_output", "check_call"):
+                        owners = [f.name for f in functions if f.end_lineno is not None
+                                  and f.lineno <= node.lineno <= f.end_lineno]
+                        self.assertEqual(owners, ["spawn_guardian"])
+        adapter = next(f for f in functions if f.name == "run_git")
+        calls = [n.func.attr for n in ast.walk(adapter) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+        self.assertIn("run", calls)
+        self.assertNotIn("create_suspended", calls)
+
+
+class TestS1Exclusions(S1Case):
+    def test_s1_exclusions_path_first_wd349_and_ancestors(self):
+        names = [".env", ".environment", ".ENV.local", "x.KEY", "wordtoken.md", "secret-notes.md",
+                 ".npmrc", ".netrc", ".git-credentials", ".htpasswd", "id_rsa", "id_ed25519.pub",
+                 "key.pem", "key.pfx", "key.p12", "key.keystore", "key.jks", "key.ppk", "key.asc",
+                 "key.gpg", "key.kdbx", "credentials", "apikeys.txt", "api-keys.ini", "passwords",
+                 "passwd", "auth.json", "service-account.json", "sa_key.yaml", "prod-credentials.ini",
+                 "config.yaml", "config.json", "config.toml", "config.ini", "settings.local.json",
+                 "config.yaml. "]
+        for name in names:
+            with self.subTest(name=name):
+                self.assertTrue(self.lease.is_excluded(name))
+                self.assertTrue(self.lease.is_excluded("nested/" + name + "/ordinary.txt"))
+                self.assertTrue(self.lease.is_excluded("nested\\" + name + "\\ordinary.txt"))
+        for name in ("tracked.txt", "src/main.py", "readme.md", "password-review.md"):
+            self.assertFalse(self.lease.is_excluded(name))
+        forbidden = self.repo / "service-account.json"
+        forbidden.write_bytes(b"synthetic not a credential")
+        # Refusal of a missing excluded name proves exclusion before lstat too.
+        self.unknown(self.lease._open_content, self.repo / ".env-does-not-exist")
+        self.unknown(self.lease._open_content, forbidden)
+
+    def test_s1_open_content_raw_bytes_and_unreadable_unknown(self):
+        regular = self.repo / "bytes.dat"
+        regular.write_bytes(b"\x00\xff\r\nraw")
+        self.assertEqual(self.lease._open_content(regular), b"\x00\xff\r\nraw")
+        self.unknown(self.lease._open_content, self.repo / "missing")
+        self.unknown(self.lease._open_content, self.repo)
+        tree = ast.parse(LEASE.read_text(encoding="utf-8"))
+        functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        handles = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "CreateFileW"]
+        self.assertTrue(handles)
+        for node in handles:
+            self.assertEqual([f.name for f in functions if f.end_lineno is not None
+                              and f.lineno <= node.lineno <= f.end_lineno], ["dir_identity"])
+
+
+class TestS1Fingerprint(S1Case):
+    def fingerprint(self, run_git=None, branch="fixture-branch"):
+        return self.lease.compute_fingerprint(self.repo, branch, run_git or self.run_git)
+
+    def fault_metadata(self, command, output, exit_code=0):
+        # Corrupt ONLY an explicitly selected reply, using a real scratch-owned
+        # observation process. All preceding/other metadata still comes from Git.
+        def run(argv, cwd, **kwargs):
+            original = self.run_git(argv, cwd, **kwargs)
+            if argv[0] != command:
+                return original
+            result = self.runner.run("fault-control", [getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                     "-c", "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.argv[1])); sys.exit(int(sys.argv[2]))",
+                                     output.hex(), str(exit_code)], self.scratch, self.env)
+            return result.exit_code, result.stdout
+        return run
+
+    def install_filters(self):
+        import shlex
+        markers = {name: self.scratch / (name + "-marker") for name in
+                   ("clean", "smudge", "process", "fsmonitor", "post-index-change")}
+        script = ENTRY.with_name("s1_filter.py")
+        python = Path(getattr(sys, "_base_executable")).as_posix()
+        for mode in ("clean", "smudge", "process"):
+            command = " ".join(shlex.quote(arg) for arg in
+                               (python, "-I", "-S", "-B", script.as_posix(), mode, markers[mode].as_posix()))
+            self.setup_git("config", "filter.fixture-" + mode + "." + mode, command)
+        (self.repo / ".gitattributes").write_text(
+            "tracked.txt filter=fixture-clean\nsmudge.txt filter=fixture-smudge\nprocess.txt filter=fixture-process\n",
+            encoding="utf-8", newline="\n")
+        (self.repo / "smudge.txt").write_bytes(b"smudge fixture\n")
+        (self.repo / "process.txt").write_bytes(b"process fixture\n")
+        hooks = self.repo / ".git/hooks"
+        for name in ("fsmonitor", "post-index-change"):
+            hook = hooks / name
+            hook.write_text("#!/bin/sh\nprintf observed > " + shlex.quote(markers[name].as_posix()) + "\n",
+                            encoding="utf-8", newline="\n")
+            hook.chmod(0o755)
+        self.setup_git("config", "core.fsmonitor", (hooks / "fsmonitor").as_posix())
+        return markers
+
+    def test_s1_ac11_filters_hooks_markers_absent(self):
+        markers = self.install_filters()
+        before = (self.repo / ".git/index").read_bytes()
+        result = self.fingerprint()
+        self.assertIsInstance(result, self.lease.Fingerprint)
+        self.assertEqual(len(result.digest), 64)
+        self.assertEqual((self.repo / ".git/index").read_bytes(), before)
+        self.assertTrue(all(not marker.exists() for marker in markers.values()), markers)
+        self.assertEqual(self.runner.job.total(), 5)
+        self.assertEqual(self.runner.job.active(), 0)
+
+    def test_s1_ac11_control_git_diff_fires(self):
+        markers = self.install_filters()
+        (self.repo / "tracked.txt").write_bytes(b"changed\n")
+        self.setup_git("diff", "HEAD")
+        self.assertTrue(markers["clean"].is_file())
+        self.assertGreater(int(markers["clean"].read_text()), 0)
+        # Positive controls for the process and smudge definitions too.
+        self.setup_git("add", "process.txt", "smudge.txt")
+        self.assertTrue(markers["process"].is_file())
+        (self.repo / "smudge.txt").unlink()
+        self.setup_git("checkout", "--", "smudge.txt")
+        self.assertTrue(markers["smudge"].is_file())
+        self.assertTrue(markers["fsmonitor"].is_file())
+        self.assertTrue(markers["post-index-change"].is_file())
+
+    def test_s1_ac12_check_ignore_exit_policy(self):
+        argv = ["check-ignore", "-z", "--stdin", "--no-index"]
+        self.assertEqual(self.run_git(argv, stdin=b"tracked.txt\0"), (1, b""))
+        self.assertIsInstance(self.fingerprint(), self.lease.Fingerprint)
+        empty = self.scratch / "not-repo"
+        empty.mkdir()
+        def failing(argv, cwd, **kwargs):
+            return self.run_git(argv, empty if argv[0] == "check-ignore" else cwd, **kwargs)
+        self.unknown(self.fingerprint, failing)
+        self.assertEqual(self.runner.journal.entries()[-2]["code"], 128)
+        for code, data in ((1, b"tracked.txt\0"), (0, b""), (0, b"foreign\0"),
+                           (0, b"tracked.txt"), (0, b"tracked.txt\0tracked.txt\0")):
+            self.unknown(self.fingerprint, self.fault_metadata("check-ignore", data, code))
+
+    def test_s1_ac12_rev_parse_failure_unknown(self):
+        self.setup_git("update-ref", "-d", "refs/heads/fixture-branch")
+        self.unknown(self.fingerprint)
+        self.assertEqual(self.runner.journal.entries()[-2]["code"], 128)
+        self.assertEqual(self.runner.open_entries(), [])
+
+    def test_s1_ac12_malformed_ls_files_unknown(self):
+        valid = self.setup_git("ls-files", "--stage", "-z")
+        for data in (valid[:-1], valid + b"\0", valid + valid, b"bad\0",
+                     valid.replace(b"100644", b"100666"), valid.replace(b" 0\t", b" 4\t"),
+                     valid.replace(b"tracked.txt", b"../outside"), valid.replace(b"tracked.txt", b"\xff")):
+            with self.subTest(data=data):
+                self.unknown(self.fingerprint, self.fault_metadata("ls-files", data))
+
+    def test_s1_ac12_symbolic_ref_mismatch_foreign_write(self):
+        self.setup_git("switch", "-c", "other")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FOREIGN-WRITE"):
+            self.fingerprint()
+
+    def test_s1_ac12_never_partial_fingerprint(self):
+        prior = self.fingerprint()
+        with self.assertRaisesRegex(self.lease.LeaseError, "UNKNOWN"):
+            self.fingerprint(self.fault_metadata("check-ignore", b"", 128))
+        self.assertEqual(self.fingerprint(), prior)
+        self.assertEqual(self.runner.open_entries(), [])
+        # A genuine share-denied regular entry fails the entire result too.
+        path = self.repo / "unreadable.txt"
+        path.write_bytes(b"scratch fixture")
+        k = self.lease._kernel()
+        k.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                                 ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+        k.CreateFileW.restype = ctypes.c_void_p
+        handle = k.CreateFileW(str(path), 0x80000000, 0, None, 3, 0, None)
+        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
+        try:
+            self.unknown(self.fingerprint)
+        finally:
+            self.assertTrue(k.CloseHandle(handle))
+
+    def test_s1_ac14_staged_only_changes_digest(self):
+        prior = self.fingerprint()
+        path = self.repo / "tracked.txt"
+        original = path.read_bytes()
+        path.write_bytes(b"staged-only\n")
+        self.setup_git("add", "tracked.txt")
+        path.write_bytes(original)
+        after = self.fingerprint()
+        self.assertNotEqual(prior.digest, after.digest)
+        self.assertEqual([e for e in prior.entries if e[0] == "file"],
+                         [e for e in after.entries if e[0] == "file"])
+
+    def test_s1_ac14_raw_bytes_index_unchanged_changes_digest(self):
+        prior = self.fingerprint()
+        index = (self.repo / ".git/index").read_bytes()
+        (self.repo / "tracked.txt").write_bytes(b"raw\x00\xff\n")
+        self.assertNotEqual(prior.digest, self.fingerprint().digest)
+        self.assertEqual((self.repo / ".git/index").read_bytes(), index)
+
+    def test_s1_ac14_foreign_edit_after_checkpoint_differs(self):
+        checkpoint = self.fingerprint()
+        (self.repo / "untracked.txt").write_bytes(b"foreign write\n")
+        self.assertNotEqual(checkpoint.digest, self.fingerprint().digest)
+
+    def test_s1_ac14_branch_switch_or_rename(self):
+        self.fingerprint()
+        self.setup_git("branch", "-m", "renamed")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FOREIGN-WRITE"):
+            self.fingerprint()
+        self.setup_git("switch", "-c", "fixture-branch")
+        self.assertIsInstance(self.fingerprint(), self.lease.Fingerprint)
+        self.setup_git("switch", "renamed")
+        with self.assertRaisesRegex(self.lease.LeaseError, "FOREIGN-WRITE"):
+            self.fingerprint()
+
+    def test_s1_ac14_blind_spots_asserted(self):
+        (self.repo / ".gitignore").write_bytes(b"ignored.txt\n")
+        ignored, excluded = self.repo / "ignored.txt", self.repo / ".env.fixture"
+        ignored.write_bytes(b"before")
+        excluded.write_bytes(b"synthetic one")
+        info = excluded.stat()
+        prior = self.fingerprint()
+        path = self.repo / "tracked.txt"
+        original = path.read_bytes()
+        path.write_bytes(b"temporary change")
+        path.write_bytes(original)
+        self.assertEqual(prior, self.fingerprint())
+        ignored.write_bytes(b"different size and bytes")
+        self.assertEqual(prior, self.fingerprint())
+        excluded.write_bytes(b"synthetic two")
+        os.utime(excluded, ns=(info.st_atime_ns, info.st_mtime_ns))
+        self.assertEqual(prior, self.fingerprint())
+        os.utime(excluded, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000000))
+        self.assertNotEqual(prior.digest, self.fingerprint().digest)
+
+    def test_s1_ac14_reparse_recorded_not_followed(self):
+        target = self.scratch / "target"
+        target.mkdir()
+        (target / "payload").write_bytes(b"outside")
+        junction = self.repo / "junction"
+        result = subprocess.run([self.env["COMSPEC"], "/d", "/c", "mklink", "/J", str(junction), str(target)],
+                                env=self.env, cwd=self.scratch, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.addCleanup(junction.rmdir)
+        self.assertTrue(self.lease._is_reparse(junction.lstat()))
+        prior = self.fingerprint()
+        self.assertIn(("reparse", "junction", os.readlink(junction)), prior.entries)
+        self.assertFalse(any("junction/payload" in entry for entry in prior.entries))
+        (target / "payload").write_bytes(b"outside changed")
+        self.assertEqual(prior, self.fingerprint())
+        self.unknown(self.lease._open_content, junction / "payload")
+
+    def test_s1_ac14_special_entry_unknown(self):
+        # AF_UNIX on Windows is a real special/reparse filesystem entry. The
+        # child binds relative to its explicit full-path owned scratch cwd.
+        child = subprocess.Popen([getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                  str(ENTRY.with_name("s1_special.py"))],
+                                 cwd=self.repo, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        spawned = child.pid
+        try:
+            assert child.stdout is not None
+            self.assertEqual(child.stdout.readline().strip(), str(spawned))
+            special = self.repo / "special.sock"
+            self.assertTrue(special.exists())
+            self.unknown(self.fingerprint)
+        finally:
+            self.assertEqual(child.pid, spawned)
+            self.assertNotEqual(spawned, os.getpid())
+            _, errors = child.communicate("exit\n", timeout=15)
+            self.assertEqual(child.returncode, 0, errors)
+
+
+class TestS1Reader(S1Case):
+    def launch_reader(self, mode):
+        state = self.scratch / ("reader-" + uuid.uuid4().hex)
+        state.mkdir()
+        names = [".env.fixture", "private.key", "token.txt", "secret.json", ".npmrc",
+                 "service-account.json", "id_ed25519", "config.yaml", "prod-credentials.ini"]
+        forbidden = []
+        for name in names:
+            path = self.repo / name
+            path.write_bytes(b"synthetic fixture not credentials")
+            forbidden.append(str(path))
+        request = state / "request.json"
+        request.write_text(json.dumps({"repo": str(self.repo), "state": str(state),
+                                      "git": str(self.git), "mode": mode, "forbidden": forbidden}),
+                           encoding="utf-8")
+        child = subprocess.Popen([getattr(sys, "_base_executable"), "-I", "-S", "-B",
+                                  str(ENTRY.with_name("s1_reader.py")), str(request)],
+                                 cwd=self.scratch, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pid = child.pid  # Parent launch receipt, not a PID supplied by the result.
+        try:
+            out, err = child.communicate(timeout=30)
+            self.assertEqual(child.returncode, 0, err.decode("utf-8", errors="replace"))
+            self.assertEqual(out, b"")
+        finally:
+            self.assertEqual(child.pid, pid)
+            self.assertNotEqual(pid, os.getpid())
+            if child.poll() is None:
+                child.terminate()  # This exact test-spawned reader only.
+            child.wait(timeout=15)
+            for stream in (child.stdout, child.stderr):
+                assert stream is not None
+                stream.close()
+        return pid, state / f"audit-component-{pid}.json"
+
+    def verify_reader_results(self, receipts):
+        self.assertTrue(receipts)
+        self.assertEqual(len({pid for pid, _ in receipts}), len(receipts))
+        for pid, path in receipts:
+            self.assertTrue(path.is_file(), "missing reader result")
+            value = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(value["pid"], pid)
+            self.assertIs(value["loaded"], True, "unloaded reader")
+            self.assertIs(value["hook_before_import"], True)
+            self.assertEqual(value["role"], "component")
+            self.assertEqual(value["count"], 0, "forbidden open attempted")
+            self.assertEqual(value["mutation_caught"], 0)
+            self.assertEqual(value["observations"], 5)
+            self.assertRegex(value["digest"], r"^[0-9a-f]{64}$")
+
+    def test_s1_ac13_reader_hook_before_import_handshake_zero(self):
+        receipts = [self.launch_reader("normal") for _ in range(2)]
+        self.verify_reader_results(receipts)
+
+    def test_s1_ac13_mutation_control_caught_in_same_reader(self):
+        receipt = self.launch_reader("mutation")
+        value = json.loads(receipt[1].read_text(encoding="utf-8"))
+        self.assertEqual(value["pid"], receipt[0])
+        self.assertIs(value["loaded"], True)
+        self.assertGreaterEqual(value["count"], 1)
+        self.assertEqual(value["count"], value["mutation_caught"])
+        self.assertEqual(value["observations"], 5)
+        with self.assertRaisesRegex(AssertionError, "forbidden open attempted"):
+            self.verify_reader_results([receipt])
+
+    def test_s1_ac13_missing_or_unloaded_result_fails(self):
+        for mode, message in (("missing", "missing reader result"), ("unloaded", "unloaded reader")):
+            receipt = self.launch_reader(mode)
+            with self.assertRaisesRegex(AssertionError, message):
+                self.verify_reader_results([receipt])
+
+
+if __name__ == "__main__":
+    unittest.main()
