@@ -26,6 +26,8 @@ Design constraints learned the hard way (WD-357, WD-380):
   does NOT dispatch. The two-hour safety net bounds the delay.
 * Tokens come from the .env FILE, never the process environment or argv. Never
   print remote error bodies or exception messages, which may echo credentials.
+* Report approval wait/outage status from the completed integrate probe, without
+  changing dispatch or state; older proof-pack paging is bounded and read-only.
 * The gatekeeper never holds a Discord credential. It asks R1, the read-only
   ``wolftac-approval-read`` Hermes plugin, run as Harper with every DISCORD_*
   environment name removed (WD-546).
@@ -172,6 +174,17 @@ query($id: String!, $after: String) {
     comments(first: 50, after: $after, orderBy: createdAt) {
       nodes { id createdAt body user { id } }
       pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+
+COMMENTS_QUERY = """
+query($id: String!, $after: String) {
+  issue(id: $id) {
+    comments(first: 50, after: $after, orderBy: createdAt) {
+      nodes { id createdAt body } pageInfo { hasNextPage endCursor }
     }
   }
 }
@@ -857,6 +870,61 @@ def discord_approval(issues: list[dict], dispatched: dict, policy_path: str):
     return None
 
 
+def approval_packs(comments: list[dict]) -> list[dict]:
+    return [c for c in comments if any(marker in (c["body"] or "")
+            for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"))]
+
+
+def approval_issues(token: str, issues: list[dict]) -> list[dict]:
+    """Page only missing packs, without mutating dispatch/fingerprint inputs."""
+    result = []
+    for issue in issues:
+        connection = issue["comments"]
+        comments = list(connection["nodes"])
+        seen = set()
+        for _ in range(10):
+            if approval_packs(comments) or not connection.get("pageInfo"):
+                break
+            cursor = next_cursor(connection, seen)
+            if cursor is None:
+                break
+            connection = linear_query(token, COMMENTS_QUERY, {
+                "id": issue["identifier"], "after": cursor,
+            })["issue"]["comments"]
+            comments.extend(connection["nodes"])
+        result.append({**issue, "comments": {"nodes": comments}})
+    return result
+
+
+def approval_status(issues: list[dict], now: datetime) -> list[str]:
+    """Pure approval diagnostics: identifiers/ages only, never pack contents."""
+    stale, down = [], []
+    for issue in sorted(issues, key=lambda row: row["identifier"]):
+        identifier = issue["identifier"]
+        if not re.fullmatch(r"[A-Z]+-\d+", identifier):
+            continue
+        packs = approval_packs(issue["comments"]["nodes"])
+        if not packs:
+            continue
+        pack = max(packs, key=lambda c: c["createdAt"])
+        created = parse_ts(pack["createdAt"])
+        if created is None:
+            continue
+        age = now - created
+        hours = max(0, int(age.total_seconds() // 3600))
+        age_text = f"{hours}h" if hours < 48 else f"{hours // 24}d"
+        if re.search(r"\blane\s+unavailable\b|not\s+delivered:\s+operator\s+step\s+pending", pack["body"], re.IGNORECASE):
+            down.append(f"{identifier}={age_text}")
+        elif age > timedelta(hours=24):
+            stale.append(f"{identifier}={age_text}")
+    segments = []
+    if stale:
+        segments.append("approval-stale: " + ",".join(stale))
+    if down:
+        segments.append("approval-lane-down: " + ",".join(down))
+    return segments or [f"approval-wait: ok ({len(issues)} approved)"]
+
+
 def hermes_cli() -> list[str]:
     """Locate the hermes CLI; prefer the install-dir binary, fall back to PATH."""
     for candidate in (
@@ -938,6 +1006,7 @@ def main() -> int:
     ready_lanes = {}
     probes = {}
     state_probes = {}
+    lane_errors = set()
     linear_auth_failed = False
     degraded_worker = False
     # The token is shared. Finish all non-in-flight probes before launching
@@ -990,6 +1059,7 @@ def main() -> int:
                     probes[lane] = (None, None, error_reason(exc))
         except Exception as exc:  # noqa: BLE001 — lane isolation
             ready_lanes.pop(lane, None)
+            lane_errors.add(lane)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
 
     # WD-628: complete the read-only operator probe before any dispatch, so a
@@ -1115,7 +1185,22 @@ def main() -> int:
                 if approval is not None:
                     approvals[approval[0]] = approval[1]
         except Exception as exc:  # noqa: BLE001 — lane isolation is the whole point
+            lane_errors.add(lane)
             lines.append(f"{lane}: LANE-ERROR ({error_reason(exc)})")
+
+    # Diagnostics run AFTER dispatch and never feed fingerprints or saved state.
+    if "integrate" in job_map:
+        probe = probes.get("integrate")
+        if (token is None or linear_auth_failed or fail_open_reason is not None or not probe
+                or probe[2] is not None or "integrate" in lane_errors):
+            lines.append("approval-wait: unknown (integrate lane not probed)")
+        else:
+            try:
+                lines.extend(approval_status(approval_issues(token, probe[0]), now_utc()))
+            except Exception as exc:  # noqa: BLE001 — diagnostics cannot affect dispatch
+                lines.append(f"approval-wait: unknown ({error_reason(exc)})")
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
 
     # Full provider inventory lets the watchdog distinguish an active probe from
     # recovery even when every lane is in-flight. Only safe slugs/times leave here.
@@ -1127,6 +1212,7 @@ def main() -> int:
             active_holds.append(f"{provider} until {until.astimezone(timezone.utc).isoformat()}")
     if active_holds or provider_holds:
         lines.append("provider-holds: " + ",".join(active_holds or ["none"]))
+
     if job_map:
         state["recovery_pending"] = sorted(pending)
     if not args.audit_only:
