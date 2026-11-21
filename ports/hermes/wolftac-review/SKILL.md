@@ -444,6 +444,12 @@ pickup and claim-race rules remain unchanged):
    form as checked; GraphQL writes using `- [x]` may read back as `- [X]`. Do not claim
    completion from the write call alone.
 
+   **Moved-default merge check:** immediately before a PASS write, `git fetch` and run
+   `git merge-tree --write-tree origin/main <reviewed-SHA>` (read-only). If the default moved
+   during the review and the head now conflicts, the artifact cannot land: verdict FAIL with one
+   `[DEFECT]` naming the new default SHA and conflicting files, rather than Approving a head that
+   integrate will bounce. Keep the per-criterion evidence in the report.
+
    **Concurrent-review race check:** after long installs/tests/builds or branch-fix pushes,
    re-fetch the issue status and latest comments immediately before any Linear write. Linear
    selection is not a lock; another reviewer may have posted a REVIEW REPORT or moved the issue
