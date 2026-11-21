@@ -23,6 +23,8 @@ Checks, per cron directory:
   6. gatekeeper auth  — newest Gatekeeper output does not contain linear-auth-failed
   7. worker progress  — last 3 non-quiet outputs (within 6 files) did not all stop for help
 
+Approval wait: evaluated Gatekeeper status within the last 6h, ignoring unknown ticks.
+
 Once per run: the Linear bot expiry date in -EnvFile is valid and at least 3 days away.
 Only the expiry key is extracted; no Linear credentials are used or validated.
 
@@ -79,6 +81,7 @@ param(
     [int]$StaleIntervals = 3,
     [int]$WorkerMinIntervalMinutes = 120,
     [int]$NagHours = 12,
+    [int]$ApprovalStatusMaxAgeHours = 6,
     [int]$RecentFailureHours = 6,
     # WD-578: consecutive degraded Gatekeeper outputs, newest by write time.
     [ValidateRange(1, 2147483647)]
@@ -424,6 +427,56 @@ function Test-GatekeeperDegraded([string]$Dir) {
     }
 }
 
+function Test-GatekeeperApprovalWait([string]$Dir, $Jobs) {
+    foreach ($job in @($Jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) { continue }
+        try {
+            $files = @(Get-ChildItem -LiteralPath $outputDir -File |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending)
+            if ($files.Count -eq 0) { continue }
+            $cutoff = [DateTime]::UtcNow.AddHours(-$ApprovalStatusMaxAgeHours)
+            $evaluated = $false
+            foreach ($file in $files) {
+                if ($file.LastWriteTimeUtc -lt $cutoff) { continue }
+                $output = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+                if ($output -cnotmatch 'approval-wait: ok|approval-stale: |approval-lane-down: ') { continue }
+                $evaluated = $true
+                $failed = $false
+                foreach ($kind in @('approval-stale', 'approval-lane-down')) {
+                    if ($output -cmatch ($kind + ': ([A-Z]+-\d+=\d+[hd](?:,[A-Z]+-\d+=\d+[hd])*)')) {
+                        # Only the constrained captures may reach alerts, never raw output.
+                        $list = (($Matches[1] -split ',' | ForEach-Object { $_ -replace '=', ' (' }) -join '), ') + ')'
+                        if ($kind -eq 'approval-stale') {
+                            Add-Finding "[$Dir] approval-wait: proof pack older than 24h with the issue still Approved: $list"
+                        } else {
+                            Add-Finding "[$Dir] approval-lane-down: newest proof pack says the approval request was not delivered; Jonathan has not been asked: $list"
+                        }
+                        $failed = $true
+                    }
+                }
+                if ($failed) {
+                    Add-Report $Dir 'approval-wait' 'FAIL' 'stale or lane-down proof pack'
+                } elseif ($output -cmatch 'approval-wait: ok') {
+                    Add-Report $Dir 'approval-wait' 'ok' 'evaluated approval status is ok'
+                } else {
+                    Add-Report $Dir 'approval-wait' 'skipped' 'approval status has no valid identifier/age list'
+                }
+                break
+            }
+            if (-not $evaluated) {
+                Add-Report $Dir 'approval-wait' 'skipped' "no evaluated approval status in Gatekeeper output from the last ${ApprovalStatusMaxAgeHours}h"
+            }
+        } catch {
+            Add-Finding "[$Dir] approval-wait: watchdog cannot read Gatekeeper output"
+            Add-Report $Dir 'approval-wait' 'FAIL' 'output unreadable'
+            $script:readFailure = $true
+        }
+    }
+}
+
 function Test-LinearTokenExpiry {
     # Match only the date key, never the bot token or app credentials. Do not print
     # raw values or exceptions: a malformed value could itself contain a secret.
@@ -602,6 +655,7 @@ function Test-CronDirectory([string]$Dir) {
 
     Test-GatekeeperAuth $Dir $jobs
     Test-GatekeeperAudit $Dir $jobs
+    Test-GatekeeperApprovalWait $Dir $jobs
     $matched = @($jobs | Where-Object { (Get-Prop $_ 'name') -like $JobNamePattern })
     if ($matched.Count -eq 0) {
         # Zero matches is itself a failure: the workers were deleted, renamed, or this
@@ -1099,7 +1153,7 @@ foreach ($r in $report) {
     Write-Output ("  {0,-6} {1,-20} {2}  [{3}]" -f $r.Result, $r.Check, $r.Observed, $r.Scope)
 }
 if ($healthy) {
-    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Gatekeeper auth)"
+    Write-Output "HEALTHY: all checks passed (ticker liveness, enabled, last_status, next_run_at, recent failure, Gatekeeper auth, approval wait)"
 } else {
     Write-Output "UNHEALTHY: $($findings.Count + $needsYouHeld.Count) finding(s)"
     foreach ($f in $findings) { Write-Output "  - $f" }
