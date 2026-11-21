@@ -29,6 +29,24 @@ Git worktree, never live junctions or `deploy.ps1 -Deploy`.
 | `factory-watchdog-drift.tests.ps1` | `factory-watchdog.ps1` drift alerting: truthful magnitude on any kind of edit, no false "running normally" while liveness is failing, and `cannot compare` for a deployed copy that is absent. Plus the alert state machine — transition, cooldown, 12h nag, recovery — and agreement with `deploy.ps1 -Check` on which targets are drifted. |
 | `factory-watchdog-learn.tests.ps1` | `factory-watchdog.ps1` pending `/learn` edits (WD-362): clean is silent, a modified or untracked file in the junctioned live worktree alerts once by path and line count (never content), is snapshotted byte-exact, and survives `git restore .`; cooldown, 12h nag, single recovery, 30-day retention keeping the newest, and "cannot check" for an unresolvable worktree or failed `git status`. Hermetic: scratch repo, scratch junctioned worktree, `-SlackOutbox` interception. |
 
+## WD-673 gate timeout and bounded retry contract
+
+Run `python -B -m unittest discover -s deploy/tests -p test_run_gate.py -v`.
+New tests exercise the real parser's 1800-second default and a real two-second
+child with no timeout override. The existing three-second timeout/tree-cleanup
+case remains unchanged. Contract assertions cover the six identical retry
+paragraphs, bot-authored per-reviewed-SHA counting, the 60-minute cooldown,
+third-attempt WAITING and unreadable-history refusal. A scratch parity test
+removes the Hermes marker, asserts the named failure, then restores it and passes.
+These are subprocess and skill-text proofs, not a live integrate retry.
+
+Run `pwsh -NoProfile -File deploy/parity-check.ps1`,
+`pwsh -NoProfile -File deploy/semantic-check.ps1`, and the complete
+`python -B -m unittest discover -s deploy/tests -v` suite with an explicit
+1800-second limit and `TEMP`, `TMP`, `TMPDIR` under long-form profile scratch.
+No live jobs, installed skills, credentials or approval state are touched.
+AC-8 remains a post-merge operator check after the live-checkout update.
+
 ## WD-641 installer regression additions
 
 Run `pwsh -NoProfile -File deploy/tests/watchdog-install.tests.ps1 -Repo <worktree> -Scratch <new-scratch-directory>`

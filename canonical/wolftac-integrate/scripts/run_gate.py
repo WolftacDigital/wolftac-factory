@@ -242,7 +242,7 @@ def main(argv=None):
     run = sub.add_parser("run")
     run.add_argument("--repo-path", required=True)
     run.add_argument("--cwd", required=True)
-    run.add_argument("--timeout-sec", type=float, default=900)
+    run.add_argument("--timeout-sec", type=float, default=1800)
     run.add_argument("--set-env", action="append", default=[])
     run.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)

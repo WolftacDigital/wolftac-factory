@@ -302,7 +302,7 @@ every task" rule):
       except the factory bot credentials this skill names. A spec may define a
       credential-free test session (for example WD-352's local `mc_session`
       cookie); use only that, never invent an authentication bypass.
-   2. Each gate gets a wall-clock limit of 15 minutes, or the limit the spec states.
+   2. Each gate gets a wall-clock limit of 30 minutes, or the limit the spec states.
       Each browser step gets 3 minutes of no visible progress. Record the start
       time, bound tool waits to the remaining limit, and stop that gate when either
       limit is hit. Do not keep retrying or wait for a human in an unattended run.
@@ -323,10 +323,20 @@ every task" rule):
       for it. Ordinary code failures and rebase conflicts still use the existing
       numbered-defect / `Todo` path; do not relabel them as preconditions.
 
+   **GATE-TIMEOUT-RETRY:** A gate that exits 124 is a timeout, not a human precondition. Post `PRECONDITION: <gate / test-plan step> could not run unattended - timed out after <N> s (attempt <k> of 3)`, where `<k>` is one more than the number of timeout PRECONDITION comments already on the issue for this reviewed SHA. Keep `Approved` and the claim, post nothing else. On a later tick, when `<k>` is below 3 and the newest of those comments is at least 60 minutes old, the issue is not WAITING: run its gates again from the start. At `<k>` = 3 it is WAITING under the existing rule. A new reviewed SHA starts the count again. Every other PRECONDITION is unchanged.
+
+   Count only comments written by the factory bot identity whose first line starts
+   `PRECONDITION:` and contains `timed out after`, posted after the newest review
+   report for the current reviewed SHA. No earlier matching comments means attempt 1.
+   Before the 60-minute minimum gap, keep WAITING. If comment history is unreadable,
+   treat the issue as WAITING and post nothing (fail closed). This exit-124-only
+   exception takes precedence over item 3's later-tick WAITING rule; it does not
+   retry exit 1 failures or change any other PRECONDITION.
+
    **GATE-RUNNER:** Run every Test plan command gate through `run_gate.py run` with
    `--repo-path`, `--cwd` set to the integrate worktree (or the deliverable's folder
    in 4-alt/6-alt), `--timeout-sec` set to the spec's stated limit in seconds or
-   omitted for the 15-minute default, and the gate's argv after `--`. Wrap a
+   omitted for the 30-minute default, and the gate's argv after `--`. Wrap a
    shell-syntax gate as `-- pwsh -NoProfile -Command "<gate>"` or
    `-- bash -c "<gate>"`. Never run a gate command directly. Exit 1 is a gate failure;
    exit 124 and exits 3/4 are `PRECONDITION:` outcomes under UNATTENDED-GATE-LIMITS.

@@ -1,5 +1,35 @@
 [
   {
+    "id": "gate-timeout-retry",
+    "description": "Every integrate surface retries exit-124 timeouts with a bounded per-reviewed-SHA attempt count and cooldown.",
+    "checks": [
+      {
+        "file": "canonical/wolftac-integrate/SKILL.md",
+        "pattern": "GATE-TIMEOUT-RETRY"
+      },
+      {
+        "file": "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+        "pattern": "GATE-TIMEOUT-RETRY"
+      },
+      {
+        "file": "ports/claude-desktop/wolftac-integrate/SKILL.md",
+        "pattern": "GATE-TIMEOUT-RETRY"
+      },
+      {
+        "file": "ports/codex/wolftac-integrate.md",
+        "pattern": "GATE-TIMEOUT-RETRY"
+      },
+      {
+        "file": "ports/hermes/wolftac-integrate/SKILL.md",
+        "pattern": "GATE-TIMEOUT-RETRY"
+      },
+      {
+        "file": "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        "pattern": "GATE-TIMEOUT-RETRY"
+      }
+    ]
+  },
+  {
     "id": "review-never-silent",
     "description": "Every review surface forbids human authentication, time-boxes commands and reports interruption without a false verdict.",
     "checks": [

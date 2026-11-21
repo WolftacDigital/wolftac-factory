@@ -297,6 +297,107 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(self.trailer(result)["redacted"], 1)
 
+    def test_default_timeout_allows_two_second_child(self):
+        result = self.run_gate("import time; time.sleep(2); print('completed')")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("completed", result.stdout)
+        self.assertFalse(self.trailer(result)["timed_out"])
+
+
+class TimeoutContractTests(unittest.TestCase):
+    def test_default_is_parsed_as_1800(self):
+        import io
+        parsed = []
+        original = gate.SafeParser.parse_args
+
+        def capture(parser, *args, **kwargs):
+            result = original(parser, *args, **kwargs)
+            parsed.append(result)
+            return result
+
+        # Exercise the actual parser without invoking a gate or reading credentials.
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(gate.SafeParser, "parse_args", capture), \
+                patch.object(gate, "repo_allowed", return_value=3), \
+                patch.object(gate.sys, "stdout", io.StringIO()):
+            self.assertEqual(gate.main([
+                "run", "--repo-path", "synthetic", "--cwd", "synthetic",
+                "--", "synthetic-command"]), 3)
+        self.assertEqual(parsed[-1].timeout_sec, 1800)
+
+    def test_timeout_retry_contract_and_six_surfaces(self):
+        invariant = next(row for row in json.loads(
+            (ROOT / "deploy/invariants.json").read_text(encoding="utf-8"))
+            if row["id"] == "gate-timeout-retry")
+        expected = {
+            "canonical/wolftac-integrate/SKILL.md",
+            "plugins/wolftac-factory/skills/wolftac-integrate/SKILL.md",
+            "ports/claude-desktop/wolftac-integrate/SKILL.md",
+            "ports/codex/wolftac-integrate.md",
+            "ports/hermes/wolftac-integrate/SKILL.md",
+            "ports/hermes-factory-integrate/skills/wolftac-integrate/SKILL.md",
+        }
+        self.assertEqual(len(invariant["checks"]), 6)
+        self.assertEqual({check["file"] for check in invariant["checks"]}, expected)
+        paragraphs = []
+        for check in invariant["checks"]:
+            self.assertEqual(check["pattern"], "GATE-TIMEOUT-RETRY")
+            text = (ROOT / check["file"]).read_text(encoding="utf-8")
+            self.assertNotIn("15-minute default", text)
+            self.assertNotIn("limit of 15 minutes", text)
+            paragraph = text.split("**GATE-TIMEOUT-RETRY:**", 1)[1].split("\n\n", 1)[0]
+            paragraphs.append(" ".join(paragraph.split()))
+            for phrase in (
+                "A gate that exits 124 is a timeout",
+                "PRECONDITION: <gate / test-plan step> could not run unattended - "
+                "timed out after <N> s (attempt <k> of 3)",
+                "at least 60 minutes old",
+                "At `<k>` = 3 it is WAITING",
+                "A new reviewed SHA starts the count again",
+                "Every other PRECONDITION is unchanged",
+            ):
+                self.assertIn(phrase, paragraphs[-1], check["file"])
+            normalized = " ".join(text.split())
+            for boundary in (
+                "Count only comments written by the factory bot identity",
+                "whose first line starts `PRECONDITION:` and contains `timed out after`",
+                "posted after the newest review report for the current reviewed SHA",
+                "Before the 60-minute minimum gap, keep WAITING",
+                "If comment history is unreadable, treat the issue as WAITING and post nothing",
+                "retry exit 1 failures or change any other PRECONDITION",
+            ):
+                self.assertIn(boundary, normalized, check["file"])
+        self.assertEqual(len(set(paragraphs)), 1)
+
+    def test_parity_rejects_missing_timeout_marker(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell unavailable; TP3 requires PowerShell")
+        manifest = ROOT / "deploy/invariants.json"
+        invariants = json.loads(manifest.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(prefix="wd673-parity-", dir=os.getenv("TMPDIR")) as temp:
+            scratch = Path(temp)
+            # Only copy the manifest's tracked text inputs, never a live install.
+            for name in {check["file"] for row in invariants for check in row["checks"]}:
+                dest = scratch / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, dest)
+            command = [pwsh, "-NoProfile", "-File", str(ROOT / "deploy/parity-check.ps1"),
+                       "-InvariantsPath", str(manifest), "-RepoRoot", str(scratch)]
+            positive = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertEqual(positive.returncode, 0, positive.stdout + positive.stderr)
+            target = scratch / "ports/hermes/wolftac-integrate/SKILL.md"
+            original = target.read_bytes()
+            self.assertIn(b"GATE-TIMEOUT-RETRY", original)
+            target.write_bytes(original.replace(b"GATE-TIMEOUT-RETRY", b"REMOVED-MARKER"))
+            negative = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(negative.returncode, 0)
+            self.assertIn("ports/hermes/wolftac-integrate/SKILL.md :: gate-timeout-retry",
+                          negative.stdout)
+            target.write_bytes(original)
+            restored = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+
 
 class PackagingTests(unittest.TestCase):
     def test_exact_seed_list(self):
