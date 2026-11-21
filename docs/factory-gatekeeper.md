@@ -7,6 +7,63 @@ unchanged blocked queue must not dispatch another silent worker on every tick.
 WD-620 adds bounded retries for eligible build work and one recovery dispatch
 after a degraded period, so an outage cannot strand an unchanged ready queue.
 
+## Keeping the live copies on main
+
+`deploy/factory-sync.py` is an operator-only, stdlib no-agent job. It is not
+called by build, review or integrate, and it does not restart anything. After
+Jonathan creates the `Wolftac Factory Sync` job on the default profile at a
+30-minute interval, it reports exactly one `sync:` line per run (exit 0).
+No scheduled job is installed by this change. As part of operator AC-12, copy
+`deploy/factory-sync.py` from the merged checkout to the default profile's
+`HERMES_HOME/scripts/factory-sync.py` (normally
+`%LOCALAPPDATA%/hermes/scripts/factory-sync.py`). The no-agent job's script is
+`factory-sync.py`, relative to that scripts directory, not an absolute repository
+path or a symlink out of it. Its adjacent installed dependency is
+`factory_gatekeeper.py`, copied from `deploy/factory-gatekeeper.py` by the existing
+Gatekeeper operator setup; keep `approval-policy.json` alongside it. Do not rename
+the installed Gatekeeper or create a second hyphen-named installed copy.
+First run `--dry-run` and have a person read it; after the next merge authorized
+by Jonathan's verified Discord reaction, verify both checkout HEADs and the
+reported SHA (WD-672 operator AC-12/AC-13).
+
+The main clone is checked before the live checkout. For each, the origin URL must
+match the pinned `--expected-remote`; fetch has a 120-second limit. Dirty trees
+and diverged histories are skipped without reset, stash, clean or force. A clean
+ancestor advances only with `git merge --ff-only origin/main`. The live checkout
+also waits while any lane is in flight: the lane map and TTL are imported from
+the adjacent Gatekeeper (`factory-gatekeeper.py` in the repository, otherwise
+`factory_gatekeeper.py` in the installed layout), and marker time plus the profile
+job's `last_run_at` determine whether it is still active. If that module cannot
+load or lacks required definitions, live is left untouched with the fixed segment
+`live: ff-failed -> skipped`; the main clone can still update and repair the
+installed dependency for the next tick. No import exception text or path is
+printed. Unreadable state/jobs fail closed. This is an observation of the existing
+Gatekeeper markers, not a new scheduler or lease.
+
+Only a current/updated main clone can supply installed bytes. Gatekeeper and
+approval policy are compared byte-for-byte, backed up as `.bak-<UTC
+YYYYmmddTHHMMSSZ>`, then atomically replaced in the scripts directory. Retain the
+five newest matching backups per file; unrelated names are untouched. An install
+failure reports its exception type, never the exception text. The protected
+watchdog's five files are only hashed and counted, never written or elevated.
+
+All locations have explicit overrides: `--main-clone`, `--live`, `--scripts-dir`,
+`--watchdog-dir`, `--gatekeeper-state`, `--hermes-home`, `--expected-remote`.
+Build/review must provide scratch values for every flag, using a local bare
+remote. Defaults are the existing Factory/main/live/scripts/protected locations;
+the state defaults to `cron/gatekeeper-state.json` under `--hermes-home`.
+
+`--dry-run` uses `git ls-remote`, never fetch, merge, install or backup. It reports
+`would-update` without downloading missing commit objects; ancestry is definitive
+only in the real run after fetch. `would-install` is likewise an intent when the
+main clone would advance, not proof of remote-file parity. Protected-file hashes
+in dry run describe the currently present main clone. No live files, jobs or
+credentials need to be read for the synthetic test plan.
+
+Rollback is an approved revert plus operator removal of the sync job. Keep the
+installed-file backups for manual recovery. The script never moves a checkout
+backward and never executes `deploy.ps1`; copy-deployed skills remain WD-632.
+
 ## How it works
 
 `deploy/factory-gatekeeper.py` is canonical. The manually installed copy is
@@ -345,7 +402,9 @@ guard. Those older comments never enter fingerprints or Discord approval detecti
 A missing comment `pageInfo` means no more pages. WD-626 also reads issue history
 after dispatch (at most 10 pages of 100, guarding non-advancing cursors) and uses
 the latest transition **into Approved**, not issue creation time. Incomplete,
-unreadable or unusable history falls back to `updatedAt` with reason `unknown`.
+unreadable or unusable history preserves existing packs and their stale/lane-down
+evaluation. Only if no pack exists does its missing-pack age fall back to
+`updatedAt` with reason `unknown`; `updatedAt` never invalidates an existing pack.
 At **2 hours or older**, an issue without a pack strictly newer than that transition
 gets `approval-no-pack`. A pack from a prior Approved cycle cannot clear it.
 Missing-pack ages stay in whole hours. Incomplete comment paging cannot establish

@@ -1174,6 +1174,45 @@ class GatekeeperTests(unittest.TestCase):
         self.assertIn("approval-no-pack: WD-1=4h(unknown)", self.approval_tick())
         self.assertEqual(sum(json.loads(r.data)["query"] == g.APPROVAL_HISTORY_QUERY for r in self.requests), 10)
 
+    def test_no_pack_unknown_transition_preserves_existing_packs(self):
+        failures = {
+            "transport": {None: OSError(LINEAR)},
+            "http": {None: urllib.error.HTTPError("https://fixture.invalid", 503, LINEAR, Message(), None)},
+            "no-transition": {None: connection([])},
+            "invalid-time": {None: connection([{"createdAt": "bad", "toState": {"name": "Approved"}}])},
+            "repeat-cursor": {None: connection([], "repeat"), "repeat": connection([], "repeat")},
+            "page-limit": {None: connection([], "0"), **{str(n): connection([], str(n+1)) for n in range(10)}},
+        }
+        cases = (
+            (30, 5, "", "approval-stale: WD-1=30h"),
+            (3, 2.5, "", "approval-wait: ok (1 approved)"),
+            (3, 3, "", "approval-wait: ok (1 approved)"),
+            (3, 2, "\nlane unavailable", "approval-lane-down: WD-1=3h"),
+            (30, 5, "\nnot delivered: operator step pending", "approval-lane-down: WD-1=30h"),
+        )
+        for failure, pages in failures.items():
+            for marker in ("MERGE PROOF PACK", "LANDING PROOF PACK"):
+                for pack_hours, update_hours, disclosure, expected in cases:
+                    with self.subTest(failure=failure, marker=marker, pack_hours=pack_hours,
+                                      update_hours=update_hours, disclosure=disclosure):
+                        row = self.no_pack_fixture()
+                        row["updatedAt"] = (NOW - timedelta(hours=update_hours)).isoformat()
+                        row["comments"] = connection([comment(
+                            marker + disclosure + "\nFALLBACK-PACK-SENTINEL " + LINEAR,
+                            (NOW - timedelta(hours=pack_hours)).isoformat())])
+                        self.history_pages = pages
+                        self.baseline()
+                        original = copy.deepcopy(row)
+                        # Compare to the existing pack evaluation without enrichment.
+                        self.assertEqual(g.approval_status([row], NOW), [expected])
+                        out = self.approval_tick()
+                        self.assertIn(expected, out)
+                        self.assertNotIn("approval-no-pack:", out)
+                        for private in (LINEAR, "FALLBACK-PACK-SENTINEL"):
+                            self.assertNotIn(private, out)
+                        self.assertEqual(row, original)
+                        self.spawn.assert_not_called()
+
     def test_no_pack_incomplete_comments_cannot_claim_absence(self):
         row = self.no_pack_fixture()
         row["comments"] = connection([], "0")

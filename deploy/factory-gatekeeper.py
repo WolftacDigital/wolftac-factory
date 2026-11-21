@@ -998,7 +998,8 @@ def approval_issues(token: str, issues: list[dict], jobs_path=None, job_id=None)
         if (not approval_packs(comments) and connection.get("pageInfo", {}).get("hasNextPage")
                 and (approved_at or parse_ts(issue.get("updatedAt")))):
             raise ProbeError("approval comments incomplete")
-        enriched["_approved_at"] = approved_at or parse_ts(issue.get("updatedAt"))
+        enriched["_approved_at"] = approved_at
+        enriched["_no_pack_since"] = approved_at or parse_ts(issue.get("updatedAt"))
         enriched["_no_pack_reason"] = no_pack_reason(enriched, disabled) if approved_at else "unknown"
         result.append(enriched)
     return result
@@ -1016,12 +1017,14 @@ def approval_status(issues: list[dict], now: datetime) -> list[str]:
         if approved_at is not None:
             packs = [pack for pack in packs
                      if (parse_ts(pack.get("createdAt")) or datetime.min.replace(tzinfo=timezone.utc)) > approved_at]
-            if not packs and now - approved_at >= timedelta(hours=2):
-                hours = int((now - approved_at).total_seconds() // 3600)
-                reason = issue.get("_no_pack_reason", "unknown")
-                if reason not in {"repo-not-allowed", "precondition-failed", "integrate-paused", "unknown"}:
-                    reason = "unknown"
-                missing.append(f"{identifier}={hours}h({reason})")
+        # updatedAt is an age fallback, never evidence that an existing pack is obsolete.
+        no_pack_since = issue.get("_no_pack_since")
+        if not packs and no_pack_since is not None and now - no_pack_since >= timedelta(hours=2):
+            hours = int((now - no_pack_since).total_seconds() // 3600)
+            reason = issue.get("_no_pack_reason", "unknown")
+            if reason not in {"repo-not-allowed", "precondition-failed", "integrate-paused", "unknown"}:
+                reason = "unknown"
+            missing.append(f"{identifier}={hours}h({reason})")
         if not packs:
             continue
         pack = max(packs, key=lambda c: c["createdAt"])

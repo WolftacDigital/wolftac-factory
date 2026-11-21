@@ -21,6 +21,30 @@ Delivery uses the supported `hermes send` CLI. Checks still run when Hermes is
 down; if the CLI cannot deliver, exit 3 and the pending sidecar record expose the
 failure to Task Scheduler. Delivery is not independent of the Hermes installation.
 
+## Factory sync freshness (WD-672)
+
+`Test-FactorySync` reads the `Wolftac Factory Sync` job's outputs for each supplied
+cron directory, with the same single-component job-ID guard as Gatekeeper checks.
+There is no finding without the job, directory or at least six output files.
+It parses only an anchored `sync:` line and known target/status names; arbitrary
+output, paths and exception bodies are never relayed.
+
+For each of `main-clone`, `live`, `gatekeeper`, and `policy`, a failure streak
+must span six hours, contain at least six observations and have no intervening
+healthy, unknown or in-flight-only result. The boundary observation proves the
+elapsed span; recent files alone do not prove six hours. The allowed failures are
+`dirty`, `diverged`, `remote-mismatch`, `fetch-failed`, `ff-failed`, and
+`install-failed`. One finding per affected target reports the newest reason word.
+`live: lanes-in-flight` alone never raises this check. The protected-files stale
+streak uses 24 hours, not 23, and requests an elevated files-only refresh. The
+existing finding transition/dedupe/delivery path is reused, not a new sender.
+
+The check is defined before `Test-GatekeeperDegraded`, and therefore before
+`Test-LinearTokenExpiry`, preserving the existing unchanged adjacency regression.
+It is dispatched from the existing run-the-checks loop. Tests run the real
+watchdog with `-DryRun` and synthetic cron, policy, expiry and deploy inputs. No
+live scheduler, alert, credential or protected file is used or changed.
+
 ## What it checks
 
 Per cron directory, every run:
@@ -145,7 +169,8 @@ the whole inventory, and the existing `approval-wait` report row fails. Only iss
 IDs, whole-hour ages and `repo-not-allowed`, `precondition-failed`, `integrate-paused`
 or `unknown` are accepted; malformed/partial lists never echo source text. The
 Gatekeeper measures from the latest Approved transition and ignores older-cycle
-packs, falling back to updatedAt/unknown if history is unreadable. This does not
+packs when that transition is known. Unreadable history keeps existing pack
+evaluation intact; updatedAt/unknown is used only when no pack exists. This does not
 fix allowlists, preconditions or job schedules. Existing look-back, alert delivery,
 dedupe and recovery remain unchanged; an evaluated `ok` clears the finding.
 
