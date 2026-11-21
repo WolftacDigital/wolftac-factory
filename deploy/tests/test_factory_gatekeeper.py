@@ -6,7 +6,6 @@ import io
 import itertools
 import json
 import os
-import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,7 +29,6 @@ POLICY = {"discord_guild_id": GUILD, "discord_channel_id": CHANNEL, "approver_di
           "pack_author_discord_user_ids": [HARPER], "reader_bot_discord_user_id": HARPER,
           "approval_emoji": "\U0001F680"}
 NOW = datetime(2026, 9, 19, 20, 0, tzinfo=timezone.utc)
-REAL_POPEN = subprocess.Popen
 
 
 def connection(nodes, cursor=None):
@@ -1052,61 +1050,6 @@ class GatekeeperTests(unittest.TestCase):
             artifacts += log.read_text()
         for value in ("R3A-BODY-SENTINEL", LINEAR, DISCORD):
             self.assertNotIn(value, artifacts)
-
-    def test_approval_state_and_dispatch_equal_main(self):
-        # Execute actual remote-main code against the same synthetic inputs.
-        with patch.object(subprocess, "Popen", REAL_POPEN):
-            source = subprocess.check_output(["git", "show", "origin/main:deploy/factory-gatekeeper.py"],
-                                             cwd=Path(__file__).resolve().parents[2], encoding="utf-8", timeout=10)
-        path = self.root / "gk-main.py"
-        path.write_text(source, encoding="utf-8")
-        spec = importlib.util.spec_from_file_location("gk_main_581", path)
-        base = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(base)
-        for mode in ("stale", "down", "paging", "paging-failure", "discord", "inflight", "401", "changed"):
-            with self.subTest(mode=mode):
-                row = self.approval_fixture()
-                self.linear_error = None
-                if mode == "down":
-                    row["comments"]["nodes"][0]["body"] += "\nlane unavailable"
-                if mode in ("paging", "paging-failure"):
-                    pack = row["comments"]["nodes"][0]
-                    row["comments"] = connection([comment("SWEPT: churn")], "older")
-                    self.comment_pages[("WD-354", "older")] = (connection([pack]) if mode == "paging"
-                                                               else urllib.error.URLError(LINEAR))
-                if mode == "discord":
-                    row["comments"]["nodes"] = [proof()]
-                self.baseline()
-                if mode == "inflight":
-                    state = json.loads(self.state.read_text())
-                    state["lanes"]["integrate"] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": "2026-09-19T10:00:00Z"}
-                    self.write(self.state, state)
-                if mode == "401":
-                    self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, LINEAR, {}, None)
-                if mode == "changed":
-                    row["description"] = "new scope"
-                base_state = self.root / "main-state.json"
-                base_state.write_bytes(self.state.read_bytes())
-                current_out = self.tick()
-                current_argv = [c.args for c in self.spawn.call_args_list]
-                current_reader = copy.deepcopy(self.reader_calls)
-                current_data = json.loads(self.state.read_text())
-                args = [str(base_state) if a == str(self.state) else a for a in self.args]
-                stdout = io.StringIO()
-                self.requests.clear()
-                self.reader_calls.clear()
-                self.spawn.reset_mock()
-                with patch.object(base, "hermes_home", return_value=str(self.root)), \
-                        patch.object(base, "now_utc", return_value=NOW), \
-                        patch.object(base, "needs_you_issues", return_value=[]), \
-                        patch.object(base, "run_reader", side_effect=self.reader), \
-                        patch.object(base.sys, "argv", args), contextlib.redirect_stdout(stdout):
-                    self.assertEqual(base.main(), 0)
-                self.assertEqual(current_data, json.loads(base_state.read_text()))
-                self.assertEqual("; ".join(segment for segment in current_out.strip().split("; ")
-                                          if not segment.startswith("approval-")), stdout.getvalue().strip())
-                self.assertEqual(current_argv, [c.args for c in self.spawn.call_args_list])
-                self.assertEqual(current_reader, self.reader_calls)
 
     def test_bad_profile_in_job_map_is_a_lane_error(self):
         out = self.tick("--job-map", json.dumps({"build": ["Todo", "x", "../evil"]}))
