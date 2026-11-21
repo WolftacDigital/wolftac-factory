@@ -1,5 +1,14 @@
 [
   {
+    "id": "learn-staged",
+    "description": "Hermes workers keep skill edits staged until a reviewed PR is merged.",
+    "checks": [
+      {"file": "ports/hermes/wolftac-build/SKILL.md", "pattern": "LEARN-STAGED"},
+      {"file": "ports/hermes/wolftac-review/SKILL.md", "pattern": "LEARN-STAGED"},
+      {"file": "ports/hermes/wolftac-integrate/SKILL.md", "pattern": "LEARN-STAGED"}
+    ]
+  },
+  {
     "id": "review-never-silent",
     "description": "Every review surface forbids human authentication, time-boxes commands and reports interruption without a false verdict.",
     "checks": [

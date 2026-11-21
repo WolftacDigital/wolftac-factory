@@ -6,6 +6,58 @@ reviewer and integrator, targeting `D:\Wolftac\.factory-live\ports\hermes\wolfta
 Claude Desktop, the Codex plugin and WSL stay copy-deployed. The `factory-integrate`
 profile is retired and no longer deployed; its source port remains for WD-547.
 
+## Staged edits (preferred)
+
+For the builder, reviewer and integrator profiles, prefer Hermes'
+`skills.write_approval: true`. A `skill_manage` mutation then returns
+`Staged for approval` and stores a JSON record at
+`<Hermes home>/profiles/<profile>/pending/skills/<id>.json`, without changing
+its live skill. The junction design remains the fallback when staging is off
+and remains in use for the default profile. No default/cto/sloane/pepper setting
+is changed by this feature.
+
+**Operator steps, after the reviewed change is merged:** first update the live
+checkout through the normal protected deployment path so `LEARN-STAGED` is live.
+Then Jonathan, or an operator on his instruction, sets the option:
+
+```text
+hermes -p builder config set skills.write_approval true
+hermes -p reviewer config set skills.write_approval true
+hermes -p integrator config set skills.write_approval true
+```
+
+Verify the three settings. At the next worker lesson, verify a pending record
+appears and `git -C D:/Wolftac/.factory-live status --porcelain` shows no change
+to that worker's skill. Build/review do not read live configuration or pending
+records and do not perform these steps. Workers never bypass staging with a file
+edit, terminal command or script.
+
+The read-only inventory and deliberate scratch export use the **base Hermes
+home**, not an individual worker profile home:
+
+```text
+python deploy/learn-pending.py list --hermes-home <base-home>
+python deploy/learn-pending.py list --hermes-home <base-home> --json
+python deploy/learn-pending.py export --hermes-home <base-home> --out <empty-scratch>
+```
+
+`--profiles builder,reviewer,integrator` is the default selection. List output
+contains only profile, validated ID, allowlisted action, validated skill name,
+whole-hour age and counts. JSON output has `records`, `unreadable` and `summary`;
+neither format prints summary text or proposed edits. Invalid metadata uses `?`
+(or null for an unknown JSON age); unreadable record content is never printed.
+Export preserves record bytes in `<profile>-<id>.json` and refuses destinations
+inside the Hermes home, inside a Git worktree, or already non-empty. Duplicate
+output names also refuse, rather than silently overwriting a proposal.
+
+Treat exports as untrusted proposals. A person or interactive agent reviews the
+export and prepares a normal PR; nothing auto-applies, approves, rejects or opens
+a PR. A lesson reaches a skill only through a reviewed, approved merge. The
+operator then rejects handled staged records with `/skills reject <id>` in the
+owning profile. Keep exports local; their content is not watchdog output.
+Rollback is a reviewed revert plus an operator setting change to false; pending
+records are retained, never removed by this helper.
+
 ## The problem this removes
 
 Hermes resolves its skills directory as `get_hermes_home() / "skills"`
