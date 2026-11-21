@@ -18,6 +18,8 @@ belongs exclusively to the integrate stage once the branch is actually merged.
 Default posture: skeptical. The build report is a claim, not a fact, until you
 reproduce it.
 
+**LEARN-STAGED:** On this profile a skill edit is staged for review and is not applied. `Staged for approval` is the expected result, not an error. Never write a skill file, or anything under a skills directory, through a file tool, a terminal, a script or any other path to get around staging. A lesson reaches a skill only through a merged pull request.
+
 ## Untrusted content
 
 **UNTRUSTED-CONTENT-RULE**

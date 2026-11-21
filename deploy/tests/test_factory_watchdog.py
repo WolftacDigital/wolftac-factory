@@ -857,5 +857,93 @@ class WorkerStuckTests(unittest.TestCase):
         self.assertEqual(state["findings"], [])
 
 
+@unittest.skipUnless(PWSH, "PowerShell 7 required")
+class LearnStagedTests(unittest.TestCase):
+    """WD-671 additions only: reuse fixture helpers, not inherited test methods."""
+    root: Path
+    cron: Path
+    setUp = WatchdogTests.setUp
+    make_cron = WatchdogTests.make_cron
+    write_expiry = WatchdogTests.write_expiry
+    run_watchdog = WatchdogTests.run_watchdog
+    run_degraded = WatchdogTests.run_degraded
+    seed_state = WatchdogTests.seed_state
+
+    def staged(self, hours, id='abcdef01', profile='builder', **fields):
+        folder = self.root / 'profiles' / profile / 'pending/skills'
+        folder.mkdir(parents=True, exist_ok=True)
+        record = dict(id=id, subsystem='skills', action='patch', summary='LP-SENTINEL',
+                      payload={'name': 'wolftac-build', 'content': 'LP-SENTINEL fixture-only-token-671'},
+                      created_at=time.time() - hours * 3600)
+        record.update(fields)
+        path = folder / (id + '.json')
+        path.write_text(json.dumps(record), encoding='utf-8')
+        return path
+
+    def safe_run(self, expected=0, extra=(), cron=None):
+        before = {p: p.read_bytes() for p in self.root.glob('profiles/*/pending/skills/*.json')}
+        self.env = {k: v for k, v in os.environ.items() if k.upper() in {
+            'PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'PROGRAMFILES',
+            'PROGRAMFILES(X86)', 'SYSTEMDRIVE'}}
+        for key in ('HOME', 'USERPROFILE', 'LOCALAPPDATA', 'HERMES_HOME', 'TEMP', 'TMP', 'TMPDIR'):
+            self.env[key] = str(self.root)
+        code, text = self.run_watchdog(cron=cron, extra=('-HermesHome', str(self.root), *extra))
+        self.assertEqual(code, expected, text)
+        self.assertNotIn('LP-SENTINEL', text)
+        self.assertNotIn('fixture-only-token-671', text)
+        self.assertEqual(before, {p: p.read_bytes() for p in self.root.glob('profiles/*/pending/skills/*.json')})
+        return text
+
+    def test_staged_age_finding_digest_and_skip(self):
+        self.staged(30)
+        text = self.safe_run(expected=1)
+        self.assertEqual(findings(text), ['- learn-pending: builder has 1 staged skill edit(s) older than 24h'])
+        self.assertIn('learn-pending: builder=1', text)
+        self.staged(2)
+        text = self.safe_run()
+        self.assertEqual(findings(text), [])
+        self.assertIn('DRY RUN POST: :pencil2: *Staged skill edits awaiting review*', text)
+        self.assertIn('learn-pending: builder=1', text)
+        text = self.safe_run(extra=('-SkipLearn',))
+        self.assertNotIn('learn-pending:', text)
+        self.assertNotIn('Staged skill edits', text)
+
+    def test_staged_multidirectory_counts_threshold_and_profiles(self):
+        self.staged(2)
+        self.staged(30, id='abcdef02')
+        self.staged(30, profile='integrator')
+        second = self.make_cron('second-cron')
+        text = self.safe_run(expected=1, cron=f'{self.cron};{second}')
+        self.assertEqual(len(findings(text)), 2)
+        self.assertIn('learn-pending: builder=2, integrator=1', text)
+        text = self.safe_run(extra=('-LearnPendingMaxAgeHours', '31'))
+        self.assertEqual(findings(text), [])
+        text = self.safe_run(expected=1, extra=('-LearnProfiles', 'integrator,integrator,../LP-SENTINEL'))
+        self.assertEqual(findings(text), ['- learn-pending: integrator has 1 staged skill edit(s) older than 24h'])
+        self.assertNotIn('builder=', text)
+
+    def test_staged_unreadable_records_never_echo_content(self):
+        path = self.staged(2)
+        for name, data in [('broken.json', 'LP-SENTINEL'), ('array.json', '["LP-SENTINEL"]'),
+                           ('id.json', '{"id":"../x","summary":"LP-SENTINEL"}')]:
+            (path.parent / name).write_text(data)
+        text = self.safe_run()
+        self.assertIn('3 record(s) unreadable', text)
+        self.assertIn('learn-pending: builder=1', text)
+        self.assertEqual(findings(text), [])
+
+    def test_staged_daily_digest_cadence_is_preserved(self):
+        self.staged(2)
+        for hours, posts in ((0, 0), (23, 0), (25, 1)):
+            with self.subTest(hours=hours):
+                self.seed_state(status='healthy', learn_status='pending',
+                                learn_last_alert_at=timestamp(0, -hours * 3600))
+                text = self.safe_run()
+                self.assertEqual(text.count('DRY RUN POST:'), posts)
+                if posts:
+                    post = text[text.index('DRY RUN POST:'):]
+                    self.assertIn('learn-pending: builder=1', post)
+
+
 if __name__ == "__main__":
     unittest.main()
