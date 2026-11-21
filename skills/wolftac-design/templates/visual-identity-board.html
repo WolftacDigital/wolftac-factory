@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>@BRAND-NAME@ — Identity Board</title>
+<!-- @FONT-LINKS -->
+  <style>
+    :root {
+/* @BRAND-TOKENS */
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: var(--max-w); margin: 0 auto; padding: 64px 24px; }
+
+    h1 { font-family: var(--font-display); font-size: clamp(1.75rem, 4vw, 2.75rem); margin: 0 0 4px; letter-spacing: 0.02em; }
+    h2 {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--accent-text);
+      margin: 48px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    p { color: var(--text-2); margin: 0 0 1em; }
+    .sub { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-2); }
+
+    .swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    @media (max-width: 860px) { .swatches { grid-template-columns: repeat(2, 1fr); } }
+    .swatch { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+    .swatch .chip { height: 88px; }
+    .swatch .meta { padding: 10px 12px; background: var(--bg-2); }
+    .swatch .name { font-size: 0.8rem; }
+    .swatch .hex { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-2); letter-spacing: 0.08em; }
+
+    .type-row { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); padding: 20px 24px; margin-bottom: 12px; }
+    .type-row .role { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 8px; }
+    .type-display { font-family: var(--font-display); font-size: 2rem; line-height: 1.1; }
+    .type-body { font-family: var(--font-body); font-size: 1.05rem; }
+    .type-mono { font-family: var(--font-mono); font-size: 0.95rem; letter-spacing: 0.08em; }
+
+    .rules { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    @media (max-width: 860px) { .rules { grid-template-columns: 1fr; } }
+    .rule { border: 1px solid var(--line); border-radius: var(--radius); clip-path: var(--clip-cut); background: var(--bg-2); padding: 18px 20px; }
+    .rule strong { display: block; font-family: var(--font-display); margin-bottom: 6px; }
+    .rule p { margin: 0; font-size: 0.92rem; }
+  </style>
+<!-- @PROVENANCE -->
+</head>
+<body>
+  <main class="wrap">
+    <p class="sub">Identity Board</p>
+    <h1>@BRAND-NAME@</h1>
+    <p>@BRAND-VOICE@</p>
+
+    <h2>Palette</h2>
+    <div class="swatches">
+      <div class="swatch"><div class="chip" style="background: var(--bg);"></div><div class="meta"><div class="name">Surface</div><div class="hex">--bg</div></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--bg-2);"></div><div class="meta"><div class="name">Raised</div><div class="hex">--bg-2</div></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--accent);"></div><div class="meta"><div class="name">Accent</div><div class="hex">--accent</div></div></div>
+      <div class="swatch"><div class="chip" style="background: var(--accent-2);"></div><div class="meta"><div class="name">Accent alt</div><div class="hex">--accent-2</div></div></div>
+    </div>
+
+    <h2>Typography</h2>
+    <div class="type-row">
+      <div class="role">Display</div>
+      <div class="type-display">The quick brown fox</div>
+    </div>
+    <div class="type-row">
+      <div class="role">Body</div>
+      <div class="type-body">Running copy sets the tone at reading size. Measure, rhythm and colour do more work here than any single decorative choice.</div>
+    </div>
+    <div class="type-row">
+      <div class="role">Mono labels</div>
+      <div class="type-mono">STATUS / 0042 / NOMINAL</div>
+    </div>
+
+    <h2>Rules</h2>
+    <div class="rules">
+      <div class="rule"><strong>Shape</strong><p>Corner treatment is a brand signature, not a preference. It is applied by token, never by hand.</p></div>
+      <div class="rule"><strong>Restraint</strong><p>Effects are atmosphere. One layer at most, and never on content that has to be read.</p></div>
+      <div class="rule"><strong>Contrast</strong><p>Body copy holds AA at its rendered size. A colour that fails is not used, however well it looks.</p></div>
+      <div class="rule"><strong>Evidence</strong><p>Placeholders are bracketed and visible. Nothing is invented to fill a slot.</p></div>
+    </div>
+  </main>
+</body>
+</html>

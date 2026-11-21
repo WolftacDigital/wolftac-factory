@@ -1,0 +1,10 @@
+{
+  "name": "wolftac-design-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Proof-gate and asset-export scripts for the /wolftac-design skill. Installed on first use; node_modules is never committed.",
+  "dependencies": {
+    "puppeteer-core": "^25.9.0",
+    "sharp": "^0.35.0"
+  }
+}
