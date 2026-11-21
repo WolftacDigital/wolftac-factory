@@ -55,6 +55,26 @@ turn staging on for the three workers, then observe a real lesson staged without
 a live skill change. See `docs/hermes-skill-junctions.md`. No installation, live
 setting change or lesson is performed by these tests.
 
+## WD-672 sync regression additions
+
+Run `python -B -m unittest discover -s deploy/tests -p test_factory_sync.py -v`
+and `python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v`.
+Then run `pwsh deploy/parity-check.ps1`, `pwsh deploy/semantic-check.ps1` and the
+full deploy unittest suite. Set TEMP, TMP and TMPDIR to profile scratch first.
+
+The new sync suite creates a local bare remote and two real clones for every
+test, with an empty scratch global Git config, `GIT_CONFIG_NOSYSTEM=1` and
+`core.autocrlf=false`. All seven path/remote flags are explicit. It proves clean
+fast-forwards and idempotence, dirty/diverged/mismatched-remote refusal,
+in-flight/completed/expired/unreadable markers, byte-exact atomic install and
+backup behavior, failed replacement cleanup, seven-install retention, protected
+read-only comparison, full-tree dry-run immutability and one-line sanitized output.
+Watchdog additions execute the real scratch `-DryRun` path for six/24-hour
+thresholds, recovery, in-flight exclusion, missing inputs and untrusted text.
+Existing test methods remain unchanged. Operator AC-12/AC-13 are not automated
+or claimed by these tests; never run the sync command with live default paths
+inside a worker session.
+
 ## WD-641 installer regression additions
 
 Run `pwsh -NoProfile -File deploy/tests/watchdog-install.tests.ps1 -Repo <worktree> -Scratch <new-scratch-directory>`

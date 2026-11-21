@@ -21,6 +21,30 @@ Delivery uses the supported `hermes send` CLI. Checks still run when Hermes is
 down; if the CLI cannot deliver, exit 3 and the pending sidecar record expose the
 failure to Task Scheduler. Delivery is not independent of the Hermes installation.
 
+## Factory sync freshness (WD-672)
+
+`Test-FactorySync` reads the `Wolftac Factory Sync` job's outputs for each supplied
+cron directory, with the same single-component job-ID guard as Gatekeeper checks.
+There is no finding without the job, directory or at least six output files.
+It parses only an anchored `sync:` line and known target/status names; arbitrary
+output, paths and exception bodies are never relayed.
+
+For each of `main-clone`, `live`, `gatekeeper`, and `policy`, a failure streak
+must span six hours, contain at least six observations and have no intervening
+healthy, unknown or in-flight-only result. The boundary observation proves the
+elapsed span; recent files alone do not prove six hours. The allowed failures are
+`dirty`, `diverged`, `remote-mismatch`, `fetch-failed`, `ff-failed`, and
+`install-failed`. One finding per affected target reports the newest reason word.
+`live: lanes-in-flight` alone never raises this check. The protected-files stale
+streak uses 24 hours, not 23, and requests an elevated files-only refresh. The
+existing finding transition/dedupe/delivery path is reused, not a new sender.
+
+The check is defined before `Test-GatekeeperDegraded`, and therefore before
+`Test-LinearTokenExpiry`, preserving the existing unchanged adjacency regression.
+It is dispatched from the existing run-the-checks loop. Tests run the real
+watchdog with `-DryRun` and synthetic cron, policy, expiry and deploy inputs. No
+live scheduler, alert, credential or protected file is used or changed.
+
 ## What it checks
 
 Per cron directory, every run:
@@ -34,6 +58,7 @@ Per cron directory, every run:
 | `recent-failure` | a job's `last_failure.at` is within `-RecentFailureHours` (default 6). Hermes often writes `last_status: ok` on a tick that failed the same way, so `last-status` alone flaps and posts false recoveries |
 | `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
 | `gatekeeper-degraded` | all of the newest `-DegradedTicks` Gatekeeper outputs (default 3) contain at least one case-sensitive marker: `FAIL-OPEN`, `discord-check-failed`, or `LANE-ERROR` |
+| `approval-wait` | the newest evaluated approval status within the 6-hour look-back reports stale proof packs or an unavailable approval lane |
 | `worker-safety-net` | an enabled, unpaused agent worker matching `-JobNamePattern` has an interval below `-WorkerMinIntervalMinutes` (default 120), or a present schedule kind other than `interval` |
 
 The safety-net check excludes `Wolftac Factory Gatekeeper`, `no_agent: true`,
@@ -106,6 +131,36 @@ execution with scratch cron/env/deploy inputs. It covers mixed/all-fail-open
 windows, short/healthy histories, write-time and tie ordering, auth-only output,
 case sensitivity, missing/unsafe jobs, sentinel suppression and a Windows-only
 file-sharing-denial fixture. No live credential, cron state or sender is used.
+
+### Approval wait (WD-581)
+
+The approval-wait and degraded checks are independent siblings. A single tick can
+report both degraded dispatch and stale/lane-down approval findings through the
+unchanged liveness alert path. A healthy dispatch breaks the degraded streak;
+unknown approval status still looks back to the latest evaluated status. Each
+check retains its own safe job-ID guard and output enumeration. The thresholds
+coexist: `-DegradedTicks 3` counts outputs, while `-ApprovalStatusMaxAgeHours 6`
+bounds approval status age.
+
+The **approval-wait** check uses the same Gatekeeper job and output directory,
+but looks back **6 hours** (`-ApprovalStatusMaxAgeHours`, default 6). Files are
+ordered by `LastWriteTimeUtc`, then filename, descending. It passes over unknown
+or legacy outputs until the first evaluated status: `approval-wait: ok`,
+`approval-stale: ...`, or `approval-lane-down: ...`. Thus an in-flight or failed
+tick does not falsely recover an outstanding alert. No evaluated status in the
+window means a `skipped` report row, no finding. Missing jobs/directories/files
+produce neither a finding nor a report row; unreadable existing outputs produce
+a read finding. This is bounded look-back, not persisted approval state.
+
+Stale findings say `approval-wait: proof pack older than 24h with the issue still
+Approved: WD-354 (15d)`. Lane-outage findings say `approval-lane-down: newest proof
+pack says the approval request was not delivered; Jonathan has not been asked:
+WD-348 (3d)`. Both historical `lane unavailable` and current `not delivered:
+operator step pending` disclosures trigger the Gatekeeper's lane-down status.
+Only parsed issue identifiers and ages reach findings, never titles or pack/output
+text. Both feed the existing transition, 12-hour nag and recovery path unchanged.
+No new sender, credential or approval authority is added; typed comments never
+approve a merge.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**

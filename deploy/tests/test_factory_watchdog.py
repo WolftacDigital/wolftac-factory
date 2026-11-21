@@ -148,6 +148,95 @@ class WatchdogTests(unittest.TestCase):
         self.assertFalse(self.outbox.exists(), "DryRun must not attempt alert delivery")
         return result.returncode, text
 
+    def sync_history(self, values, hours=6, job_id="sync-672"):
+        jobs_path = self.cron / "jobs.json"
+        jobs = json.loads(jobs_path.read_text())
+        jobs["jobs"] = [j for j in jobs["jobs"] if j["name"] != "Wolftac Factory Sync"]
+        jobs["jobs"].append({"id": job_id, "name": "Wolftac Factory Sync", "enabled": True,
+                             "paused": False, "last_status": "ok", "schedule": {"minutes": 30},
+                             "next_run_at": timestamp(1)})
+        jobs_path.write_text(json.dumps(jobs))
+        folder = self.cron / "output/sync-672"
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in folder.iterdir():
+            old.unlink()
+        now = time.time() - 2
+        for i, value in enumerate(values):
+            file = folder / f"{i:02}.txt"
+            file.write_text(value, encoding="utf-8")
+            at = now - i * hours * 3600 / max(len(values) - 1, 1)
+            os.utime(file, (at, at))
+
+    def test_sync_ac10_six_hour_failure_and_progress(self):
+        line = "sync: main-clone: current 1234567; live: dirty (1 files) -> skipped; gatekeeper: current; policy: current; watchdog-files: current"
+        self.sync_history([line] * 6)
+        code, text = self.run_watchdog()
+        expected = f"- [{self.cron}] factory-sync: live has not been updated for 6h (dirty)"
+        self.assertEqual(findings(text), [expected])
+        self.assertEqual(code, 1)
+        self.sync_history([line.replace("dirty (1 files) -> skipped", "lanes-in-flight (build) -> skipped")] * 6)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        rows = [line] * 6
+        rows[2] = line.replace("dirty (1 files) -> skipped", "updated 1234567")
+        self.sync_history(rows)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        self.sync_history([line] * 6, hours=5)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+
+    def test_sync_and_provider_hold_checks_both_run_after_main_merge(self):
+        line = "sync: main-clone: current 1234567; live: dirty (1 files) -> skipped; gatekeeper: current; policy: current; watchdog-files: current"
+        self.sync_history([line] * 6)
+        until = (datetime.now(timezone.utc) + timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
+        self.output("provider.txt", "gatekeeper: build: idle; provider-holds: provider-a until " + until)
+        sync_finding = f"- [{self.cron}] factory-sync: live has not been updated for 6h (dirty)"
+        provider_finding = f"- [{self.cron}] provider-hold provider-a: until {until} (including release probe)"
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1, text)
+        self.assertEqual(findings(text), [sync_finding, provider_finding])
+        # Neither dispatch may be dropped when resolving the shared checks loop.
+        self.sync_history([line.replace("dirty (1 files) -> skipped", "updated 1234567")] * 6)
+        self.assertEqual(findings(self.run_watchdog()[1]), [provider_finding])
+        self.sync_history([line] * 6)
+        self.output("provider.txt", "gatekeeper: build: idle; provider-holds: none")
+        self.assertEqual(findings(self.run_watchdog()[1]), [sync_finding])
+
+    def test_sync_ac10_protected_24_not_23_hours(self):
+        line = "sync: main-clone: current 1234567; live: current 1234567; gatekeeper: current; policy: current; watchdog-files: stale (1 of 5)"
+        self.sync_history([line] * 6, hours=24)
+        self.assertEqual(findings(self.run_watchdog()[1]), [f"- [{self.cron}] factory-sync: protected watchdog files are stale (1 of 5); run the elevated files-only refresh"])
+        self.sync_history([line] * 6, hours=23)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        rows = [line] * 6
+        rows[3] = line.replace("stale (1 of 5)", "current")
+        self.sync_history(rows, hours=24)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+
+    def test_sync_missing_fewer_unsafe_id_and_untrusted_output(self):
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        line = "sync: live: dirty (1 files) -> skipped"
+        self.sync_history([line] * 5)
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        self.sync_history([line] * 6, job_id="../sync-672")
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        self.sync_history([line] * 6)
+        shutil.rmtree(self.cron / "output/sync-672")
+        self.assertEqual(findings(self.run_watchdog()[1]), [])
+        for invalid in ("prefix " + line, "sync: live: dirty; live: current", "sync: live: dirty SECRET", "sync: live: arbitrary-secret"):
+            with self.subTest(invalid=invalid):
+                self.sync_history([invalid] * 6)
+                text = self.run_watchdog()[1]
+                self.assertEqual(findings(text), [])
+                self.assertNotIn("SECRET", text)
+                self.assertNotIn("arbitrary-secret", text)
+
+    def test_sync_all_allowlisted_failure_targets(self):
+        for target, reason in (("main-clone", "diverged"), ("main-clone", "remote-mismatch"),
+                               ("live", "fetch-failed"), ("live", "ff-failed"),
+                               ("gatekeeper", "install-failed"), ("policy", "install-failed")):
+            with self.subTest(target=target, reason=reason):
+                self.sync_history([f"sync: {target}: {reason}"] * 6)
+                self.assertEqual(findings(self.run_watchdog()[1]), [f"- [{self.cron}] factory-sync: {target} has not been updated for 6h ({reason})"])
+
     def test_expiry_matrix(self):
         cases = [(timestamp(10), None), (timestamp(2), "expires"), (None, "missing"),
                  ("not-a-date", "unparseable"), ("", "missing"), (timestamp(-1), "expires"),
@@ -396,8 +485,11 @@ class WatchdogTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows file-sharing denial fixture")
     def test_degraded_unreadable_older_file_is_finding_even_after_healthy(self):
+        # Keep approval status evaluated in the newest healthy dispatch, so
+        # this fixture isolates the degraded check's older-file read contract.
         paths = self.degraded_history([("a.txt", "FAIL-OPEN", 120),
-                                       ("b.txt", "FAIL-OPEN", 60), ("c.txt", "healthy", 0)])
+                                       ("b.txt", "FAIL-OPEN", 60),
+                                       ("c.txt", "healthy; approval-wait: ok (0 approved)", 0)])
         quote = lambda value: "'" + str(value).replace("'", "''") + "'"
         wrapper = self.root / "locked-degraded.ps1"
         wrapper.write_text("$lock=[IO.File]::Open(" + quote(paths[1]) +
@@ -413,7 +505,7 @@ class WatchdogTests(unittest.TestCase):
     def test_degraded_placement_and_read_failure_contract(self):
         current = SCRIPT.read_text(encoding="utf-8")
         start = current.index("function Test-GatekeeperDegraded([string]$Dir)")
-        end = current.index("function Test-LinearTokenExpiry", start)
+        end = current.index("function Test-GatekeeperApprovalWait", start)
         part = current[start:end]
         self.assertEqual(part.count("function "), 1)
         self.assertIn("$script:readFailure = $true", part)
@@ -453,7 +545,8 @@ class WatchdogTests(unittest.TestCase):
         def checks(text):
             part = text[text.index("function Test-CronDirectory"):text.index("function Get-StatePath")]
             part = part.replace("    Test-GatekeeperAuth $Dir $jobs\n", "").replace(
-                "    Test-GatekeeperAudit $Dir $jobs\n", "")
+                "    Test-GatekeeperAudit $Dir $jobs\n", "").replace(
+                "    Test-GatekeeperApprovalWait $Dir $jobs\n", "")
             # The recent-failure check is a deliberate later addition to the cron checks;
             # drop its block on both sides so everything else stays pinned to main.
             start = part.find("        # Hermes records a failed run in last_failure")
@@ -558,6 +651,120 @@ class WatchdogTests(unittest.TestCase):
                 self.assertEqual(findings(text), [])
                 self.assertIn("DRIFT CLEAN:", text)
                 self.assertIn("LEARN CLEAN:", text)
+
+    def test_approval_findings_and_ok(self):
+        stale = f"- [{self.cron}] approval-wait: proof pack older than 24h with the issue still Approved: WD-354 (15d)"
+        down = f"- [{self.cron}] approval-lane-down: newest proof pack says the approval request was not delivered; Jonathan has not been asked: WD-348 (3d)"
+        cases = [("approval-stale: WD-354=15d", [stale]),
+                 ("approval-lane-down: WD-348=3d", [down]),
+                 ("approval-stale: WD-354=15d; approval-lane-down: WD-348=3d", [stale, down]),
+                 ("approval-wait: ok (2 approved)", [])]
+        for segment, expected in cases:
+            with self.subTest(segment=segment):
+                self.output("tick.txt", "gatekeeper: integrate: unchanged (skip); " + segment)
+                code, text = self.run_watchdog()
+                self.assertEqual(findings(text), expected)
+                self.assertEqual(code, 1 if expected else 0)
+                self.assertRegex(text, r"(?:FAIL|ok)\s+approval-wait\s")
+
+    def test_approval_and_degraded_checks_compose(self):
+        self.degraded_history([
+            (f"tick-{i}.txt", "gatekeeper: build: FAIL-OPEN; "
+             "approval-stale: WD-354=15d; approval-lane-down: WD-348=3d", i * 60)
+            for i in range(3)])
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        rows = findings(text)
+        self.assertEqual(len(rows), 3)
+        for kind in ("gatekeeper-degraded:", "approval-wait:", "approval-lane-down:"):
+            self.assertEqual(sum(kind in row for row in rows), 1)
+        self.assertIn("DRY RUN POST:", text)
+        # A healthy dispatch breaks the degraded streak but unknown approval
+        # status still preserves the latest evaluated approval findings.
+        self.output("newest.txt", "gatekeeper: build: idle; "
+                    "approval-wait: unknown (integrate lane not probed)")
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(findings(text)), 2)
+        self.assertFalse(any("gatekeeper-degraded:" in row for row in findings(text)))
+        self.output("newest.txt", "gatekeeper: build: idle; approval-wait: ok (0 approved)")
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+
+    def test_approval_lookback_and_expiry(self):
+        self.output("z-old.txt", "approval-stale: WD-354=15d", age=7200)
+        self.output("a-new.txt", "approval-wait: unknown (integrate lane not probed)")
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(findings(text)), 1)
+        self.assertIn("WD-354 (15d)", findings(text)[0])
+        self.output("z-old.txt", "approval-stale: WD-354=15d", age=25200)
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertRegex(text, r"skipped\s+approval-wait\s+no evaluated approval status in Gatekeeper output from the last 6h")
+        self.assertEqual(self.run_watchdog(extra=("-ApprovalStatusMaxAgeHours", "8"))[0], 1)
+        self.output("a-new.txt", "gatekeeper: integrate: idle")
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertRegex(text, r"skipped\s+approval-wait\s")
+
+    def test_approval_newest_evaluated_recovers_and_ties_use_name(self):
+        old = self.output("z-old.txt", "approval-stale: WD-354=15d", age=3600)
+        new = self.output("a-new.txt", "approval-wait: ok (0 approved)")
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertRegex(text, r"ok\s+approval-wait\s")
+        at = time.time() - 10
+        for path in (old, new):
+            os.utime(path, (at, at))
+        self.assertEqual(self.run_watchdog()[0], 1)
+
+    def test_approval_only_identifiers_and_ages_reach_output(self):
+        self.output("tick.txt", "R3A-BODY-SENTINEL " + " ".join(FAKES) +
+                    "\napproval-stale: WD-354=15d,WD-519=30h; approval-lane-down: WD-348=3d")
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertNotIn("R3A-BODY-SENTINEL", text)
+        rows = findings(text)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(rows[0].endswith("WD-354 (15d), WD-519 (30h)"))
+        self.assertTrue(rows[1].endswith("WD-348 (3d)"))
+        self.output("tick.txt", "approval-stale: R3A-BODY-SENTINEL " + FAKES[0])
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertNotIn("R3A-BODY-SENTINEL", text)
+
+    def test_approval_missing_sources_and_invalid_job_id(self):
+        code, text = self.run_watchdog()
+        self.assertEqual((code, findings(text)), (0, []))
+        self.assertNotRegex(text, r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+        (self.cron / "output/gk-549").mkdir(parents=True)
+        self.assertNotRegex(self.run_watchdog()[1], r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+        self.output("tick.txt", "approval-stale: WD-354=15d")
+        jobs = json.loads((self.cron / "jobs.json").read_text())
+        jobs["jobs"][0]["id"] = "../gk-549"
+        (self.cron / "jobs.json").write_text(json.dumps(jobs))
+        self.assertNotRegex(self.run_watchdog()[1], r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+        jobs["jobs"][0].update(id="gk-549", name="Wolftac Factory Build Worker")
+        (self.cron / "jobs.json").write_text(json.dumps(jobs))
+        self.assertNotRegex(self.run_watchdog()[1], r"(?:ok|FAIL|skipped)\s+approval-wait\s")
+
+    def test_approval_unreadable_output(self):
+        # Only the older fixture fails to read; the newest auth-check file works.
+        blocked = self.output("old.txt", "approval-stale: WD-354=15d", age=7200)
+        self.output("new.txt", "approval-wait: unknown (integrate lane not probed)")
+        wrapper = self.root / "unreadable.ps1"
+        literal = str(blocked).replace("'", "''")
+        script = str(SCRIPT).replace("'", "''")
+        wrapper.write_text(
+            "function Get-Content {\n [CmdletBinding()] param([string]$LiteralPath, [switch]$Raw)\n"
+            f" if ($LiteralPath -eq '{literal}') {{ throw 'fixture read denied' }}\n"
+            " Microsoft.PowerShell.Management\\Get-Content @PSBoundParameters\n}\n"
+            f"& '{script}' @args\nexit $LASTEXITCODE\n", encoding="utf-8", newline="\n")
+        code, text = self.run_watchdog(script=wrapper)
+        self.assertEqual(code, 1)
+        self.assertEqual(findings(text), [f"- [{self.cron}] approval-wait: watchdog cannot read Gatekeeper output"])
+        self.assertRegex(text, r"FAIL\s+approval-wait\s+output unreadable")
 
     def seed_state(self, **fields):
         (self.cron / 'watchdog-state.json').write_text(json.dumps(fields), encoding='utf-8')
