@@ -47,6 +47,32 @@ Run `pwsh -NoProfile -File deploy/parity-check.ps1`,
 No live jobs, installed skills, credentials or approval state are touched.
 AC-8 remains a post-merge operator check after the live-checkout update.
 
+## WD-671 staged skill edits
+
+```text
+python -B -m unittest discover -s deploy/tests -p test_learn_pending.py -v
+python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v
+pwsh -NoProfile -File deploy/parity-check.ps1
+pwsh -NoProfile -File deploy/semantic-check.ps1
+python -m unittest discover -s deploy/tests -v
+```
+
+Use long-form scratch `TEMP`, `TMP` and `TMPDIR`, synthetic home/profile roots
+and no live credentials. The new CLI suite executes list/JSON/export with scratch
+records: counts, whole-hour ages, secret sentinels, invalid inputs, byte-exact
+export, destination refusals, duplicate IDs and traversal guards. It also runs
+parity against a scratch copy before and after removing `LEARN-STAGED`; the
+negative must name the builder skill. Symlink tests run where privileges permit.
+`LearnStagedTests` adds real watchdog DryRun cases for stale/fresh records,
+profile/count thresholds, multi-cron once-only dispatch, unreadable records,
+sentinel suppression, SkipLearn and the unchanged daily digest cadence. Existing
+test methods are not edited. No live pending directory or config is read.
+
+AC-9 and AC-10 are operator checks after merge, not automated acceptance claims:
+turn staging on for the three workers, then observe a real lesson staged without
+a live skill change. See `docs/hermes-skill-junctions.md`. No installation, live
+setting change or lesson is performed by these tests.
+
 ## WD-672 sync regression additions
 
 Run `python -B -m unittest discover -s deploy/tests -p test_factory_sync.py -v`

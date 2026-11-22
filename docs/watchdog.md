@@ -250,6 +250,31 @@ Old output files are never used as fallback. The only reasons are
 threshold, pagination, clearing, daily-cap and delivery-retry regressions. These
 tests do not prove live Discord delivery or authorize installation.
 
+### Staged skill edits (WD-671)
+
+Once per invocation, `Test-LearnPending` reads
+`<HermesHome>/profiles/<profile>/pending/skills/*.json` for `-LearnProfiles`
+(default `builder,reviewer,integrator`). No Python child or live setting change
+is involved. `-SkipLearn` disables both this check and the unchanged junctioned
+worktree check. Linked pending directories/files are not followed.
+
+A valid record strictly older than `-LearnPendingMaxAgeHours` (default 24)
+contributes to one finding per profile:
+`learn-pending: builder has 1 staged skill edit(s) older than 24h`.
+These findings use the existing alert/recovery path and produce exit 1, including
+under `-DryRun`. Ages use epoch seconds, not file modification times. Invalid
+JSON, non-object records and invalid IDs are reported as unreadable counts,
+never as content or exception text.
+
+The existing daily learn digest gains a count-only line such as
+`learn-pending: builder=2, integrator=1`. Pending staged edits alone can produce
+the digest, including when the live skill worktree is clean; the existing
+24-hour cadence and delivery retry behavior remain. No staged record is copied
+into the existing live-edit snapshots. `-DryRun` prints prospective messages
+without sending, snapshotting or persisting state. Summary/payload values never
+enter output or Discord messages. See [staged edits](hermes-skill-junctions.md)
+for the read-only list/export tool and post-merge operator steps.
+
 ### Deploy drift (WD-348)
 
 Once per run, independent of the cron directories, the watchdog compares repo content
