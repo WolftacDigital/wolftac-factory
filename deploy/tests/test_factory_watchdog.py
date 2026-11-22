@@ -514,6 +514,153 @@ class WatchdogTests(unittest.TestCase):
         dispatch = current.split("# ── run the checks", 1)[1].splitlines()[1]
         self.assertIn("Test-GatekeeperDegraded $dir", dispatch)
 
+    # WD-670: only new tests; all execution is the real DryRun scratch harness.
+    def starved_history(self, summaries):
+        return self.degraded_history([
+            (f"tick-{i}.txt", text, i * 60) for i, text in enumerate(summaries)])
+
+    def test_starved_exact_finding_and_sanitized_content(self):
+        sentinel = "lin_WD670_SYNTHETIC_TOKEN"
+        line = ("gatekeeper: build: stale-eligible (8 ready, oldest WD-99999 waiting 400m) "
+                f"-> dispatched(pid=1) {sentinel} PRIVATE-BODY-670")
+        self.starved_history([line] * 6)
+        text = self.run_degraded(expected=1)
+        self.assertEqual(findings(text), [f"- [{self.cron}] lane-starved: build has had ready "
+                         "work with no claim for the newest 6 Gatekeeper ticks (8 ready)"])
+        for private in ("WD-99999", sentinel, "PRIVATE-BODY-670", "pid=1", "400m"):
+            self.assertNotIn(private, text)
+        reports = [r for r in text.splitlines() if "lane-starved" in r
+                   and r.lstrip().startswith("FAIL ")]
+        self.assertEqual(len(reports), 1)
+
+    def test_starved_short_healthy_mixed_and_disabled_windows(self):
+        starved = "gatekeeper: build: stale-eligible (8 ready) -> dispatched(pid=1)"
+        cases = [([starved] * 5, ()),
+                 (["gatekeeper: build: in-flight (skip)"] + [starved] * 5, ()),
+                 ([starved] * 2 + ["gatekeeper: build: unchanged (skip)"] + [starved] * 3, ()),
+                 ([starved] * 3 + [starved.replace("build:", "review:")] * 3, ()),
+                 ([starved] * 6, ("-StarvedTicks", "0"))]
+        for summaries, extra in cases:
+            with self.subTest(summaries=summaries, extra=extra):
+                self.starved_history(summaries)
+                self.assertEqual(findings(self.run_degraded(extra=extra)), [])
+
+    def test_starved_two_lanes_newest_counts_and_one_report_row(self):
+        old = "gatekeeper: build: stale-eligible (3 ready); build-crm: stale-eligible (4 ready)"
+        new = "gatekeeper: build: stale-eligible (8 ready); build-crm: stale-eligible (12 ready)"
+        self.starved_history([new] + [old] * 5)
+        text = self.run_degraded(expected=1)
+        self.assertEqual(findings(text), [
+            f"- [{self.cron}] lane-starved: {lane} has had ready work with no claim "
+            f"for the newest 6 Gatekeeper ticks ({count} ready)"
+            for lane, count in (("build", 8), ("build-crm", 12))])
+        self.assertEqual(len([r for r in text.splitlines() if "lane-starved" in r
+                             and r.lstrip().startswith("FAIL ")]), 1)
+
+    def test_starved_write_time_precedes_filename_and_name_breaks_ties(self):
+        starved = "gatekeeper: build: stale-eligible (8 ready)"
+        paths = self.degraded_history([(f"z-{i}.txt", starved, 60 + i) for i in range(6)] +
+                                      [("a.txt", "gatekeeper: build: idle (skip)", 0)])
+        self.assertEqual(findings(self.run_degraded()), [])
+        at = time.time() - 60
+        for path in paths:
+            os.utime(path, (at, at))
+        self.assertEqual(len(findings(self.run_degraded(expected=1))), 1)
+        paths[-1].rename(paths[-1].with_name("zz.txt"))
+        self.assertEqual(findings(self.run_degraded()), [])
+
+    def test_starved_last_summary_case_sensitive_and_missing_summary(self):
+        starved = "gatekeeper: build: stale-eligible (8 ready)"
+        healthy = "gatekeeper: build: confirmed-ran (skip)"
+        for newest in (starved + "\n" + healthy, starved.upper(),
+                       "prompt " + starved, "", "gatekeeper: build: changed (skip)",
+                       "gatekeeper: build: Stale-eligible (8 ready)"):
+            with self.subTest(newest=newest):
+                self.starved_history([newest] + [starved] * 5)
+                self.assertEqual(findings(self.run_degraded()), [])
+        self.starved_history([healthy + "\n" + starved] * 6)
+        self.assertEqual(len(findings(self.run_degraded(expected=1))), 1)
+
+    def test_starved_missing_job_directory_empty_history_and_safe_id(self):
+        self.assertEqual(findings(self.run_degraded()), [])
+        (self.cron / "output/gk-549").mkdir(parents=True)
+        self.assertEqual(findings(self.run_degraded()), [])
+        self.starved_history(["gatekeeper: build: stale-eligible (8 ready)"] * 6)
+        for job_id in ("../gk-549", "..\\gk-549", "gk-549/../gk-549", "", None):
+            with self.subTest(job_id=job_id):
+                self.change_gatekeeper(id=job_id)
+                self.assertEqual(findings(self.run_degraded()), [])
+        self.change_gatekeeper(id="gk-549", name="Wolftac Factory Build Worker")
+        self.assertEqual(findings(self.run_degraded()), [])
+
+    def test_starved_custom_threshold_and_worker_pattern_independent(self):
+        self.starved_history(["gatekeeper: build: stale-eligible (2 ready)"] * 2)
+        text = self.run_degraded(expected=1, extra=("-StarvedTicks", "2",
+                                                  "-JobNamePattern", "*Build Worker*"))
+        # The unrelated cron check also reports zero matching worker jobs.
+        rows = [row for row in findings(text) if "lane-starved:" in row]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("newest 2 Gatekeeper ticks (2 ready)", rows[0])
+
+    @unittest.skipUnless(os.name == "nt", "Windows file-sharing denial fixture")
+    def test_starved_unreadable_selected_file_even_after_healthy(self):
+        starved = "gatekeeper: build: stale-eligible (8 ready)"
+        paths = self.starved_history(["gatekeeper: build: idle (skip)"] + [starved] * 5)
+        # The oldest file is outside the degraded/auth checks' windows. Current
+        # main's approval-wait check also reads it; preserve both read findings.
+        # Lock inside the child, after fixture hashing.
+        quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+        wrapper = self.root / "locked-starved.ps1"
+        wrapper.write_text("$lock=[IO.File]::Open(" + quote(paths[-1]) +
+            ",[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)\n"
+            "try { & " + quote(SCRIPT) + " @args\nexit $LASTEXITCODE } "
+            "finally { $lock.Dispose() }\n", encoding="utf-8", newline="\n")
+        text = self.run_degraded(script=wrapper, expected=1)
+        self.assertEqual(findings(text), [
+            f"- [{self.cron}] approval-wait: watchdog cannot read Gatekeeper output",
+            f"- [{self.cron}] lane-starved: watchdog cannot read Gatekeeper output"])
+        self.assertNotIn("Exception", text)
+        self.assertNotIn("stale-eligible", text)
+
+    def test_starved_and_factory_sync_survive_main_merge(self):
+        starved = "gatekeeper: build: stale-eligible (8 ready)"
+        self.starved_history([starved] * 6)
+        sync = ("sync: main-clone: current 1234567; live: dirty (1 files) -> skipped; "
+                "gatekeeper: current; policy: current; watchdog-files: current")
+        self.sync_history([sync] * 6)
+        starved_finding = (f"- [{self.cron}] lane-starved: build has had ready work "
+                           "with no claim for the newest 6 Gatekeeper ticks (8 ready)")
+        sync_finding = f"- [{self.cron}] factory-sync: live has not been updated for 6h (dirty)"
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertEqual(findings(text), [starved_finding, sync_finding])
+        # Turning off this feature must not suppress the current-main check.
+        code, text = self.run_watchdog(extra=("-StarvedTicks", "0"))
+        self.assertEqual(code, 1)
+        self.assertEqual(findings(text), [sync_finding])
+        self.sync_history([sync.replace("dirty (1 files) -> skipped", "current 1234567")] * 6)
+        code, text = self.run_watchdog()
+        self.assertEqual(code, 1)
+        self.assertEqual(findings(text), [starved_finding])
+
+    def test_starved_placement_read_failure_and_unchanged_transitions(self):
+        current = SCRIPT.read_text(encoding="utf-8")
+        start = current.index("function Test-LaneStarved([string]$Dir)")
+        end = current.index("function Test-GatekeeperDegraded", start)
+        part = current[start:end]
+        self.assertEqual(part.count("function "), 1)
+        self.assertIn("$script:readFailure = $true", part)
+        self.assertNotIn("Send-", part)
+        self.assertNotIn("hermes ", part)
+        dispatch = current.split("# ── run the checks", 1)[1].splitlines()[1]
+        self.assertIn("Test-LaneStarved $dir", dispatch)
+        _, base = self.baseline()
+        marker = "# ── transition-based alerting"
+        self.assertEqual(base[base.index(marker):], current[current.index(marker):])
+        start, end = "function Test-WorkerStuckRuns", "$providerHoldScopes ="
+        self.assertEqual(base[base.index(start):base.index(end)],
+                         current[current.index(start):current.index(end)])
+
     def baseline(self):
         text = subprocess.check_output(["git", "show", "origin/main:deploy/factory-watchdog.ps1"],
                                        cwd=ROOT, encoding="utf-8")

@@ -86,6 +86,9 @@ param(
     # WD-578: consecutive degraded Gatekeeper outputs, newest by write time.
     [ValidateRange(1, 2147483647)]
     [int]$DegradedTicks = 3,
+    # WD-670: ready work without a claim across consecutive Gatekeeper ticks.
+    [ValidateRange(0, 2147483647)]
+    [int]$StarvedTicks = 6,
     # WD-566: bounded completed-output history; zero threshold disables the check.
     [ValidateRange(0, 2147483647)]
     [int]$StuckRunThreshold = 3,
@@ -444,6 +447,69 @@ function Test-FactorySync([string]$Dir) {
                 }
             }
         } catch { } # Unknown evidence is not proof of a six-hour failure streak.
+    }
+}
+
+function Test-LaneStarved([string]$Dir) {
+    if ($StarvedTicks -eq 0) {
+        Add-Report $Dir 'lane-starved' 'skipped' 'check disabled'
+        return
+    }
+    $jobs = Get-Jobs (Join-Path $Dir 'jobs.json')
+    if ($null -eq $jobs) { return } # Existing cron check owns input failures.
+    foreach ($job in @($jobs | Where-Object { (Get-Prop $_ 'name') -eq 'Wolftac Factory Gatekeeper' })) {
+        $id = Get-Prop $job 'id'
+        if (-not $id -or "$id" -notmatch '^[A-Za-z0-9_-]+$') { continue }
+        $outputDir = Join-Path (Join-Path $Dir 'output') "$id"
+        if (-not (Test-Path -LiteralPath $outputDir -PathType Container)) {
+            Add-Report $Dir 'lane-starved' 'skipped' 'output directory absent'
+            continue
+        }
+        try {
+            $files = @(Get-ChildItem -LiteralPath $outputDir -File -ErrorAction Stop |
+                Sort-Object -Property LastWriteTimeUtc, Name -Descending | Select-Object -First $StarvedTicks)
+            if ($files.Count -lt $StarvedTicks) {
+                Add-Report $Dir 'lane-starved' 'skipped' "fewer than $StarvedTicks outputs"
+                continue
+            }
+            $common = $null
+            $newestCounts = @{}
+            foreach ($file in $files) {
+                $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
+                $lines = [regex]::Matches("$text", '(?m)^gatekeeper:[^\r\n]*')
+                $lanes = @{}
+                if ($lines.Count -gt 0) {
+                    # Match only the last summary, case-sensitively. Nothing but
+                    # lane names and digit counts may leave this check.
+                    $line = $lines[$lines.Count - 1].Value
+                    foreach ($hit in [regex]::Matches($line, '(?<lane>[a-z][a-z0-9-]*): stale-eligible \((?<ready>[0-9]+) ready')) {
+                        $lanes[$hit.Groups['lane'].Value] = $hit.Groups['ready'].Value
+                    }
+                }
+                if ($null -eq $common) {
+                    $common = $lanes
+                    $newestCounts = $lanes.Clone()
+                } else {
+                    foreach ($lane in @($common.Keys)) {
+                        if (-not $lanes.ContainsKey($lane)) { $common.Remove($lane) }
+                    }
+                }
+                # Read the entire window even after progress: it must not hide
+                # an unreadable selected output.
+            }
+            foreach ($lane in @($common.Keys | Sort-Object)) {
+                Add-Finding "[$Dir] lane-starved: $lane has had ready work with no claim for the newest $StarvedTicks Gatekeeper ticks ($($newestCounts[$lane]) ready)"
+            }
+            if ($common.Count -gt 0) {
+                Add-Report $Dir 'lane-starved' 'FAIL' "$($common.Count) lanes starved for $StarvedTicks ticks"
+            } else {
+                Add-Report $Dir 'lane-starved' 'ok' "no lane starved in all newest $StarvedTicks outputs"
+            }
+        } catch {
+            Add-Finding "[$Dir] lane-starved: watchdog cannot read Gatekeeper output"
+            Add-Report $Dir 'lane-starved' 'FAIL' 'output unreadable'
+            $script:readFailure = $true
+        }
     }
 }
 
@@ -1155,7 +1221,7 @@ function Invoke-LearnRetention {
 }
 
 # ── run the checks ───────────────────────────────────────────────────────────────
-foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-GatekeeperDegraded $dir; Test-FactorySync $dir }
+foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-LaneStarved $dir; Test-GatekeeperDegraded $dir; Test-FactorySync $dir }
 foreach ($dir in $CronDir) { Test-ProviderHolds $dir }
 # Read the same scratch-scoped state before deciding whether liveness recovered.
 $statePath = Get-StatePath $CronDir[0]

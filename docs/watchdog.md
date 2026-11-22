@@ -58,6 +58,7 @@ Per cron directory, every run:
 | `recent-failure` | a job's `last_failure.at` is within `-RecentFailureHours` (default 6). Hermes often writes `last_status: ok` on a tick that failed the same way, so `last-status` alone flaps and posts false recoveries |
 | `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
 | `gatekeeper-degraded` | all of the newest `-DegradedTicks` Gatekeeper outputs (default 3) contain at least one case-sensitive marker: `FAIL-OPEN`, `discord-check-failed`, or `LANE-ERROR` |
+| `lane-starved` | the same lane is `stale-eligible` in every one of the newest `-StarvedTicks` Gatekeeper outputs (default 6; 0 disables) |
 | `approval-wait` | the newest evaluated approval status within the 6-hour look-back reports stale proof packs or an unavailable approval lane |
 | `approval-no-pack` | that same evaluated status reports Approved issues waiting at least 2 hours without a current proof pack; fixed reason words identify the likely cause |
 | `worker-safety-net` | an enabled, unpaused agent worker matching `-JobNamePattern` has an interval below `-WorkerMinIntervalMinutes` (default 120), or a present schedule kind other than `interval` |
@@ -95,6 +96,31 @@ adds no finding; other checks cover scheduler liveness. An unreadable existing
 output produces an unhealthy read finding. Output contents are never included in
 alerts. Auth failures feed liveness; expiry warnings feed configuration. Both use
 the existing Discord sender, independently.
+
+### Ready work without claims (WD-670)
+
+`Test-LaneStarved` reads the newest `-StarvedTicks` files for the Gatekeeper job,
+sorted by `LastWriteTimeUtc, Name` descending. Only the last line starting
+`gatekeeper:` in each file counts. Matching is case-sensitive: a lane must have
+`<lane>: stale-eligible (<N> ready` in every selected summary. Six ticks is
+nominally three hours at a 30-minute cadence, not a wall-clock guarantee.
+
+There is one finding per lane common to the whole window, plus one `lane-starved`
+report row. Findings contain only the cron scope, lane name, tick count and the
+newest ready count; issue IDs, other output text and token strings are not relayed.
+A healthy tick, including `in-flight`, `changed`, `unchanged`, `idle` or
+`confirmed-ran` without `stale-eligible`, breaks that lane's streak. Missing jobs
+or directories and short histories add no finding. An unreadable selected output
+adds a sanitized read finding and sets the existing read-failure flag, even when
+another selected tick is healthy. `-StarvedTicks 0` disables the check.
+
+This uses `Add-Finding` and the existing liveness transition/recovery and 12-hour
+reminder behavior, with no sender, state file, Linear call or dispatch change.
+Tests run only with `-DryRun` and synthetic cron inputs. After merge, the operator
+refreshes the protected watchdog copy with elevated
+`install-watchdog-task.ps1 -OperatorUser ai-msi\logan_vwagmmf -Apply -FilesOnly`
+and checks a `lane-starved` report row using `-DryRun` against the four live cron
+directories. Build and review do not perform that install or live check.
 
 ### Repeated degraded Gatekeeper ticks (WD-578)
 
