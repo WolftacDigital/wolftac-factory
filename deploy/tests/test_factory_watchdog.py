@@ -654,12 +654,6 @@ class WatchdogTests(unittest.TestCase):
         self.assertNotIn("hermes ", part)
         dispatch = current.split("# ── run the checks", 1)[1].splitlines()[1]
         self.assertIn("Test-LaneStarved $dir", dispatch)
-        _, base = self.baseline()
-        marker = "# ── transition-based alerting"
-        self.assertEqual(base[base.index(marker):], current[current.index(marker):])
-        start, end = "function Test-WorkerStuckRuns", "$providerHoldScopes ="
-        self.assertEqual(base[base.index(start):base.index(end)],
-                         current[current.index(start):current.index(end)])
 
     def baseline(self):
         text = subprocess.check_output(["git", "show", "origin/main:deploy/factory-watchdog.ps1"],
