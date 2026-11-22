@@ -164,6 +164,178 @@ class GatekeeperTests(unittest.TestCase):
         self.issues["Approved"][0]["comments"]["nodes"].append(proof())
         self.baseline()
 
+    # WD-585: additions only; reuse the offline HTTP/Popen and scratch harness.
+    def residual_fixture(self):
+        self.issues["Todo"] = [issue(f"WD-{n}") for n in range(1, 8)]
+        for row in self.issues["Todo"]:
+            row.update(description="**Repo:** `x`", project=None)
+            row["labels"] = connection([{"name": "Factory Queue"}])
+        rows = self.issues["Todo"]
+        rows[0]["labels"]["nodes"].append({"name": "agentic"})
+        rows[1]["project"] = {"name": "Wolftac CRM v2"}
+        rows[2]["project"] = {"name": "OMAS ATLAS"}
+        rows[3]["labels"]["nodes"].append({"name": "Manual-Lane"})
+        rows[5]["project"] = {"name": "OMAS ATLAS archive"}
+        rows[6]["description"] = "Mission Control Task ID: task-1"
+        jobs = json.loads(self.jobs.read_text())
+        jobs["jobs"].append({"id": "resid0000001", "name": g.RESIDUAL_JOB_NAME,
+                             "enabled": True, "state": "scheduled"})
+        self.write(self.jobs, jobs)
+        self.baseline()
+        state = json.loads(self.state.read_text())
+        state["fingerprints"][g.RESIDUAL_LANE] = g.lane_fingerprint([rows[4]])
+        self.write(self.state, state)
+        return rows
+
+    def test_residual_constants_and_excludes_ac3(self):
+        self.assertEqual((g.RESIDUAL_LANE, g.RESIDUAL_JOB_NAME, g.RESIDUAL_PROFILE, g.RESIDUAL_STATE),
+                         ("build-residual", "Wolftac Factory Build Worker - residual (Mason)", "builder", "Todo"))
+        expected = ["agentic", "Wolftac CRM v2", "OMAS ATLAS", "manual-lane"]
+        self.assertEqual(g.residual_excludes(), expected)
+        self.assertEqual(g.residual_argument(), "residual: " + "; ".join(expected))
+        with patch.dict(g.DEFAULT_JOB_MAP, {"build-x": ("Todo", "x", "builder")}), patch.dict(g.LANE_FILTERS, {"build-x": "x"}):
+            self.assertEqual(g.residual_excludes(), expected[:2] + ["x"] + expected[2:])
+        for terms in (("bad;term",), (" lead",), ("",), ("trail ",), ("bad`term",)):
+            with self.subTest(terms=terms), patch.object(g, "RESIDUAL_EXTRA_EXCLUDES", terms):
+                with self.assertRaises(ValueError):
+                    g.residual_excludes()
+        with patch.dict(g.DEFAULT_JOB_MAP, {}, clear=True), patch.object(g, "RESIDUAL_EXTRA_EXCLUDES", ()):
+            with self.assertRaises(ValueError):
+                g.residual_excludes()
+
+    def test_residual_parse_ac4(self):
+        for text in ("residual: a; b", " RESIDUAL:a;b "):
+            self.assertEqual(g.parse_residual_argument(text), ["a", "b"])
+        self.assertEqual(g.parse_residual_argument(g.residual_argument()), g.residual_excludes())
+        for text in ("residual", "residual:", "residual: ;", "residual: a;;b", "residual: a;", "agentic"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                g.parse_residual_argument(text)
+
+    def test_residual_spec_first_line_ac5(self):
+        for description in ("**Repo:** x", "\n\n   **Repo:** x"):
+            self.assertTrue(g.is_spec({"description": description}))
+        for description in (None, "", "Mission Control Task ID: task-1", "Repo: x", "**Repo** x", "intro\n**Repo:** x"):
+            with self.subTest(description=description):
+                self.assertFalse(g.is_spec({"description": description}))
+
+    def test_residual_fingerprint_and_only_unmatched_dispatch_ac6(self):
+        rows = self.residual_fixture()
+        self.assertIn("build-residual: unchanged (skip)", self.tick())
+        for index in (0, 1, 2, 3, 5, 6):
+            with self.subTest(index=index):
+                rows[index]["priority"] = 1
+                self.assertIn("build-residual: unchanged (skip)", self.tick())
+                jobs = json.loads(self.jobs.read_text())
+                for job in jobs["jobs"]:
+                    job["last_run_at"] = (NOW + timedelta(seconds=index + 1)).isoformat()
+                self.write(self.jobs, jobs)
+                self.tick()
+        self.assertEqual(json.loads(self.state.read_text())["fingerprints"][g.RESIDUAL_LANE],
+                         g.lane_fingerprint([rows[4]]))
+        rows[4]["priority"] = 1
+        # Inspect real argv construction; Popen remains fake and cannot launch a worker.
+        self.args = self.args[:-2]
+        with patch.object(g, "hermes_cli", return_value=["hermes"]):
+            out = self.tick()
+        self.assertIn("build-residual: changed -> dispatched(pid=1234)", out)
+        self.assertIn("build: unchanged (skip)", out)
+        self.assertIn("build-crm: unchanged (skip)", out)
+        self.spawn.assert_called_once()
+        self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "builder", "cron", "run", "resid0000001"])
+
+    def test_residual_disjoint_ac7(self):
+        rows = self.residual_fixture()
+        selected = {row["identifier"] for row in rows if g.residual_matches(row, g.residual_excludes())}
+        self.assertEqual(selected, {"WD-5"})
+        for term in g.LANE_FILTERS.values():
+            others = {row["identifier"] for row in rows if g.lane_matches(row, term)}
+            self.assertFalse(selected & others)
+
+    def test_residual_job_notes_leave_other_lanes_unchanged_ac8(self):
+        valid = {"name": g.RESIDUAL_JOB_NAME, "id": "resid0000001", "enabled": True}
+        cases = [([], "no-job (skip)"), ([valid, valid], "LANE-ERROR (job name not unique)"),
+                 ([dict(valid, enabled=False)], "job-disabled (skip)"),
+                 ([dict(valid, state="paused")], "job-disabled (skip)"),
+                 ([dict(valid, id=None)], "LANE-ERROR (job id missing)"),
+                 ([dict(valid, id="")], "LANE-ERROR (job id missing)"),
+                 (None, "LANE-ERROR (jobs file unreadable)")]
+        for jobs, note in cases:
+            with self.subTest(note=note, jobs=jobs):
+                self.baseline()
+                if jobs is None:
+                    self.jobs.unlink(missing_ok=True)
+                else:
+                    self.write(self.jobs, {"jobs": jobs})
+                before = self.tick("--job-map", json.dumps(g.DEFAULT_JOB_MAP))
+                before_calls = copy.copy(self.spawn.call_args_list)
+                self.baseline()
+                actual = self.tick()
+                self.assertEqual(actual.replace("; build-residual: " + note, ""), before)
+                self.assertEqual(self.spawn.call_args_list, before_calls)
+                state = json.loads(self.state.read_text())
+                self.assertNotIn(g.RESIDUAL_LANE, state["lanes"])
+                self.assertNotIn(g.RESIDUAL_LANE, state["fingerprints"])
+
+    def test_residual_shared_todo_pagination_ac9(self):
+        self.residual_fixture()
+        self.issues["Todo"] = [dict(issue(f"WD-{n}"), description="**Repo:** x") for n in range(101)]
+        self.tick()
+        cursors = [json.loads(r.data)["variables"]["after"] for r in self.requests
+                   if json.loads(r.data)["variables"].get("state") == "Todo"]
+        self.assertEqual(cursors, [None, "100"])
+
+    def test_residual_fail_open_auth_and_idle_ac10(self):
+        self.residual_fixture()
+        self.linear_error = TimeoutError()
+        self.assertIn("build-residual: probe failed (TimeoutError) -> FAIL-OPEN -> dispatched(pid=1234)", self.tick())
+        self.baseline()
+        self.linear_error = urllib.error.HTTPError("https://fixture.invalid", 401, "fixture", Message(), io.BytesIO())
+        self.assertIn("build-residual: linear-auth-failed (401) -> skipped", self.tick())
+        self.spawn.assert_called_once()
+        self.assertEqual(set(json.loads(self.state.read_text())["lanes"]), {"integrate"})
+        self.linear_error = None
+        self.baseline()
+        self.issues["Todo"] = []
+        self.assertIn("build-residual: idle", self.tick())
+        self.spawn.assert_not_called()
+
+    def test_residual_inflight_and_confirmation_ac11(self):
+        rows = self.residual_fixture()
+        state = json.loads(self.state.read_text())
+        state["lanes"][g.RESIDUAL_LANE] = {"dispatched_at": NOW.isoformat(), "job_last_run_at": None}
+        self.write(self.state, state)
+        rows[0]["priority"] = rows[1]["priority"] = 1
+        out = self.tick()
+        self.assertIn("build-residual: in-flight (skip)", out)
+        self.assertIn("build: changed -> dispatched(pid=1234)", out)
+        self.assertIn("build-crm: changed -> dispatched(pid=1234)", out)
+        self.assertEqual(self.spawn.call_count, 2)
+        self.confirm()
+        self.assertIn("build-residual: confirmed-ran", self.tick())
+        self.spawn.assert_not_called()
+
+    def test_residual_explicit_job_map_ac12(self):
+        rows = self.residual_fixture()
+        self.args = self.args[:-2]
+        with patch.object(g, "resolve_residual_job", side_effect=AssertionError("unexpected resolution")), patch.object(g, "hermes_cli", return_value=["hermes"]):
+            self.state.unlink()
+            self.tick("--job-map", json.dumps({g.RESIDUAL_LANE: ["Todo", "custom", "builder"]}))
+            self.spawn.assert_called_once()
+            self.assertEqual(self.spawn.call_args.args[0], ["hermes", "-p", "builder", "cron", "run", "custom"])
+            self.assertEqual(json.loads(self.state.read_text())["fingerprints"][g.RESIDUAL_LANE], g.lane_fingerprint([rows[4]]))
+            out = self.tick("--job-map", json.dumps({"other": ["Todo", "custom"]}))
+            self.assertNotIn("build-residual:", out)
+
+    def test_residual_invalid_constants_and_dry_run(self):
+        self.residual_fixture()
+        with patch.object(g, "RESIDUAL_EXTRA_EXCLUDES", ("bad;term",)):
+            self.assertIn("build-residual: LANE-ERROR (invalid exclude list)", self.tick())
+        self.state.unlink()
+        before = {str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        self.assertIn("build-residual: no-baseline -> dispatched(dry-run)", self.tick("--dry-run"))
+        self.spawn.assert_not_called()
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+
     def test_unchanged_lane_skips(self):
         self.assertIn("no-baseline -> dispatched(pid=1234)", self.tick())
         self.confirm()

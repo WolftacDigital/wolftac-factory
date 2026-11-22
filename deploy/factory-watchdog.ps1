@@ -117,6 +117,9 @@ param(
     # backups root, for the same SYSTEM-account reason as -UserProfile.
     [string]$LearnBackupRoot = "",
     [int]$LearnRetentionDays = 30,
+    [string[]]$LearnProfiles = @('builder','reviewer','integrator'),
+    [ValidateRange(0, 2147483647)]
+    [int]$LearnPendingMaxAgeHours = 24,
     [switch]$SkipLearn,
     # Done-without-integration is independent of worker liveness.
     [switch]$SkipAudit,
@@ -448,6 +451,51 @@ function Test-FactorySync([string]$Dir) {
             }
         } catch { } # Unknown evidence is not proof of a six-hour failure streak.
     }
+}
+
+$stagedLearnCount = 0
+$stagedLearnSummary = ''
+function Test-LearnPending {
+    if ($SkipLearn) { return }
+    $counts = New-Object System.Collections.Generic.List[string]
+    $nowSeconds = [datetimeoffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
+    $profiles = @($LearnProfiles | ForEach-Object { $_ -split ',' } | Select-Object -Unique)
+    foreach ($profile in $profiles) {
+        # Profile names are path components and output labels, never arbitrary text.
+        if ($profile -cnotmatch '\A[a-z0-9][a-z0-9-]{0,63}\z') { continue }
+        $count = 0; $old = 0; $unreadable = 0
+        $folder = $HermesHome
+        try {
+            foreach ($component in @('profiles', $profile, 'pending', 'skills')) {
+                $folder = Join-Path $folder $component
+                if ((Test-Path -LiteralPath $folder) -and
+                    ((Get-Item -LiteralPath $folder -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                    throw 'linked directory'
+                }
+            }
+            if (-not (Test-Path -LiteralPath $folder)) { continue }
+            foreach ($file in @(Get-ChildItem -LiteralPath $folder -File -Filter '*.json' -ErrorAction Stop)) {
+                try {
+                    if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'linked record' }
+                    $record = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop |
+                        ConvertFrom-Json -AsHashtable -ErrorAction Stop
+                    if ($record -isnot [System.Collections.IDictionary] -or
+                        $record['id'] -isnot [string] -or $record['id'] -cnotmatch '\A[0-9a-f]{8}\z') {
+                        throw 'invalid record'
+                    }
+                    $count++
+                    $created = $record['created_at']
+                    if (($created -is [long] -or $created -is [int] -or $created -is [double] -or $created -is [decimal]) -and
+                        [double]::IsFinite([double]$created) -and
+                        ($nowSeconds - [double]$created) -gt ($LearnPendingMaxAgeHours * 3600.0)) { $old++ }
+                } catch { $unreadable++ } # Never echo record contents or exception text.
+            }
+        } catch { $unreadable++ }
+        if ($count) { $counts.Add("${profile}=$count"); $script:stagedLearnCount += $count }
+        if ($unreadable) { Add-Report $profile 'learn-pending' 'unreadable' "$unreadable record(s) unreadable" }
+        if ($old) { Add-Finding "learn-pending: $profile has $old staged skill edit(s) older than ${LearnPendingMaxAgeHours}h" }
+    }
+    if ($counts.Count) { $script:stagedLearnSummary = 'learn-pending: ' + ($counts -join ', ') }
 }
 
 function Test-LaneStarved([string]$Dir) {
@@ -1222,6 +1270,7 @@ function Invoke-LearnRetention {
 
 # ── run the checks ───────────────────────────────────────────────────────────────
 foreach ($dir in $CronDir) { Test-CronDirectory $dir; Test-WorkerSafetyNet $dir; Test-WorkerStuckRuns $dir; Test-LaneStarved $dir; Test-GatekeeperDegraded $dir; Test-FactorySync $dir }
+Test-LearnPending
 foreach ($dir in $CronDir) { Test-ProviderHolds $dir }
 # Read the same scratch-scoped state before deciding whether liveness recovered.
 $statePath = Get-StatePath $CronDir[0]
@@ -1319,6 +1368,7 @@ if ($SkipDrift) {
 }
 
 # Pending /learn edits get their own line: neither an outage nor drift.
+if ($stagedLearnSummary) { Write-Output $stagedLearnSummary }
 if ($SkipLearn) {
     Write-Output "LEARN: skipped (-SkipLearn)"
 } elseif ($learnUnreadable.Count -gt 0) {
@@ -1546,7 +1596,7 @@ $snapshotError = $null
 
 if (-not $SkipLearn) {
     $learnStatus = if ($learnUnreadable.Count -gt 0) { 'cannot-check' }
-                   elseif ($learnPending.Count -gt 0) { 'pending' }
+                   elseif ($learnPending.Count -gt 0 -or $stagedLearnCount -gt 0) { 'pending' }
                    else { 'clean' }
     if ($learnPending.Count -gt 0 -and -not $DryRun) {
         # Snapshot whenever the pending content changes, alert or not: the snapshot is
@@ -1570,7 +1620,8 @@ if (-not $SkipLearn) {
 
     if ($learnStatus -ne 'clean') {
         $headline = if ($learnStatus -eq 'pending') {
-            "*Uncommitted /learn edits: $($learnPending.Count) files across $($learnWorktrees.Count) worktrees*"
+            if ($learnPending.Count) { "*Uncommitted /learn edits: $($learnPending.Count) files across $($learnWorktrees.Count) worktrees*" }
+            else { '*Staged skill edits awaiting review*' }
         } else {
             "*Pending /learn edits: cannot check the live skill worktree* - uncommitted /learn work is currently unmonitored"
         }
@@ -1595,6 +1646,7 @@ if (-not $SkipLearn) {
     if (-not $DryRun) { Invoke-LearnRetention }
 }
 
+if ($learnMessage -and $stagedLearnSummary) { $learnMessage += "`n$stagedLearnSummary" }
 $learnDelivered = $true
 if (-not $SkipLearn) { $learnDelivered = Send-Concern 'learn' $learnShouldPost $learnMessage $learnStatus }
 

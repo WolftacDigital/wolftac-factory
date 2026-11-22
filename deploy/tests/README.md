@@ -17,6 +17,7 @@ Git worktree, never live junctions or `deploy.ps1 -Deploy`.
 
 | File | What it holds down |
 |---|---|
+| `test_residual_lane_rule.py` | WD-585: identical whitespace-collapsed RESIDUAL-LANE paragraphs and exactly five parity checks. `test_factory_gatekeeper.py` adds offline residual parsing, spec-only filtering, disjoint sets, dynamic job resolution, shared pagination, failure handling and independent in-flight/confirmation cases; all HTTP and worker spawning are fake. |
 | `test_integrate_queue_order.py` | WD-657: fake-gq state-entry ordering, numeric ties, unchanged lane matching, write-stable ordering, six-copy equality and approval-first/delivery-check contract. No live credentials, API requests or merges. |
 | `test_provider_holds.py` | WD-630: provider-wide reset/escalation holds, one integrate-first release probe, independent providers, retained-failure handling, no-write dry-run and failed launches. Real watchdog CLI under a synthetic clock proves one incident/recovery and three daily digests, unknown-inventory continuity and failed-delivery retry. Scratch jobs/state/expiry/outbox only; no live worker or sender. |
 | `test_operate_contract.py` | WD-646 Contract v1: strict JSON/record validators, fenced parsing and prose markers, policy/spec/operator provenance, deterministic round trips, actual two-commit Git blob/parent hashes, map equality and six-copy bytes. Synthetic isolated Git config and a socket guard reject non-loopback connections. Run `python -B -m unittest discover -s deploy/tests -p test_operate_contract.py -v`. No installed target reads, credentials or Linear calls. |
@@ -46,6 +47,32 @@ Run `pwsh -NoProfile -File deploy/parity-check.ps1`,
 1800-second limit and `TEMP`, `TMP`, `TMPDIR` under long-form profile scratch.
 No live jobs, installed skills, credentials or approval state are touched.
 AC-8 remains a post-merge operator check after the live-checkout update.
+
+## WD-671 staged skill edits
+
+```text
+python -B -m unittest discover -s deploy/tests -p test_learn_pending.py -v
+python -B -m unittest discover -s deploy/tests -p test_factory_watchdog.py -v
+pwsh -NoProfile -File deploy/parity-check.ps1
+pwsh -NoProfile -File deploy/semantic-check.ps1
+python -m unittest discover -s deploy/tests -v
+```
+
+Use long-form scratch `TEMP`, `TMP` and `TMPDIR`, synthetic home/profile roots
+and no live credentials. The new CLI suite executes list/JSON/export with scratch
+records: counts, whole-hour ages, secret sentinels, invalid inputs, byte-exact
+export, destination refusals, duplicate IDs and traversal guards. It also runs
+parity against a scratch copy before and after removing `LEARN-STAGED`; the
+negative must name the builder skill. Symlink tests run where privileges permit.
+`LearnStagedTests` adds real watchdog DryRun cases for stale/fresh records,
+profile/count thresholds, multi-cron once-only dispatch, unreadable records,
+sentinel suppression, SkipLearn and the unchanged daily digest cadence. Existing
+test methods are not edited. No live pending directory or config is read.
+
+AC-9 and AC-10 are operator checks after merge, not automated acceptance claims:
+turn staging on for the three workers, then observe a real lesson staged without
+a live skill change. See `docs/hermes-skill-junctions.md`. No installation, live
+setting change or lesson is performed by these tests.
 
 ## WD-672 sync regression additions
 

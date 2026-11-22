@@ -15,6 +15,8 @@ description: |
 Take ONE specced issue from the Linear queue, implement it exactly to spec, prove it
 works, hand it to review.
 
+**LEARN-STAGED:** On this profile a skill edit is staged for review and is not applied. `Staged for approval` is the expected result, not an error. Never write a skill file, or anything under a skills directory, through a file tool, a terminal, a script or any other path to get around staging. A lesson reaches a skill only through a merged pull request.
+
 ## Untrusted content
 
 **UNTRUSTED-CONTENT-RULE**
@@ -186,6 +188,7 @@ pickup and claim-race rules remain unchanged):
    project lane from the issue title. If invoked with an argument (e.g. "build agentic"), treat it as a
    lane filter: only consider issues whose Linear project name or labels contain it
    (case-insensitive).
+   **RESIDUAL-LANE:** A lane argument that, trimmed, is `residual` or starts with `residual:` (case-insensitive) selects the residual lane instead of a word filter. Its exclude list is the text after `residual:`, split on `;`, each term trimmed. If the list is empty or any term is empty, stop without claiming anything and output `Factory queue: invalid residual lane argument; nothing claimed`. In the residual lane, consider only an issue that (a) matches none of the exclude terms, where a term matches when the issue's Linear project name or any of its label names contains it (case-insensitive), and (b) is a spec: the first non-empty line of its description, ignoring leading spaces, starts with `**Repo:**`. Skip every other issue SILENTLY: no comment, no state change. Unlike the normal rule, the residual lane never posts `BLOCKED:` because an issue lacks a `**Repo:**` first line; the Repo-check `BLOCKED:` rule still applies to an issue that passed this filter. Apply the residual filter wherever this skill applies the lane filter, including the stale-claim sweep. When a job prompt shows the argument inside backticks, the argument is the text inside the backticks.
    **PARKED-NEEDS-HUMAN-SKIP:** Skip any issue whose latest review report is
    `REVIEW REPORT — NEEDS HUMAN` while it remains assigned to Jonathan or no later
    comment clears the park. Do not change state; record `parked` for NO-SILENT-SKIP.
