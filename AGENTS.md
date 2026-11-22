@@ -85,6 +85,10 @@ session can review what Codex built.
 - **Lane filters (optional):** if you're invoked with an argument — `/wolftac-build
   agentic`, `/wolftac-review crm` — only work issues whose Linear project name or
   labels contain that word (case-insensitive). No argument = work the whole queue.
+  Build also accepts `residual: <term>; <term>; ...` to exclude every matching term.
+  Residual pickup silently skips non-specs: the first non-empty description line
+  must start with `**Repo:**`. The live exclude list is `residual_argument()` in
+  `deploy/factory-gatekeeper.py`.
 
 ### Review verdicts and parked work
 
