@@ -673,6 +673,71 @@ with `--approval-policy <path>`; `--no-discord` explicitly disables Discord chec
 Existing `--env-path`, `--jobs-path`, `--state-path`, `--job-map` and test-only
 `--exec-override` remain available.
 
+### Residual build job (operator only)
+
+`deploy/residual-build-job.py` (WD-586) defaults to a read-only plan. It imports
+its template ID/profile, job name and lane argument from the adjacent Gatekeeper;
+it never hard-codes the exclude list. It clones the template's skills, model,
+provider, workdir and delivery, preserving the prompt except for the backticked
+residual lane. The new schedule is every 120 minutes. Optional reasoning effort
+and failure delivery are copied when present and cleared on edit when absent.
+
+After merge, **Jonathan**, not build/review, performs these steps in order:
+
+1. Confirm WD-576's four worker jobs run every 120 minutes and WD-585's
+   Gatekeeper is installed. Run its installed copy with `--dry-run`; before
+   creation expect `build-residual: no-job (skip)`.
+2. Create the `manual-lane` Linear label and apply it to WD-570, WD-571 and any
+   other manually built issue that must stay outside residual pickup. These
+   project-less ATLAS issues are not excluded by project name alone.
+3. Use the installed Python interpreter to run the planner from the merged repo:
+   ```powershell
+   & "$env:LOCALAPPDATA\hermes\hermes-agent\venv\Scripts\python.exe" D:\Wolftac\Factory\deploy\residual-build-job.py
+   ```
+4. Inspect the plan, then repeat with `--apply`. Repeat once more: it must say
+   `OK` without a CLI call or a new backup. Apply saves the original bytes as
+   `jobs.json.bak-<yyyyMMdd-HHmmss>-pre-residual-lane`, calls only Hermes
+   `cron create` or `cron edit` (120-second timeout), and verifies the stored job
+   and parsed lane. It never writes `jobs.json` itself. A backup-name collision
+   fails closed rather than overwriting a rollback artifact; retry in a later
+   second. No service restart is needed.
+5. Repeat the Gatekeeper dry run: expect `build-residual: no-baseline ->
+   dispatched(dry-run)` or `build-residual: idle` if no residual work exists.
+6. Inspect the next real Gatekeeper output and first residual worker result.
+   Re-run the planner/apply after changes to `LANE_FILTERS`,
+   `RESIDUAL_EXTRA_EXCLUDES` or the template's configuration.
+
+Representative output (one line, never the prompt or captured CLI output):
+
+```text
+PLAN    create builder 'Wolftac Factory Build Worker - residual (Mason)': every 120m, lane 'residual: agentic; Wolftac CRM v2; OMAS ATLAS; manual-lane'
+PLAN    edit builder/<id> 'Wolftac Factory Build Worker - residual (Mason)': prompt
+APPLIED builder/<id> 'Wolftac Factory Build Worker - residual (Mason)' (verified)
+OK      builder/<id> 'Wolftac Factory Build Worker - residual (Mason)': matches template, lane 'residual: agentic; Wolftac CRM v2; OMAS ATLAS; manual-lane'
+MISSING builder jobs.json: <path> unreadable
+MISSING template builder/<id>: not found in <path>
+REFUSE  template builder/<id>: <field or reason>
+REFUSE  residual: 2 jobs named 'Wolftac Factory Build Worker - residual (Mason)'
+FAILED  create builder: hermes exit 1
+FAILED  create builder: hermes timeout
+FAILED  create builder: read-back prompt
+```
+
+MISSING, REFUSE and FAILED exit 1. Dry-run/OK/verified apply exit 0. An edit sends
+only differing fields; duplicate names and unsafe templates refuse before backup
+or CLI execution. The residual job is not added to `worker-schedules.ps1`.
+
+Rollback is manual: `hermes -p builder cron pause <id>` produces Gatekeeper
+`build-residual: job-disabled (skip)`; `hermes -p builder cron remove <id>`
+produces `build-residual: no-job (skip)`. Keep the backup. The script never
+pauses/removes jobs, changes other jobs, or edits Linear.
+
+Build/review must **always** pass both `--hermes-home <synthetic-scratch-home>`
+and `--hermes-command '<JSON argv for Python and fake_hermes_cron.py>'`.
+`python -m unittest discover -s deploy/tests -p test_residual_build_job.py -v`
+provides those overrides automatically; no real Hermes CLI or live job file is
+used. Do not run the operator commands above as part of verification.
+
 ### Safe build/review verification
 
 - Offline: `python -m unittest discover -s deploy/tests -v`. CI runs the same
