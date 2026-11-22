@@ -399,13 +399,38 @@ Approved query is made while integrate is in flight. The newest comment containi
 `MERGE PROOF PACK` or `LANDING PROOF PACK` is used. If the newest 50 comments have
 no pack, read at most 10 additional comment pages, with a non-advancing cursor
 guard. Those older comments never enter fingerprints or Discord approval detection.
-A missing `pageInfo` means no more pages; no pack means counted, but never alerted.
+A missing comment `pageInfo` means no more pages. WD-626 also reads issue history
+after dispatch (at most 10 pages of 100, guarding non-advancing cursors) and uses
+the latest transition **into Approved**, not issue creation time. Incomplete,
+unreadable or unusable history preserves existing packs and their stale/lane-down
+evaluation. Only if no pack exists does its missing-pack age fall back to
+`updatedAt` with reason `unknown`; `updatedAt` never invalidates an existing pack.
+At **2 hours or older**, an issue without a pack strictly newer than that transition
+gets `approval-no-pack`. A pack from a prior Approved cycle cannot clear it.
+Missing-pack ages stay in whole hours. Incomplete comment paging cannot establish
+absence and produces `approval-wait: unknown (approval comments incomplete)`.
 
-Segments (identifiers sorted, stale before lane-down):
+Reasons are selected in this order: `repo-not-allowed` for an absolute path in the
+`Repo:` header rejected by the gate runner's `repo_allowed` function (check-repo
+exit 3); `precondition-failed` if the newest integrate artifact comment contains
+`PRECONDITION`; `integrate-paused` if the matching integrator job has literal
+`enabled: false`; otherwise `unknown`. An integrate artifact has a heading for
+PRECONDITION, INTEGRATE, INTEGRATION REPORT/DEFECT REPORT or a proof pack. Ordinary
+comments mentioning PRECONDITION do not replace that artifact. The jobs file uses
+the job-map profile, or the existing `--jobs-path` override. No schedule is changed.
+
+The function-only gate-runner import looks first for the canonical runner in this
+checkout, then the installed integrator/default Hermes integrate skill. It never
+runs the redactor or a subprocess. Missing helpers and unreadable policies are
+unknown, not allowlist denials; `FACTORY_REPO_ALLOWLIST` supports scratch fixtures.
+No live deployment or policy repair is performed by this diagnostic.
+
+Segments (identifiers sorted, stale before lane-down before missing-pack):
 
 ```text
 approval-stale: WD-354=15d,WD-519=30h
 approval-lane-down: WD-348=3d
+approval-no-pack: WD-603=62h(repo-not-allowed)
 approval-wait: ok (2 approved)
 approval-wait: unknown (integrate lane not probed)
 approval-wait: unknown (URLError)
@@ -415,7 +440,7 @@ approval-wait: unknown (URLError)
 is case-insensitive and may wrap across whitespace. It takes precedence over
 staleness for that issue. Otherwise a pack is stale only when strictly older
 than 24 hours. Whole hours are printed below 48 hours; whole days thereafter.
-An invalid pack timestamp skips that issue. `ok` appears only when neither alert
+An invalid pack timestamp cannot establish a current pack. `ok` appears only when no alert
 list is populated, counting all Approved issues, including those without packs.
 An empty lane is `ok (0 approved)`.
 
@@ -423,7 +448,7 @@ In-flight, env/probe/lane errors and Linear 401 produce `unknown`; paging errors
 produce an `unknown` with a safe exception reason, not response or pack text.
 No integrate entry means no approval segment. `--dry-run` reports the same status.
 Dispatch, fingerprints, in-flight/401 routing, Discord checks, exit codes and state
-schema are unchanged. Output contains identifiers and ages only, never issue
+schema are unchanged. Output contains identifiers, ages and fixed reasons only, never issue
 titles or proof-pack text. This does not judge whether a later approval exists.
 
 The watchdog evaluates the newest non-unknown status in a 6-hour look-back and

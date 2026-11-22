@@ -59,6 +59,7 @@ Per cron directory, every run:
 | `gatekeeper-linear-auth` | the newest output of `Wolftac Factory Gatekeeper` contains `linear-auth-failed` |
 | `gatekeeper-degraded` | all of the newest `-DegradedTicks` Gatekeeper outputs (default 3) contain at least one case-sensitive marker: `FAIL-OPEN`, `discord-check-failed`, or `LANE-ERROR` |
 | `approval-wait` | the newest evaluated approval status within the 6-hour look-back reports stale proof packs or an unavailable approval lane |
+| `approval-no-pack` | that same evaluated status reports Approved issues waiting at least 2 hours without a current proof pack; fixed reason words identify the likely cause |
 | `worker-safety-net` | an enabled, unpaused agent worker matching `-JobNamePattern` has an interval below `-WorkerMinIntervalMinutes` (default 120), or a present schedule kind other than `interval` |
 
 The safety-net check excludes `Wolftac Factory Gatekeeper`, `no_agent: true`,
@@ -146,7 +147,7 @@ The **approval-wait** check uses the same Gatekeeper job and output directory,
 but looks back **6 hours** (`-ApprovalStatusMaxAgeHours`, default 6). Files are
 ordered by `LastWriteTimeUtc`, then filename, descending. It passes over unknown
 or legacy outputs until the first evaluated status: `approval-wait: ok`,
-`approval-stale: ...`, or `approval-lane-down: ...`. Thus an in-flight or failed
+`approval-stale: ...`, `approval-lane-down: ...`, or `approval-no-pack: ...`. Thus an in-flight or failed
 tick does not falsely recover an outstanding alert. No evaluated status in the
 window means a `skipped` report row, no finding. Missing jobs/directories/files
 produce neither a finding nor a report row; unreadable existing outputs produce
@@ -161,6 +162,24 @@ Only parsed issue identifiers and ages reach findings, never titles or pack/outp
 text. Both feed the existing transition, 12-hour nag and recovery path unchanged.
 No new sender, credential or approval authority is added; typed comments never
 approve a merge.
+
+WD-626 missing-pack findings contain exactly the parsed inventory, for example
+`approval-no-pack: WD-1=3h(unknown),WD-2=62h(repo-not-allowed)`. One finding covers
+the whole inventory, and the existing `approval-wait` report row fails. Only issue
+IDs, whole-hour ages and `repo-not-allowed`, `precondition-failed`, `integrate-paused`
+or `unknown` are accepted; malformed/partial lists never echo source text. The
+Gatekeeper measures from the latest Approved transition and ignores older-cycle
+packs when that transition is known. Unreadable history keeps existing pack
+evaluation intact; updatedAt/unknown is used only when no pack exists. This does not
+fix allowlists, preconditions or job schedules. Existing look-back, alert delivery,
+dedupe and recovery remain unchanged; an evaluated `ok` clears the finding.
+
+Offline proof: `test_factory_gatekeeper.py` covers transition thresholds, bounced
+issues, current packs, history/comment pagination and failures, reason precedence,
+scratch allowlist/job inputs, privacy and unchanged dispatch/state.
+`test_factory_watchdog.py` executes `-DryRun` with synthetic cron directories for
+each reason, one-finding inventories, malformed input, look-back, recovery and
+composition with the older approval checks. No live cron data or network is used.
 
 Zero matching jobs is also a failure — deleted, renamed, or a wrong `-CronDir` should
 never look healthy. Non-interval schedules report `next-run-fresh` as **skipped**
